@@ -23,7 +23,7 @@ import {
 import { makeRng } from '../src/game/rng.ts';
 import { assignResources, resourceReport } from './resources.ts';
 import { buildSeas, linkSeas } from './seas.ts';
-import { bundleRoutes, waterRoutes } from './routes.ts';
+import { bundleRoutes, snapSeaLanes, waterRoutes } from './routes.ts';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const RAW = path.join(ROOT, 'data', 'raw');
@@ -1010,7 +1010,16 @@ const data: MapData = {
   const replaced = new Set(bundled.roads.map((r) => key(r.a, r.b)));
   data.roads = [...data.roads.filter((r) => !replaced.has(key(r.a, r.b))), ...bundled.roads];
   data.shortcuts = bundled.shortcuts;
-  data.junctions = bundled.junctions;
+  // Seewege zusammenlegen (auf der Geometrie nach dem Bündeln)
+  const snapped = snapSeaLanes({ ...data });
+  const snappedKeys = new Set(snapped.roads.map((r) => key(r.a, r.b)));
+  data.roads = [...data.roads.filter((r) => !snappedKeys.has(key(r.a, r.b))), ...snapped.roads];
+  // Kreuzungspunkte dicht beieinander (unter 20 km) zusammenfassen
+  data.junctions = [];
+  for (const j of [...bundled.junctions, ...snapped.junctions]) {
+    if (!data.junctions.some((k) => Math.hypot(k.x - j.x, k.y - j.y) < 20)) data.junctions.push(j);
+  }
+  console.log(`Seewege zusammengelegt: ${snapped.roads.length}, Kreuzungen auf See: ${snapped.junctions.length}`);
   const where = (n: number) => (n < provinces.length ? provinces[n].name : seaZones[n - provinces.length].name);
   console.log(`Wegkreuzungen: ${bundled.junctions.length} (${bundled.junctions.map((j) => where(j.node)).join(', ')}), Abkürzungen: ${bundled.shortcuts.length}`);
 }

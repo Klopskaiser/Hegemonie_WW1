@@ -229,3 +229,8 @@
   Wegkreuzung (Punkt auf der Karte). Zwischen Zielen ohne eigene Verbindung entsteht eine Abkürzung über die
   Kreuzung (map.shortcuts); die Wegsuche nutzt sie, wenn sie schneller ist, und verlangt Zutritt zum Gebiet
   dazwischen (Landabkürzungen: Tempo je Abschnitt nach Gebiet).
+- Wegbündel überarbeitet: an Land laufen gebündelte Wege auf einem Stamm bis kurz vor die Grenzen; die
+  Kreuzung liegt dort, wo die Abzweige mindestens 30° auseinandergehen, von ihr führen gerade Abzweige zur
+  Grenze (z. B. Archangelsk → Kiruna/Luleå/Tromsø/Vadsø). Seewege werden global zusammengelegt: längere Wege
+  sind Rückgrat, kürzere übernehmen deren Verlauf, wo sie ihm über ≥ 40 km auf ≤ 25 km nahekommen
+  (Kreuzungspunkte unter 20 km Abstand zusammengefasst).

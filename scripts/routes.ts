@@ -5,7 +5,7 @@
 //     zwischen den Zielen über die Kreuzung (ohne Umweg über die Stadt bzw. die Mitte des Seegebiets).
 
 import type { MapData } from '../src/game/mapdata.ts';
-import { closestOnEdge, edgeLength, edgePoint, edgePoints, edgeSlice, isSea, nodeCount, nodeNeighbors } from '../src/game/graph.ts';
+import { edgePoints, isSea, nodeCount, nodeNeighbors } from '../src/game/graph.ts';
 import { pointInMulti, type MultiPoly, type Pt } from '../src/game/geom.ts';
 
 type Road = NonNullable<MapData['roads']>[number];
@@ -124,13 +124,78 @@ export function waterRoutes(map: MapData, anyLand: (x: number, y: number) => boo
   return out;
 }
 
-/** Gemeinsame Strecke (km) zweier Wege ab u, solange sie höchstens D km auseinanderliegen */
-function sharedRun(map: MapData, u: number, v: number, w: number, D: number): number {
-  const lv = edgeLength(map, u, v), lw = edgeLength(map, u, w);
-  const L = Math.min(lv, lw);
+
+// ---------------------------------------------------------------- Polylinien-Werkzeuge
+
+interface Line { pts: Pt[]; cum: number[]; len: number }
+
+function line(pts: Pt[]): Line {
+  const cum = [0];
+  for (let k = 1; k < pts.length; k++) cum.push(cum[k - 1] + Math.hypot(pts[k][0] - pts[k - 1][0], pts[k][1] - pts[k - 1][1]));
+  return { pts, cum, len: cum[cum.length - 1] };
+}
+
+function pointAt(l: Line, s: number): Pt {
+  s = Math.max(0, Math.min(l.len, s));
+  for (let k = 0; k + 1 < l.pts.length; k++) {
+    if (s <= l.cum[k + 1] || k === l.pts.length - 2) {
+      const seg = l.cum[k + 1] - l.cum[k];
+      const t = seg > 0 ? (s - l.cum[k]) / seg : 0;
+      return [l.pts[k][0] + (l.pts[k + 1][0] - l.pts[k][0]) * t, l.pts[k][1] + (l.pts[k + 1][1] - l.pts[k][1]) * t];
+    }
+  }
+  return l.pts[l.pts.length - 1];
+}
+
+/** Teilstück zwischen den Bogenlängen s0 < s1 (mit den Knickpunkten dazwischen) */
+function sliceLine(l: Line, s0: number, s1: number): Pt[] {
+  const out: Pt[] = [pointAt(l, s0)];
+  for (let k = 1; k + 1 < l.pts.length; k++) if (l.cum[k] > s0 && l.cum[k] < s1) out.push(l.pts[k]);
+  out.push(pointAt(l, s1));
+  return out;
+}
+
+/** Nächster Punkt der Linie zu p: Bogenlänge und Abstand */
+function projectOn(l: Line, p: Pt): { s: number; d: number } {
+  let best = { s: 0, d: Infinity };
+  for (let k = 0; k + 1 < l.pts.length; k++) {
+    const [ax, ay] = l.pts[k], [bx, by] = l.pts[k + 1];
+    const dx = bx - ax, dy = by - ay, l2 = dx * dx + dy * dy;
+    const t = l2 > 0 ? Math.max(0, Math.min(1, ((p[0] - ax) * dx + (p[1] - ay) * dy) / l2)) : 0;
+    const d = Math.hypot(ax + dx * t - p[0], ay + dy * t - p[1]);
+    if (d < best.d) best = { s: l.cum[k] + (l.cum[k + 1] - l.cum[k]) * t, d };
+  }
+  return best;
+}
+
+/** Douglas-Peucker */
+function simplify(pts: Pt[], tol: number): Pt[] {
+  if (pts.length <= 2) return pts;
+  const [a, b] = [pts[0], pts[pts.length - 1]];
+  let idx = -1, dmax = 0;
+  for (let k = 1; k + 1 < pts.length; k++) {
+    const dx = b[0] - a[0], dy = b[1] - a[1], l2 = dx * dx + dy * dy;
+    const t = l2 > 0 ? Math.max(0, Math.min(1, ((pts[k][0] - a[0]) * dx + (pts[k][1] - a[1]) * dy) / l2)) : 0;
+    const d = Math.hypot(a[0] + dx * t - pts[k][0], a[1] + dy * t - pts[k][1]);
+    if (d > dmax) { dmax = d; idx = k; }
+  }
+  if (dmax <= tol) return [a, b];
+  return [...simplify(pts.slice(0, idx + 1), tol).slice(0, -1), ...simplify(pts.slice(idx), tol)];
+}
+
+const angleBetween = (u: Pt, v: Pt) => {
+  const c = (u[0] * v[0] + u[1] * v[1]) / Math.max(1e-9, Math.hypot(u[0], u[1]) * Math.hypot(v[0], v[1]));
+  return (Math.acos(Math.max(-1, Math.min(1, c))) * 180) / Math.PI;
+};
+
+// ---------------------------------------------------------------- Landwege bündeln
+
+/** Gemeinsame Strecke (km) zweier Linien ab ihrem gemeinsamen Anfang, solange höchstens D km auseinander */
+function sharedRun(a: Line, b: Line, D: number): number {
+  const L = Math.min(a.len, b.len);
   let s = 4;
   for (; s <= L; s += 3) {
-    const p = edgePoint(map, u, v, s / lv), q = edgePoint(map, u, w, s / lw);
+    const p = pointAt(a, s), q = pointAt(b, s);
     if (Math.hypot(p[0] - q[0], p[1] - q[1]) > D) break;
   }
   return Math.max(0, s - 3);
@@ -139,90 +204,189 @@ function sharedRun(map: MapData, u: number, v: number, w: number, D: number): nu
 export interface BundleResult { roads: Road[]; shortcuts: Shortcut[]; junctions: { node: number; x: number; y: number }[] }
 
 /**
- * Wege bündeln: Von einem Knoten u aus dicht nebeneinander laufende Wege (Land: höchstens 15 km Abstand
- * über ≥ 60 km und ≥ 20 % der Länge – das bleibt selten; See: 35 km, ≥ 50 km) bekommen einen gemeinsamen
- * Abschnitt bis zur Kreuzung. Zwischen den Zielen entstehen Abkürzungen über die Kreuzung.
+ * Landwege bündeln (selten): Laufen Wege von einer Stadt aus lange dicht nebeneinander (≤ 20 km über
+ * ≥ 80 km und ≥ 25 % der Länge), teilen sie sich den Weg bis zu einer Kreuzung. Von dort zweigt jeder Weg
+ * möglichst gerade zur Grenze ab; die Kreuzung liegt so, dass die Abzweige nicht zu flach abgehen (≥ 30°,
+ * ein durchgehender Weg ausgenommen). Zwischen Zielen ohne eigene Verbindung entsteht eine Abkürzung.
  */
 export function bundleRoutes(map: MapData, shapes: MultiPoly[]): BundleResult {
   const P = map.provinces.length;
   const roads: Road[] = [];
   const shortcuts: Shortcut[] = [];
   const junctions: BundleResult['junctions'] = [];
+  const D = 20, minRun = 80, minShare = 0.25, minAngle = 30;
   const adjacent = (a: number, b: number) => nodeNeighbors(map, a).includes(b);
-  const provinceAt = (x: number, y: number, cands: number[]) => cands.find((c) => c >= 0 && c < P && pointInMulti(x, y, shapes[c])) ?? -1;
-  /** Anteile (von–bis) der Länge, die im Gebiet von `mid` liegen */
-  const spanIn = (pts: Pt[], a: number, mid: number, b: number): [number, number] => {
-    const cum = [0];
-    for (let k = 1; k < pts.length; k++) cum.push(cum[k - 1] + Math.hypot(pts[k][0] - pts[k - 1][0], pts[k][1] - pts[k - 1][1]));
-    const len = cum[cum.length - 1] || 1;
-    let f0 = -1, f1 = -1;
-    for (let k = 0; k + 1 < pts.length; k++) {
-      const n = Math.max(1, Math.ceil((cum[k + 1] - cum[k]) / 2));
-      for (let s = 0; s <= n; s++) {
-        const t = s / n;
-        const x = pts[k][0] + (pts[k + 1][0] - pts[k][0]) * t, y = pts[k][1] + (pts[k + 1][1] - pts[k][1]) * t;
-        if (provinceAt(x, y, [mid, a, b]) === mid) {
-          const f = (cum[k] + (cum[k + 1] - cum[k]) * t) / len;
-          if (f0 < 0) f0 = f;
-          f1 = f;
-        }
-      }
+  const inProv = (i: number, p: Pt) => pointInMulti(p[0], p[1], shapes[i]);
+  const straightIn = (a: Pt, b: Pt, provs: number[]) => {
+    const n = Math.max(2, Math.ceil(Math.hypot(b[0] - a[0], b[1] - a[1]) / 3));
+    let bad = 0;
+    for (let k = 1; k < n; k++) {
+      const p: Pt = [a[0] + ((b[0] - a[0]) * k) / n, a[1] + ((b[1] - a[1]) * k) / n];
+      if (!provs.some((i) => inProv(i, p))) bad++;
     }
-    return f0 < 0 ? [0.5, 0.5] : [f0, f1];
+    return bad <= 1;
   };
-  for (let u = 0; u < nodeCount(map); u++) {
-    const land = !isSea(map, u);
-    const D = land ? 10 : 35, minRun = land ? 90 : 50, minShare = land ? 0.3 : 0.15;
-    const nb = nodeNeighbors(map, u).filter((v) => isSea(map, v) === !land);
-    // Kandidatenpaare und Gruppen (Union-Find)
+  const splitOf = (pts: Pt[], u: number, m: number) => {
+    const l = line(pts);
+    for (let s = 0; s <= l.len; s += 2) {
+      const p = pointAt(l, s);
+      if (!inProv(u, p) && inProv(m, p)) return Math.round((s / Math.max(1, l.len)) * 1000) / 1000;
+    }
+    return 0.5;
+  };
+  for (let u = 0; u < P; u++) {
+    const nb = nodeNeighbors(map, u).filter((v) => !isSea(map, v));
+    const lines = new Map(nb.map((v) => [v, line(edgePoints(map, u, v))]));
+    // Grenzübertritt je Weg (Bogenlänge)
+    const border = new Map(nb.map((v) => {
+      const l = lines.get(v)!;
+      let s = 0;
+      // Grenze = erster Punkt im Gebiet des Nachbarn (Wasser an der Küste zählt nicht)
+      for (; s <= l.len; s += 2) if (inProv(v, pointAt(l, s))) break;
+      return [v, Math.min(l.len, s)] as [number, number];
+    }));
     const parent = new Map(nb.map((v) => [v, v]));
     const find = (x: number): number => (parent.get(x) === x ? x : find(parent.get(x)!));
     const run = new Map<string, number>();
     for (let i = 0; i < nb.length; i++) for (let j = i + 1; j < nb.length; j++) {
-      const s = sharedRun(map, u, nb[i], nb[j], D);
-      const L = Math.min(edgeLength(map, u, nb[i]), edgeLength(map, u, nb[j]));
-      if (s >= minRun && s >= L * minShare) {
+      const a = lines.get(nb[i])!, b = lines.get(nb[j])!;
+      const s = sharedRun(a, b, D);
+      if (s >= minRun && s >= Math.min(a.len, b.len) * minShare) {
         run.set(`${nb[i]}:${nb[j]}`, s);
         run.set(`${nb[j]}:${nb[i]}`, s);
         parent.set(find(nb[i]), find(nb[j]));
       }
     }
+    if (!run.size) continue;
     const groups = new Map<number, number[]>();
-    for (const v of nb) if (run.size) (groups.get(find(v)) ?? groups.set(find(v), []).get(find(v))!).push(v);
+    for (const v of nb) (groups.get(find(v)) ?? groups.set(find(v), []).get(find(v))!).push(v);
     for (const g of groups.values()) {
       if (g.length < 2) continue;
-      // Bezugsweg: der mit den meisten dicht laufenden Partnern
       const ref = g.reduce((x, y) => (g.filter((m) => run.has(`${y}:${m}`)).length > g.filter((m) => run.has(`${x}:${m}`)).length ? y : x));
       const members = [ref, ...g.filter((m) => m !== ref && run.has(`${ref}:${m}`))];
       if (members.length < 2) continue;
-      const T = Math.min(...members.slice(1).map((m) => run.get(`${ref}:${m}`)!));
-      const lenRef = edgeLength(map, u, ref);
-      const trunk = edgeSlice(map, u, ref, 0, T / lenRef);
+      const refLine = lines.get(ref)!;
+      // Kreuzung: innerhalb der Provinz, vor allen Grenzübertritten, mit ausreichend steilen Abzweigen
+      // der Stamm darf über die gemeinsame Strecke hinaus bis kurz vor die Grenzen führen, damit die
+      // Abzweige steil genug werden
+      const tMax = Math.min(...members.map((m) => border.get(m)! - 15));
+      if (tMax < minRun * 0.5) continue;
+      let best: { t: number; score: number } | null = null;
+      for (let t = Math.min(minRun * 0.5, tMax); t <= tMax; t += 5) {
+        const J = pointAt(refLine, t), back = pointAt(refLine, Math.max(0, t - 10));
+        const dir: Pt = [J[0] - back[0], J[1] - back[1]];
+        // Abzweige untereinander nicht zu flach (≥ minAngle) und nicht zurück (≤ 120° zur Stammrichtung)
+        const dirs = members.map((m) => {
+          const B = pointAt(lines.get(m)!, border.get(m)!);
+          return [B[0] - J[0], B[1] - J[1]] as Pt;
+        });
+        let spread = 180;
+        for (let i = 0; i < dirs.length; i++) for (let j = i + 1; j < dirs.length; j++) spread = Math.min(spread, angleBetween(dirs[i], dirs[j]));
+        const ok = spread >= minAngle && dirs.every((d) => angleBetween(dir, d) <= 120)
+          && members.every((m) => straightIn(J, pointAt(lines.get(m)!, border.get(m)!), [u, m]));
+        const score = (ok ? 1000 : 0) + spread + t / 100;
+        if (!best || score > best.score) best = { t, score };
+        if (ok) break; // frühester Punkt mit steilen Abzweigen
+      }
+      if (!best) continue;
+      const trunk = sliceLine(refLine, 0, best.t);
       const J = trunk[trunk.length - 1];
       junctions.push({ node: u, x: r1(J[0]), y: r1(J[1]) });
+      // Abzweige: gerade zur Grenze, sofern das an Land bleibt, sonst entlang des bisherigen Weges
       const tails = new Map<number, Pt[]>();
       for (const m of members) {
-        const f = m === ref ? T / lenRef : closestOnEdge(map, u, m, J[0], J[1]).f;
-        tails.set(m, edgeSlice(map, u, m, f, 1));
+        const l = lines.get(m)!;
+        const b = border.get(m)!;
+        const B = pointAt(l, b);
+        tails.set(m, straightIn(J, B, [u, m])
+          ? [J, ...sliceLine(l, b, l.len)]
+          : [J, ...sliceLine(l, projectOn(l, J).s, l.len).slice(1)]);
       }
       for (const m of members) {
-        const pts: Pt[] = [...trunk, ...tails.get(m)!.slice(m === ref ? 1 : 0)];
-        let split = 0.5;
-        if (land) {
-          const [, f1] = spanIn(pts, -1, u, m);
-          split = Math.round(f1 * 1000) / 1000;
-        }
-        roads.push({ a: u, b: m, pts: flat(pts), split });
+        const pts = simplify([...trunk, ...tails.get(m)!.slice(1)], 0.5);
+        roads.push({ a: u, b: m, pts: flat(pts), split: splitOf(pts, u, m) });
       }
-      // Abkürzungen zwischen den Zielen über die Kreuzung
       for (let i = 0; i < members.length; i++) for (let j = i + 1; j < members.length; j++) {
         const a = members[i], b = members[j];
         if (adjacent(a, b)) continue;
-        const pts: Pt[] = [...[...tails.get(a)!].reverse(), J, ...tails.get(b)!];
-        const [f0, f1] = land ? spanIn(pts, a, u, b) : [0.5, 0.5];
-        shortcuts.push({ a, b, via: u, pts: flat(pts), f0: Math.round(f0 * 1000) / 1000, f1: Math.round(f1 * 1000) / 1000 });
+        const pts: Pt[] = [...[...tails.get(a)!].reverse(), ...tails.get(b)!.slice(1)];
+        const l = line(pts);
+        let f0 = -1, f1 = -1;
+        for (let s = 0; s <= l.len; s += 2) if (inProv(u, pointAt(l, s))) { if (f0 < 0) f0 = s / l.len; f1 = s / l.len; }
+        shortcuts.push({ a, b, via: u, pts: flat(pts), f0: Math.round(Math.max(0, f0) * 1000) / 1000, f1: Math.round(Math.max(0, f1) * 1000) / 1000 });
       }
     }
   }
   return { roads, shortcuts, junctions };
+}
+
+// ---------------------------------------------------------------- Seewege zusammenlegen
+
+/**
+ * Seewege (See–See und Hafen–See ab dem Hafen) laufen oft eng nebeneinander her. Längere Wege werden zum
+ * Rückgrat; kürzere übernehmen dessen Verlauf, wo sie ihm über ≥ 40 km auf ≤ 25 km nahekommen, und
+ * verlassen es an einer Kreuzung. Die Verbindungen bleiben, es entstehen nur weniger sichtbare Linien.
+ */
+export function snapSeaLanes(map: MapData): { roads: Road[]; junctions: BundleResult['junctions'] } {
+  const D = 25, minRun = 40, step = 4;
+  const lanes: { a: number; b: number; fixed: number; pts: Pt[]; len: number }[] = [];
+  for (let u = 0; u < nodeCount(map); u++) {
+    for (const v of nodeNeighbors(map, u)) {
+      if (v < u || (!isSea(map, u) && !isSea(map, v))) continue;
+      const pts = edgePoints(map, u, v);
+      // Hafenwege: Stadt → Hafen bleibt, verlegt wird nur der Teil auf See
+      lanes.push({ a: u, b: v, fixed: isSea(map, u) ? 0 : 1, pts, len: line(pts).len });
+    }
+  }
+  lanes.sort((x, y) => y.len - x.len);
+  const backbone: Line[] = [];
+  const roads: Road[] = [];
+  const junctions: BundleResult['junctions'] = [];
+  for (const lane of lanes) {
+    const head = lane.pts.slice(0, lane.fixed);
+    const sea = line(lane.pts.slice(lane.fixed));
+    const samples: { s: number; p: Pt }[] = [];
+    for (let s = 0; s < sea.len; s += step) samples.push({ s, p: pointAt(sea, s) });
+    samples.push({ s: sea.len, p: pointAt(sea, sea.len) });
+    const hits = samples.map(({ p }) => {
+      let best: { b: number; s: number; d: number } | null = null;
+      for (let b = 0; b < backbone.length; b++) {
+        const pr = projectOn(backbone[b], p);
+        if (pr.d <= D && (!best || pr.d < best.d)) best = { b, s: pr.s, d: pr.d };
+      }
+      return best;
+    });
+    const seaPart: Pt[] = [];
+    let changed = false;
+    let k = 0;
+    while (k < samples.length) {
+      const h = hits[k];
+      if (h) {
+        let e = k;
+        while (e + 1 < samples.length && hits[e + 1] && hits[e + 1]!.b === h.b) e++;
+        if (samples[e].s - samples[k].s >= minRun) {
+          const bl = backbone[h.b];
+          const s0 = h.s, s1 = hits[e]!.s;
+          const part = s0 <= s1 ? sliceLine(bl, s0, s1) : sliceLine(bl, s1, s0).reverse();
+          if (k > 0) junctions.push({ node: lane.a, x: r1(part[0][0]), y: r1(part[0][1]) });
+          if (e < samples.length - 1) junctions.push({ node: lane.a, x: r1(part[part.length - 1][0]), y: r1(part[part.length - 1][1]) });
+          seaPart.push(...part);
+          changed = true;
+          k = e + 1;
+          continue;
+        }
+      }
+      seaPart.push(samples[k].p);
+      k++;
+    }
+    // Anfang und Ende des Seeteils exakt erhalten
+    const start = lane.pts[lane.fixed], end = lane.pts[lane.pts.length - 1];
+    if (seaPart[0][0] !== start[0] || seaPart[0][1] !== start[1]) seaPart.unshift(start);
+    const last = seaPart[seaPart.length - 1];
+    if (last[0] !== end[0] || last[1] !== end[1]) seaPart.push(end);
+    const finalPts = changed ? [...head, ...seaPart] : lane.pts;
+    if (changed) roads.push({ a: lane.a, b: lane.b, pts: flat(finalPts), split: 0.5 });
+    backbone.push(line(finalPts.slice(lane.fixed)));
+  }
+  return { roads, junctions };
 }
