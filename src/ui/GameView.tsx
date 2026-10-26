@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState, useRef } from 'react';
 import { ALL_RES, DAY, HOUR, RES_NAMES, SPEEDS } from '../game/balance.ts';
-import { atWar } from '../game/diplomacy.ts';
+import { atWar, hasRightOfWay } from '../game/diplomacy.ts';
 import { nodeName } from '../game/graph.ts';
 import { armyLocation, engagedTarget, isRangedOnly, planRoute, routePoints, type MoveTarget } from '../game/military.ts';
-import type { Action } from '../game/actions.ts';
+import { targetOwners, type Action } from '../game/actions.ts';
 import { MultiArmyPanel } from './MultiArmyPanel.tsx';
 import { UNITS, type UnitType } from '../game/balance.ts';
 import type { Army } from '../game/types.ts';
@@ -42,6 +42,8 @@ export function GameView({ start, onExit }: { start: SessionStart; onExit(): voi
   const [hoverTarget, setHoverTarget] = useState<MoveTarget | null>(null);
   /** nach dem Teilen auszuwählende Armee (sobald sie im Spielstand auftaucht) */
   const [pendingSelect, setPendingSelect] = useState<number | null>(null);
+  /** Rückfrage: Marsch ins Gebiet einer Nation, mit der Frieden herrscht */
+  const [warConfirm, setWarConfirm] = useState<{ target: MoveTarget | { army: number }; nations: string[] } | null>(null);
   const prevSelection = useRef<number[]>([]);
   const [panel, setPanel] = useState<SidePanel | null>(null);
   const [mode, setMode] = useState<MapMode>('political');
@@ -91,8 +93,10 @@ export function GameView({ start, onExit }: { start: SessionStart; onExit(): voi
     const dest = 'node' in hoverTarget ? nodeName(map, hoverTarget.node)
       : `Weg ${nodeName(map, hoverTarget.road.a)} – ${nodeName(map, hoverTarget.road.b)}`;
     let longest = 0;
+    const neutral = targetOwners(map, state, hoverTarget)
+      .filter((o) => o !== state.playerNation && !atWar(state, state.playerNation, o) && !hasRightOfWay(state, state.playerNation, o));
     const out = own.slice(0, 12).map((a) => {
-      const r = planRoute(state, map, a, state.time, hoverTarget);
+      const r = planRoute(state, map, neutral.length ? { ...a, warOn: neutral } : a, state.time, hoverTarget);
       if (!r) return { pts: [] as [number, number][], label: '' };
       longest = Math.max(longest, r.hours);
       const pts = routePoints(map, r.path, r.startFrac ?? 0, r.endFrac ?? 1);
@@ -102,7 +106,8 @@ export function GameView({ start, onExit }: { start: SessionStart; onExit(): voi
     const first = out.find((x) => x.pts.length > 1);
     if (!first) return [{ pts: [], label: `${dest}: kein Weg` }];
     const eta = state.paused ? `${Math.round(longest)} h Spielzeit` : fmtDuration((longest * HOUR) / state.speed);
-    first.label = `${'landing' in first && first.landing ? 'Landung: ' : ''}${dest} · ${eta}${own.length > 1 ? ` (${own.length} Armeen)` : ''}`;
+    const war = neutral.length ? `⚔ Krieg mit ${neutral.map((o) => map.nations.find((n) => n.id === o)?.name ?? o).join(', ')} · ` : '';
+    first.label = `${war}${'landing' in first && first.landing ? 'Landung: ' : ''}${dest} · ${eta}${own.length > 1 ? ` (${own.length} Armeen)` : ''}`;
     return out;
   }, [own, hoverTarget, state, map]);
 
@@ -208,12 +213,25 @@ export function GameView({ start, onExit }: { start: SessionStart; onExit(): voi
     setSelectedArmies([]);
     setSelected(node !== null && node < map.provinces.length ? node : null);
   };
-  const moveAction = (id: number, t: MoveTarget): Action => ('node' in t
-    ? { type: 'move', army: id, to: t.node }
-    : { type: 'move', army: id, to: t.road.a, toward: t.road.b, frac: t.road.f });
+  const moveAction = (id: number, t: MoveTarget, declareWar = false): Action => ({
+    ...('node' in t
+      ? { type: 'move' as const, army: id, to: t.node }
+      : { type: 'move' as const, army: id, to: t.road.a, toward: t.road.b, frac: t.road.f }),
+    ...(declareWar ? { declareWar: true } : {}),
+  });
+  /** Nationen am Ziel, mit denen Frieden herrscht (ohne Durchmarschrecht): Marsch dorthin bedeutet Krieg */
+  const neutralAt = (t: MoveTarget) => targetOwners(map, state, t)
+    .filter((o) => o !== state.playerNation && !atWar(state, state.playerNation, o) && !hasRightOfWay(state, state.playerNation, o));
   /** Rechtsklick: alle ausgewählten eigenen Armeen marschieren dorthin bzw. greifen an */
-  const onTarget = async (t: MoveTarget | { army: number }) => {
+  const onTarget = async (t: MoveTarget | { army: number }, confirmed = false) => {
     if (!own.length) return;
+    const place = 'army' in t ? armyLocation(armies.find((b) => b.id === t.army) ?? own[0], state.time) : t;
+    // Ziel bei einer Nation im Frieden: erst nachfragen, dann mit Kriegserklärung beim Eintreffen
+    const neutral = neutralAt(place);
+    if (neutral.length && !confirmed) {
+      setWarConfirm({ target: t, nations: neutral });
+      return;
+    }
     const errors: string[] = [];
     for (const a of own) {
       let action: Action;
@@ -223,8 +241,8 @@ export function GameView({ start, onExit }: { start: SessionStart; onExit(): voi
         // reine Fernkampfverbände beschießen Feinde, alle anderen marschieren zum Ziel
         action = isRangedOnly(a) && atWar(state, state.playerNation, other.owner)
           ? { type: 'attack', army: a.id, target: other.id }
-          : moveAction(a.id, armyLocation(other, state.time));
-      } else action = moveAction(a.id, t);
+          : moveAction(a.id, place, confirmed);
+      } else action = moveAction(a.id, t, confirmed);
       const r = await session.act(action);
       if (!r.ok) errors.push(r.error);
     }
@@ -311,6 +329,25 @@ export function GameView({ start, onExit }: { start: SessionStart; onExit(): voi
             setDifficulty={session.setDifficulty} setBridge={session.setBridge} onClose={() => setPanel(null)} />
         )}
         {state.winner && !endSeen && <GameOver map={map} state={state} onMenu={exit} onClose={() => setEndSeen(true)} />}
+        {warConfirm && (
+          <div className="gameover-backdrop" onClick={() => setWarConfirm(null)}>
+            <section className="window gameover" onClick={(e) => e.stopPropagation()}>
+              <header className="window-title"><span>Kriegserklärung</span></header>
+              <div className="window-body">
+                <p>
+                  Mit {warConfirm.nations.map((o) => map.nations.find((n) => n.id === o)?.name ?? o).join(' und ')} herrscht Frieden.
+                  Sobald deine Truppen dort eintreffen, wird der Krieg erklärt und es wird gekämpft.
+                </p>
+                <div className="btn-row">
+                  <button className="btn primary" onClick={() => { const w = warConfirm; setWarConfirm(null); void onTarget(w.target, true); }}>
+                    Ja, Marschbefehl erteilen
+                  </button>
+                  <button className="btn" onClick={() => setWarConfirm(null)}>Abbrechen</button>
+                </div>
+              </div>
+            </section>
+          </div>
+        )}
 
         {army ? (
           <ArmyPanel map={map} state={state} army={army} armies={armies} act={session.act} onSelectArmy={selectArmy} onSplit={setPendingSelect}

@@ -3,7 +3,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Res } from '../game/balance.ts';
-import { closestOnEdge, edgePoints, edgeVia, harborSea, isSea, nodeCount, nodeNeighbors, nodePos } from '../game/graph.ts';
+import { closestOnEdge, edgeParts, edgePoints, edgeSlice, edgeVia, harborSea, isSea, nodeCount, nodeNeighbors, nodePos } from '../game/graph.ts';
 import type { MapData } from '../game/mapdata.ts';
 import { armyPosition, isNaval, normalizeTarget, remainingRoute, unitCount, type MoveTarget } from '../game/military.ts';
 import { makeRng } from '../game/rng.ts';
@@ -229,15 +229,8 @@ export function MapCanvas(props: Props) {
       const node = harborSea(map, i);
       if (node === null) return null;
       const c = map.seas[node - map.provinces.length].center;
-      let best: [number, number] | null = null, bd = Infinity;
-      for (const b of map.borders) {
-        if (b.b >= 0 || b.a !== i) continue;
-        for (let k = 0; k < b.segs.length; k += 2) {
-          const d = Math.hypot(b.segs[k] - c[0], b.segs[k + 1] - c[1]);
-          if (d < bd) { bd = d; best = [b.segs[k], b.segs[k + 1]]; }
-        }
-      }
-      if (!best) best = mp.center;
+      // Hafen am Knickpunkt des Wasserwegs (Küstenpunkt zum vorgelagerten Seegebiet)
+      const best = edgeVia(map, i, node) ?? mp.center;
       const len = Math.hypot(c[0] - best[0], c[1] - best[1]) || 1;
       return { x: best[0], y: best[1], dx: (c[0] - best[0]) / len, dy: (c[1] - best[1]) / len };
     });
@@ -401,8 +394,8 @@ export function MapCanvas(props: Props) {
           if (!visible(X(a[0]), Y(a[1]), 600) && !visible(X(b[0]), Y(b[1]), 600)) continue;
           e.pts.forEach(([x, y], k) => (k ? ctx.lineTo(X(x), Y(y)) : ctx.moveTo(X(x), Y(y))));
         }
-        ctx.strokeStyle = land ? 'rgba(105, 75, 45, 0.6)' : 'rgba(45, 80, 100, 0.32)';
-        ctx.lineWidth = land ? 1.3 : 1;
+        ctx.strokeStyle = land ? 'rgba(105, 75, 45, 0.6)' : 'rgba(35, 70, 95, 0.5)';
+        ctx.lineWidth = land ? 1.3 : 1.2;
         ctx.setLineDash(land ? [] : [4, 4]);
         ctx.stroke();
       }
@@ -415,12 +408,11 @@ export function MapCanvas(props: Props) {
       const rails: [number, number, number, number][] = [];
       map.provinces.forEach((mp, i) => {
         if (!shown(i) || p.provinces![i].buildings.railroad <= 0) return;
-        for (const n of mp.neighbors) {
-          const via = edgeVia(map, i, n);
-          if (!via) continue;
-          const x0 = X(mp.center[0]), y0 = Y(mp.center[1]);
-          const x1 = X(via[0]), y1 = Y(via[1]);
-          if (visible(x0, y0, 400) || visible(x1, y1, 400)) rails.push([x0, y0, x1, y1]);
+        for (const n of mp.links ?? mp.neighbors) {
+          const [l1, len] = edgeParts(map, i, n);
+          const pts = edgeSlice(map, i, n, 0, len > 0 ? l1 / len : 0.5);
+          if (!pts.some(([x, y]) => visible(X(x), Y(y), 400))) continue;
+          for (let k = 0; k + 1 < pts.length; k++) rails.push([X(pts[k][0]), Y(pts[k][1]), X(pts[k + 1][0]), Y(pts[k + 1][1])]);
         }
       });
       drawRails(ctx, rails, s);

@@ -6,7 +6,7 @@ import {
   type Building, type Category, type Cost, type Res, type UnitType,
 } from './balance.ts';
 import { validShares } from './economy.ts';
-import { atWar, relation, relationRank, RELATION_NAMES, setRelation } from './diplomacy.ts';
+import { atWar, hasRightOfWay, relation, relationRank, RELATION_NAMES, setRelation } from './diplomacy.ts';
 import { isSea, nodeNeighbors } from './graph.ts';
 import type { MapData, Resource } from './mapdata.ts';
 import { acceptOffer, cancelOffer, postOffer } from './market.ts';
@@ -31,7 +31,11 @@ export type ArmyAction =
    * Marsch zu einem Knoten (Provinz oder Seegebiet P + Index). Mit `toward` und `frac` ist das Ziel
    * ein Punkt auf dem Weg von `to` nach `toward` (Anteil 0..1 ab `to`); dort bleibt die Armee stehen.
    */
-  | { type: 'move'; army: number; to: number; toward?: number; frac?: number }
+  | {
+    type: 'move'; army: number; to: number; toward?: number; frac?: number;
+    /** Ziel im Gebiet einer Nation, mit der Frieden herrscht: beim Betreten wird ihr der Krieg erklärt */
+    declareWar?: boolean;
+  }
   | { type: 'stop'; army: number }
   /** Fernkampfziel setzen (null = aufheben) */
   | { type: 'attack'; army: number; target: number | null }
@@ -249,6 +253,12 @@ export function applyAction(ctx: ActionContext, nation: string, action: Action):
   }
 }
 
+/** Besitzer des Zielortes (Provinz bzw. die Provinzen an beiden Enden eines Weges) */
+export function targetOwners(map: MapData, state: GameState, t: MoveTarget): string[] {
+  const nodes = 'node' in t ? [t.node] : [t.road.a, t.road.b];
+  return [...new Set(nodes.filter((n) => !isSea(map, n)).map((n) => state.provinces[n].owner))];
+}
+
 function without(units: Army['units'], u: UnitType): Army['units'] {
   const out = { ...units };
   out[u] = (out[u] ?? 0) - 1;
@@ -287,10 +297,13 @@ function applyArmyAction(ctx: ActionContext, nation: string, action: ArmyAction)
         if (!nodeNeighbors(map, action.to).includes(action.toward) || !(f >= 0 && f <= 1)) return { ok: false, error: 'Ungültiger Wegpunkt' };
         target = { road: { a: action.to, b: action.toward, f } };
       }
+      // Kriegserklärung beim Eintreffen: an die Besitzer des Ziels, mit denen kein Krieg und kein Durchmarsch besteht
+      const warOn = action.declareWar ? targetOwners(map, state, target).filter((o) => o !== nation
+        && !atWar(state, nation, o) && !hasRightOfWay(state, nation, o)) : [];
       // Besatzung: verlässt die letzte Armee eine eigene Stadt, bleibt eine Einheit zurück
       const keep = garrisonKeep(state, map, a);
       if (keep === 'last') return { ok: false, error: 'Die letzte Einheit bleibt als Besatzung in der Stadt' };
-      const mover = keep ? { ...a, units: without(a.units, keep) } : a;
+      const mover = { ...a, units: keep ? without(a.units, keep) : a.units, warOn };
       const plan = planRoute(state, map, mover, state.time, target);
       if (!plan) return { ok: false, error: 'Kein Weg dorthin' };
       if (keep) {
@@ -301,6 +314,7 @@ function applyArmyAction(ctx: ActionContext, nation: string, action: ArmyAction)
       a.target = null;
       a.autoTarget = false;
       a.split = null;
+      a.warOn = warOn.length ? warOn : null;
       startMove(ctx, a, plan.path, plan.then, plan);
       ctx.invalidate();
       return { ok: true };

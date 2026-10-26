@@ -231,3 +231,48 @@ describe('Zeitung: Eroberungen und Schlachten', () => {
     expect(sim.state.provinces[target.id].owner).toBe('DE');
   });
 });
+
+describe('Marsch in neutrales Gebiet', () => {
+  it('ohne Kriegserklärung kein Weg; mit Ankündigung beginnt der Krieg beim Eintreffen', async () => {
+    const { relation } = await import('../src/game/diplomacy.ts');
+    const sim = newSim();
+    const target = map.provinces.find((p) => p.nation === 'NL' && (p.links ?? p.neighbors).some((n) => map.provinces[n].nation === 'DE'))!;
+    const start = map.provinces.find((p) => p.nation === 'DE' && (p.links ?? p.neighbors).includes(target.id))!;
+    const a = cityArmy(sim, 'DE', start.id);
+    expect(sim.apply('DE', { type: 'move', army: a.id, to: target.id }).ok).toBe(false);
+    expect(sim.apply('DE', { type: 'move', army: a.id, to: target.id, declareWar: true }).ok).toBe(true);
+    expect(relation(sim.state, 'DE', 'NL')).toBe('peace');
+    sim.advance(3 * DAY);
+    expect(relation(sim.state, 'DE', 'NL')).toBe('war');
+    expect(sim.state.newsFeed.some((e) => /erklärt Niederlande den Krieg/.test(e.text))
+      || sim.state.newspapers.some((p) => p.items.some((i) => i.kind === 'war'))).toBe(true);
+  });
+
+  it('mit Durchmarschrecht in die fremde Stadt, ohne Krieg', () => {
+    const sim = newSim();
+    sim.apply('DE', { type: 'propose', nation: 'NL', kind: 'rightOfWay' });
+    sim.apply('NL', { type: 'answer', nation: 'DE', accept: true });
+    const target = map.provinces.find((p) => p.nation === 'NL' && (p.links ?? p.neighbors).some((n) => map.provinces[n].nation === 'DE'))!;
+    const start = map.provinces.find((p) => p.nation === 'DE' && (p.links ?? p.neighbors).includes(target.id))!;
+    const a = cityArmy(sim, 'DE', start.id);
+    expect(sim.apply('DE', { type: 'move', army: a.id, to: target.id }).ok).toBe(true);
+    sim.advance(3 * DAY);
+    expect(a.node).toBe(target.id);
+    expect(sim.state.provinces[target.id].owner).toBe('NL');
+  });
+});
+
+describe('Wegenetz', () => {
+  it('2 bis 5 Landwege je Provinz (sofern Nachbarn), Wasserwege 1–2, Inseln bis 4', () => {
+    for (const p of map.provinces) {
+      const links = p.links ?? p.neighbors;
+      expect(links.length).toBeLessThanOrEqual(5);
+      if (p.neighbors.length >= 2) expect(links.length).toBeGreaterThanOrEqual(2);
+      if (p.coastal) {
+        const sea = p.seaLinks ?? p.seas;
+        expect(sea.length).toBeGreaterThanOrEqual(1);
+        expect(sea.length).toBeLessThanOrEqual(p.neighbors.length === 0 ? 4 : 2);
+      }
+    }
+  });
+});

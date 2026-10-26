@@ -41,4 +41,6 @@ export interface MapConfig {
   seaNames: { name: string; at: [number, number] }[];
   /** Historische Ortsnamen, Schlüssel = NAMEASCII */
   renames: Record<string, string>;
+  /** Inseln (Punkt [lon, lat] auf der Insel), die unabhängig von ihrer Größe genau eine Provinz bilden */
+  ownIslands?: [number, number][];
 }

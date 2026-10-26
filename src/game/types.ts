@@ -70,6 +70,8 @@ export interface Army {
   num?: number;
   /** Moral der Infanterie (0..1); Maschinen kennen keine Moral */
   morale?: number;
+  /** Marsch mit angekündigter Kriegserklärung: betritt die Armee Gebiet dieser Nationen, herrscht Krieg */
+  warOn?: string[] | null;
   /** abgetrennt von Armee `from` (Zeitpunkt `at`); ohne Befehl am selben Ort wird sie wieder eingegliedert */
   split?: { from: number; at: number } | null;
   /** Schaden an der jeweils vordersten Einheit eines Typs (< Lebenspunkte) */

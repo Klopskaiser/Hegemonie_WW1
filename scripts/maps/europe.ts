@@ -115,6 +115,9 @@ const config: MapConfig = {
       'Ajaccio': 'lumber', // Korsika: Wald statt Eisen
       'Palermo': 'oil', 'Ploiești': 'oil', 'Bukarest': 'grain', // Öl Sizilien, Rumänien am echten Ölfeld
       'Cork': 'fish', 'Bari': 'fish', 'Vlora': 'fish', // mehr Fisch
+      // sechs Küsten-Getreideprovinzen werden Fischfang, zwei Gasprovinzen Eisen
+      'Danzig': 'fish', 'Barcelona': 'fish', 'Valencia': 'fish', 'Alexandria': 'fish', 'Montpellier': 'fish', 'Jaffa': 'fish',
+      'Mailand': 'iron', 'Agadir': 'iron',
     },
     // Doppel-Öl im Sirte-Becken und im Kaukasus; die Nationen behalten je 2 Doppelprovinzen
     doubles: { add: ['Sirte', 'Jerewan'], remove: ['Bani Walid', 'Samara'] },
@@ -168,6 +171,8 @@ const config: MapConfig = {
     { name: 'Straße von Sizilien', at: [12, 36.5] }, { name: 'Golf von Gabès', at: [11, 34] }, { name: 'Rotes Meer', at: [34, 27.5] },
     { name: 'Golf von Bothnien', at: [21, 64.5] }, { name: 'Kattegat', at: [11.5, 56.5] },
   ],
+  // Sizilien ist eine Provinz (Palermo); die zweite süditalienische Provinz liegt auf dem Festland
+  ownIslands: [[13.36, 38.12]],
   renames: {
     'Istanbul': 'Konstantinopel', 'Saint Petersburg': 'St. Petersburg', 'Kaliningrad': 'Königsberg',
     'Wroclaw': 'Breslau', 'Gdansk': 'Danzig', 'Szczecin': 'Stettin', 'Poznan': 'Posen',

@@ -30,6 +30,10 @@ export interface MapProvince {
   resource: Resource;
   double: boolean;
   neighbors: number[];
+  /** Landwege zu Nachbarprovinzen (Teilmenge von neighbors); fehlt das Feld, gelten alle Nachbarn */
+  links?: number[];
+  /** Wasserwege zu angrenzenden Seegebieten (Teilmenge von seas, Hafenstandort); fehlt das Feld, gelten alle */
+  seaLinks?: number[];
   /** angrenzende Seegebiete (Index in MapData.seas) */
   seas: number[];
 }
@@ -63,6 +67,11 @@ export interface MapData {
   seas: MapSea[];
   /** Grenzlinien zwischen Seegebieten als Segmente [x1,y1,x2,y2, ...] */
   seaBorders: number[];
+  /**
+   * Landwege mit eigenem Verlauf (statt gerade über den Grenzpunkt), wo der gerade Weg übers Wasser
+   * führen würde: Punkte [x1,y1, …] von a nach b; split = Anteil der Länge in Provinz a.
+   */
+  roads?: { a: number; b: number; pts: number[]; split: number }[];
 }
 
 export function distanceKm(map: MapData, a: number, b: number): number {

@@ -202,3 +202,20 @@
   (state.newsFeed); eroberte Städte je Eroberer zusammengefasst („X erobert die Stadt Y (Provinz Y)“,
   Hauptstädte als eigene Meldung), vernichtete Armeen mit Namen und Sieger als Schlachtbericht.
   Eroberte Provinzen erscheinen ganz in der Farbe des Eroberers (keine Schraffur mehr).
+- Wegenetz (Vorgabe): Landwege nur zu einem Teil der Nachbarn – 2 bis 5 je Provinz, 5 selten (≤ 8 %),
+  rund 17 % der Nachbarschaften ohne Weg (bevorzugt bei vielen Wegen, großem Umweg oder kurzer Grenze);
+  zwischen Nachbarländern bleiben mindestens 2 Übergänge, das Netz bleibt zusammenhängend.
+  Wasserwege: je Küstenprovinz 1–2 (Inseln ohne Landnachbarn bis 4), die nächstgelegenen Seegebiete;
+  sie knicken am Hafenpunkt der Küste, Seewege untereinander an einem Punkt der gemeinsamen Grenze.
+  Nachbarschaft (Sicht, Front, Überlaufen) bleibt geografisch.
+- Marsch in Gebiet einer Nation im Frieden/Embargo: Rückfrage; bestätigt, wird der Krieg erklärt, sobald
+  die Truppen ihr Gebiet betreten (danach Kampf). Mit Durchmarschrecht/geteilter Karte darf man in die fremde Stadt.
+- Rohstoffe (Vorgabe): Danzig, Barcelona, Valencia, Alexandria, Montpellier, Jaffa Getreide → Fisch;
+  Mailand, Agadir Gas → Eisen.
+- Landwege übers Wasser: Wo der Weg Stadt → Grenzpunkt → Stadt Wasser quert, führt der Kartenbau ihn per
+  Rasterwegsuche an Land herum (zuerst durch die beiden Provinzen, notfalls über anderes Land) und glättet
+  ihn zu einem eckigen Pfad (map.roads, mit Anteil je Provinz). Ohne Landverbindung (z. B. Kopenhagen–Aarhus)
+  bleibt der gerade Weg übers Wasser (gewollte Ausnahme).
+- Sizilien ist eine Provinz (Palermo, Konfiguration ownIslands); die frühere Provinz Messina liegt in
+  Kalabrien und heißt Catanzaro (Rohstoff Getreide ×2 übernommen). Umbenannte Provinzen erben beim Neubau
+  die Rohstoffe ihrer Vorgängerin; die Reihenfolge der Provinzen bleibt stabil.

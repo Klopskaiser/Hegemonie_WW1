@@ -4,7 +4,7 @@ import {
   BUILDING_DAMAGE_CHANCE, BUILDINGS, DEFECTION, FORTRESS_REDUCTION, HOUR, MILITARY, MINUTE, MORALE, SPLIT_REJOIN, TROOP_MORALE, UNITS,
   type Building, type UnitType,
 } from './balance.ts';
-import { atWar, hasRightOfWay } from './diplomacy.ts';
+import { atWar, hasRightOfWay, setRelation } from './diplomacy.ts';
 import { edgeParts, edgePoint, edgeSlice, isSea, nodeCount, nodeName, nodeNeighbors, nodePos } from './graph.ts';
 import type { MapData } from './mapdata.ts';
 import { armyName } from './names.ts';
@@ -68,7 +68,7 @@ export function canEnter(state: GameState, map: MapData, a: Army, node: number):
   if (isNaval(a)) return false;
   const owner = state.provinces[node].owner;
   if (isRailOnly(a)) return owner === a.owner && state.provinces[node].buildings.railroad > 0;
-  return owner === a.owner || atWar(state, a.owner, owner) || hasRightOfWay(state, a.owner, owner);
+  return owner === a.owner || atWar(state, a.owner, owner) || hasRightOfWay(state, a.owner, owner) || !!a.warOn?.includes(owner);
 }
 
 function landSpeed(state: GameState, a: Army, province: number): number {
@@ -353,7 +353,7 @@ function disembark(ctx: MilitaryContext, fleet: Army, then: number[]): void {
     delete fleet.units[u];
     if (fleet.wounds) delete fleet.wounds[u];
   }
-  const army: Army = { id: ctx.newArmyId(), owner: fleet.owner, node: fleet.node, units: troops.units, morale: fleet.morale };
+  const army: Army = { id: ctx.newArmyId(), owner: fleet.owner, node: fleet.node, units: troops.units, morale: fleet.morale, warOn: fleet.warOn ?? null };
   ctx.state.armies.push(army);
   startMove(ctx, army, then);
   ctx.log(`Truppen gehen bei ${nodeName(ctx.map, then[then.length - 1])} an Land.`, fleet.owner);
@@ -424,6 +424,7 @@ export function processArrivals(ctx: MilitaryContext): void {
         a.move = null;
         a.pos = { a: u, b: v, f: m.endFrac };
         a.node = m.endFrac < 0.5 ? u : v;
+        declareOnArrival(ctx, a);
         const hostile = hostileAt(state, a.node, a.owner, a);
         if (hostile.length > 0) ctx.log(`Kampf bei ${nodeName(map, a.node)}.`, a.owner, isSea(map, a.node) ? undefined : a.node);
         else mergeInto(ctx, a);
@@ -432,6 +433,7 @@ export function processArrivals(ctx: MilitaryContext): void {
       const node = m.path[m.seg + 1];
       a.node = node;
       m.seg++;
+      declareOnArrival(ctx, a);
       const hostile = hostileAt(state, node, a.owner, a);
       if (!isSea(map, node) && !isNaval(a)) {
         const owner = state.provinces[node].owner;
@@ -460,6 +462,17 @@ export function processArrivals(ctx: MilitaryContext): void {
       m.segEnd = m.segStart + segmentDuration(state, map, a, m.seg);
     }
   }
+}
+
+/** Angekündigte Kriegserklärung: betritt die Armee Gebiet einer dieser Nationen, beginnt der Krieg. */
+function declareOnArrival(ctx: MilitaryContext, a: Army): void {
+  if (!a.warOn?.length || isSea(ctx.map, a.node)) return;
+  const owner = ctx.state.provinces[a.node].owner;
+  if (owner === a.owner || !a.warOn.includes(owner) || atWar(ctx.state, a.owner, owner)) return;
+  const name = (id: string) => ctx.map.nations.find((n) => n.id === id)?.name ?? id;
+  setRelation(ctx.state, a.owner, owner, 'war');
+  ctx.log(`${name(a.owner)} erklärt ${name(owner)} den Krieg!`);
+  ctx.invalidate();
 }
 
 /** Nach Ankunft: mit einer stehenden eigenen Armee gleicher Art am Ort zusammenlegen. */

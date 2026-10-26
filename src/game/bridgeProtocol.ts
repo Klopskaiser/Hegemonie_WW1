@@ -16,6 +16,10 @@ export interface MapSummary {
   provinces: {
     id: number; name: string; nation: string; center: [number, number]; capital: boolean; city: boolean;
     coastal: boolean; resource: string; double: boolean; neighbors: number[]; seas: number[];
+    /** Landwege (Bewegung nur entlang dieser Verbindungen und der Seegebiete) */
+    links: number[];
+    /** Wasserwege zu Seegebieten (Index, Knoten = provinceCount + Index) */
+    seaLinks: number[];
   }[];
   seas: { id: number; node: number; name: string; center: [number, number]; seas: number[]; coasts: number[] }[];
 }
@@ -50,6 +54,8 @@ export function mapSummary(map: MapData): MapSummary {
     provinces: map.provinces.map((p) => ({
       id: p.id, name: p.name, nation: p.nation, center: p.center, capital: p.capital, city: p.city,
       coastal: p.coastal, resource: p.resource, double: p.double, neighbors: p.neighbors, seas: p.seas,
+      links: p.links ?? p.neighbors,
+      seaLinks: p.seaLinks ?? p.seas,
     })),
     seas: map.seas.map((z, i) => ({ id: i, node: P + i, name: z.name, center: z.center, seas: z.seas, coasts: z.coasts })),
   };

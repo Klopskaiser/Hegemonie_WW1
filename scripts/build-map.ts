@@ -398,7 +398,7 @@ function voronoiCells(seeds: Seed[], shape: MultiPoly, rnd: () => number, places
   });
 }
 
-interface Prov { nation: string; seed: Seed; shape: MultiPoly; /** namensgebender Ort (größter im unverwackelten Zuschnitt) */ place?: Place }
+interface Prov { nation: string; seed: Seed; shape: MultiPoly; /** namensgebender Ort (größter im unverwackelten Zuschnitt) */ place?: Place; box?: number[] }
 const provs: Prov[] = [];
 
 for (const cfg of config.nations) {
@@ -414,16 +414,43 @@ for (const cfg of config.nations) {
   const cap = own.find((pl) => pl.aliases.includes(cfg.capital)) ?? own.sort((a, b) => b.pop - a.pop)[0];
   if (!cap) throw new Error(`Hauptstadt ${cfg.capital} für ${cfg.id} nicht gefunden`);
   let seeds = kmeansSeeds(cap.pos, pts, count, rnd);
+  const seedOrder = [...seeds];
   // Mittelgroße Inseln werden genau eine eigene Provinz (weder angehängt noch zerteilt);
   // das übrige Gebiet wird mit entsprechend weniger Provinzen neu aufgeteilt.
   const largest = shape.reduce((a, b) => (polyArea(a) > polyArea(b) ? a : b));
-  const islands = shape.filter((part) => part !== largest && polyArea(part) >= ISLAND_OWN && polyArea(part) < ISLAND_MAX
-    && !pointInPoly(cap.pos[0], cap.pos[1], part));
+  const forced = (config.ownIslands ?? []).map((ll) => project(ll));
+  const islands = shape.filter((part) => part !== largest && !pointInPoly(cap.pos[0], cap.pos[1], part)
+    && ((polyArea(part) >= ISLAND_OWN && polyArea(part) < ISLAND_MAX) || forced.some((p) => pointInPoly(p[0], p[1], part))));
   let mainShape = shape;
   const islandProvs: Prov[] = [];
   // Kleinstaaten bekommen Inselprovinzen zusätzlich, statt ihr Festland auszudünnen
   if (!cfg.major) count = Math.min(config.minorMaxProvinces, count + islands.length);
-  if (islands.length && count - islands.length >= 1) {
+  const forcedOnly = islands.length > 0 && islands.every((part) => forced.some((p) => pointInPoly(p[0], p[1], part)))
+    && islands.every((part) => seeds.some((s) => pointInPoly(s.pos[0], s.pos[1], part)));
+  if (forcedOnly) {
+    // vorgegebene Inseln: ein Saatpunkt bleibt auf der Insel (sie wird genau eine Provinz), weitere
+    // Saatpunkte dort rücken an den nächsten Punkt des Festlands – die übrigen Provinzen bleiben unverändert
+    mainShape = shape.filter((part) => !islands.includes(part));
+    const mainPts = pts.filter((p) => !islands.some((part) => pointInPoly(p[0], p[1], part)));
+    for (const part of islands) {
+      const on = seeds.filter((s) => pointInPoly(s.pos[0], s.pos[1], part));
+      const keep = on.reduce((a, b) => {
+        const pop = (s: Seed) => Math.max(0, ...own.filter((pl) => dist(pl.pos, s.pos) < 60).map((pl) => pl.pop));
+        return pop(b) > pop(a) ? b : a;
+      });
+      for (const s of on) {
+        if (s === keep) continue;
+        let best = mainPts[0], bd = Infinity;
+        for (const p of mainPts) {
+          const d = dist(p, s.pos);
+          if (d < bd && !seeds.some((o) => o.pos === p)) { bd = d; best = p; }
+        }
+        s.pos = best;
+      }
+      seeds = seeds.filter((s) => s !== keep);
+      islandProvs.push({ nation: cfg.id, seed: keep, shape: [part] });
+    }
+  } else if (islands.length && count - islands.length >= 1) {
     mainShape = shape.filter((part) => !islands.includes(part));
     const mainPts = pts.filter((p) => !islands.some((part) => pointInPoly(p[0], p[1], part)));
     seeds = kmeansSeeds(cap.pos, mainPts, count - islands.length, rnd);
@@ -435,6 +462,9 @@ for (const cfg of config.nations) {
   }
   const cells = voronoiCells(seeds, mainShape, rnd, own);
   const local: Prov[] = [...seeds.map((s, i) => ({ nation: cfg.id, seed: s, shape: cells[i] })), ...islandProvs];
+  // Reihenfolge der Saatpunkte beibehalten (Provinznummern bleiben stabil, auch für Spielstände)
+  const rank = (pr: Prov) => { const k = seedOrder.indexOf(pr.seed); return k < 0 ? Infinity : k; };
+  local.sort((x, y) => rank(x) - rank(y));
   // Namen wie beim geraden Zuschnitt: größter Ort, dessen nächster Saatpunkt der eigene ist
   for (const pl of own) {
     let best: Prov | null = null, bd = Infinity;
@@ -562,10 +592,12 @@ const biggestPop: number[] = [];
 const provinces: MapProvince[] = provs.map((pr, i) => {
   const shape = pr.shape;
   // Name und Lage: größte Stadt der Provinz (bei der Hauptstadt die Hauptstadt selbst)
-  let place: Place | undefined = pr.place && pointInMulti(pr.place.pos[0], pr.place.pos[1], shape) ? pr.place : undefined;
+  // namensgebende Stadt muss im Hauptteil der Provinz liegen (nicht auf einer angehängten Kleininsel)
+  const mainPart = [shape.reduce((x, y) => (polyArea(x) > polyArea(y) ? x : y))];
+  let place: Place | undefined = pr.place && pointInMulti(pr.place.pos[0], pr.place.pos[1], mainPart) ? pr.place : undefined;
   if (!place) for (const pl of allPlaces) {
     if (pl.nation !== pr.nation || (place && pl.pop <= place.pop)) continue;
-    if (pointInMulti(pl.pos[0], pl.pos[1], shape)) place = pl;
+    if (pointInMulti(pl.pos[0], pl.pos[1], mainPart)) place = pl;
   }
   if (pr.seed.capital) {
     const cfg = config.nations.find((n) => n.id === pr.nation)!;
@@ -638,29 +670,270 @@ const byName = (name: string) => {
   if (!p) { if (process.env.MAP_DEBUG) { console.warn(`Vorgabe: Provinz ${name} nicht gefunden`); return { resource: "", double: false } as unknown as MapProvince; } throw new Error(`Vorgabe: Provinz ${name} nicht gefunden`); }
   return p;
 };
-for (const [name, r] of Object.entries(config.adjust?.resources ?? {})) byName(name).resource = r;
-for (const name of config.adjust?.doubles?.remove ?? []) byName(name).double = false;
-for (const name of config.adjust?.doubles?.add ?? []) byName(name).double = true;
 // Rohstoffe und Doppelprovinzen der bisherigen Karte übernehmen, wenn dieselben Provinzen (Namen)
-// vorliegen – Grenzkorrekturen ändern so die abgestimmte Verteilung nicht. Neu verteilen: --new-resources
+// vorliegen – Grenzkorrekturen ändern so die abgestimmte Verteilung nicht. Neu verteilen: --new-resources.
+// Die festen Vorgaben der Konfiguration gelten danach in jedem Fall.
 {
   const prev = path.join(ROOT, 'public', 'maps', `${config.id}.json`);
   if (!process.argv.includes('--new-resources') && fs.existsSync(prev)) {
     const old = JSON.parse(fs.readFileSync(prev, 'utf8')) as MapData;
-    if (old.provinces.length === provinces.length && old.provinces.every((p, i) => p.name === provinces[i].name)) {
-      old.provinces.forEach((p, i) => {
-        provinces[i].resource = p.resource;
-        provinces[i].double = p.double;
-      });
-      console.log('Rohstoffe und Doppelprovinzen aus der bisherigen Karte übernommen');
+    const byOldName = new Map(old.provinces.map((p) => [p.name, p]));
+    const unmatchedOld = old.provinces.filter((p) => !provinces.some((q) => q.name === p.name && q.nation === p.nation));
+    const renamed: string[] = [];
+    let kept = 0;
+    for (const p of provinces) {
+      let o = byOldName.get(p.name);
+      if (!o || o.nation !== p.nation) {
+        // neu benannte Provinz: Werte einer weggefallenen Provinz derselben Nation übernehmen
+        const i = unmatchedOld.findIndex((x) => x.nation === p.nation);
+        if (i < 0) continue;
+        o = unmatchedOld.splice(i, 1)[0];
+        renamed.push(`${o.name} → ${p.name}`);
+      }
+      p.resource = o.resource;
+      p.double = o.double;
+      kept++;
     }
+    console.log(`Rohstoffe und Doppelprovinzen aus der bisherigen Karte übernommen: ${kept}${renamed.length ? ` (umbenannt: ${renamed.join(', ')})` : ''}`);
   }
 }
+for (const [name, r] of Object.entries(config.adjust?.resources ?? {})) byName(name).resource = r;
+for (const name of config.adjust?.doubles?.remove ?? []) byName(name).double = false;
+for (const name of config.adjust?.doubles?.add ?? []) byName(name).double = true;
 for (const n of config.nations.filter((x) => x.major)) {
   const d = provinces.filter((p) => p.nation === n.id && p.double).length;
   if (d !== 2) throw new Error(`${n.id} hat ${d} Doppelprovinzen statt 2`);
 }
 console.log(resourceReport(provinces));
+
+// ---------------------------------------------------------------- Wegverlauf an Land
+
+const roads: { a: number; b: number; pts: number[]; split: number }[] = [];
+
+/** Liegt der Punkt an Land (in irgendeiner Provinz)? */
+function anyLand(x: number, y: number): boolean {
+  for (const pr of provs) {
+    const bb = pr.box ?? (pr.box = bboxOf(pr.shape));
+    if (x < bb[0] || x > bb[2] || y < bb[1] || y > bb[3]) continue;
+    if (pointInMulti(x, y, pr.shape)) return true;
+  }
+  return false;
+}
+
+/** Liegt die Strecke a–b (Probe alle ~2 km) an Land? */
+function segmentOnLand(a: Pt, b: Pt, onLand: (x: number, y: number) => boolean): boolean {
+  const n = Math.max(2, Math.ceil(dist(a, b) / 2));
+  for (let k = 1; k < n; k++) if (!onLand(a[0] + ((b[0] - a[0]) * k) / n, a[1] + ((b[1] - a[1]) * k) / n)) return false;
+  return true;
+}
+
+/**
+ * Landweg zwischen zwei Nachbarprovinzen, der nicht übers Wasser führt. null = der übliche Weg
+ * über den Grenzpunkt passt (oder es gibt keinen Landweg, z. B. zwischen Inseln).
+ */
+function routeOnLand(u: number, v: number, via: Pt, wide = false): { a: number; b: number; pts: number[]; split: number } | null {
+  const su = provs[u].shape, sv = provs[v].shape;
+  const cu = provinces[u].center as Pt, cv = provinces[v].center as Pt;
+  const inU = (x: number, y: number) => pointInMulti(x, y, su);
+  const inV = (x: number, y: number) => pointInMulti(x, y, sv);
+  // zuerst nur durch die beiden Provinzen, notfalls über beliebiges Land (wide)
+  const onLand = wide ? anyLand : (x: number, y: number) => inU(x, y) || inV(x, y);
+  // nur wo der übliche Weg wirklich übers Wasser führt (durch eine dritte Provinz ist erlaubt);
+  // gibt es keinen Landweg (z. B. Kopenhagen–Aarhus über den Belt), bleibt es beim geraden Weg
+  if (segmentOnLand(cu, via, anyLand) && segmentOnLand(via, cv, anyLand)) return null;
+  // Raster über beide Provinzen
+  const [ux0, uy0, ux1, uy1] = bboxOf(su), [vx0, vy0, vx1, vy1] = bboxOf(sv);
+  const pad = wide ? 0.3 * Math.hypot(Math.max(ux1, vx1) - Math.min(ux0, vx0), Math.max(uy1, vy1) - Math.min(uy0, vy0)) : 0;
+  const x0 = Math.min(ux0, vx0) - pad, y0 = Math.min(uy0, vy0) - pad, x1 = Math.max(ux1, vx1) + pad, y1 = Math.max(uy1, vy1) + pad;
+  const h = Math.max(3, Math.hypot(x1 - x0, y1 - y0) / 260);
+  const W = Math.ceil((x1 - x0) / h) + 1, H = Math.ceil((y1 - y0) / h) + 1;
+  const ok = new Uint8Array(W * H);
+  for (let j = 0; j < H; j++) for (let i = 0; i < W; i++) ok[j * W + i] = onLand(x0 + i * h, y0 + j * h) ? 1 : 0;
+  const cellOf = (p: Pt) => {
+    let bi = Math.round((p[0] - x0) / h), bj = Math.round((p[1] - y0) / h);
+    if (ok[bj * W + bi]) return bj * W + bi;
+    // nächste Landzelle
+    let best = -1, bd = Infinity;
+    for (let j = Math.max(0, bj - 6); j <= Math.min(H - 1, bj + 6); j++) {
+      for (let i = Math.max(0, bi - 6); i <= Math.min(W - 1, bi + 6); i++) {
+        const d = (i - bi) ** 2 + (j - bj) ** 2;
+        if (ok[j * W + i] && d < bd) { bd = d; best = j * W + i; }
+      }
+    }
+    return best;
+  };
+  const start = cellOf(cu), goal = cellOf(cv);
+  if (start < 0 || goal < 0) return wide ? null : routeOnLand(u, v, via, true);
+  // A* mit 8 Nachbarn
+  const g = new Float64Array(W * H).fill(Infinity);
+  const prev = new Int32Array(W * H).fill(-1);
+  const open: [number, number][] = [[0, start]];
+  g[start] = 0;
+  const hx = (c: number) => Math.hypot((c % W) - (goal % W), Math.floor(c / W) - Math.floor(goal / W));
+  while (open.length) {
+    let bi = 0;
+    for (let k = 1; k < open.length; k++) if (open[k][0] < open[bi][0]) bi = k;
+    const [, c] = open[bi];
+    open[bi] = open[open.length - 1];
+    open.pop();
+    if (c === goal) break;
+    const ci = c % W, cj = Math.floor(c / W);
+    for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) {
+      if (!di && !dj) continue;
+      const ni = ci + di, nj = cj + dj;
+      if (ni < 0 || nj < 0 || ni >= W || nj >= H) continue;
+      const nc = nj * W + ni;
+      if (!ok[nc]) continue;
+      const cost = g[c] + (di && dj ? Math.SQRT2 : 1);
+      if (cost < g[nc]) { g[nc] = cost; prev[nc] = c; open.push([cost + hx(nc), nc]); }
+    }
+  }
+  if (!isFinite(g[goal])) return wide ? null : routeOnLand(u, v, via, true);
+  const cells: Pt[] = [];
+  for (let c = goal; c !== -1; c = prev[c]) cells.unshift([x0 + (c % W) * h, y0 + Math.floor(c / W) * h]);
+  const raw: Pt[] = [cu, ...cells, cv];
+  // glätten: jeweils so weit wie möglich geradeaus, solange an Land
+  const out: Pt[] = [raw[0]];
+  let i = 0;
+  while (i < raw.length - 1) {
+    let j = raw.length - 1;
+    while (j > i + 1 && !segmentOnLand(raw[i], raw[j], onLand)) j--;
+    out.push(raw[j]);
+    i = j;
+  }
+  // Anteil in Provinz u: bis zur ersten Stelle, ab der der Weg in v liegt
+  let total = 0, split = -1;
+  for (let k = 0; k + 1 < out.length; k++) {
+    const L = dist(out[k], out[k + 1]);
+    const steps = Math.max(1, Math.ceil(L / 2));
+    for (let s = 1; s <= steps && split < 0; s++) {
+      const x = out[k][0] + ((out[k + 1][0] - out[k][0]) * s) / steps, y = out[k][1] + ((out[k + 1][1] - out[k][1]) * s) / steps;
+      if (!inU(x, y) && inV(x, y)) split = total + (L * s) / steps;
+    }
+    total += L;
+  }
+  return { a: u, b: v, pts: out.flatMap(([x, y]) => [r1(x), r1(y)]), split: total > 0 ? Math.round(((split < 0 ? total / 2 : split) / total) * 1000) / 1000 : 0.5 };
+}
+
+// ---------------------------------------------------------------- Wege (Verbindungen zwischen Nachbarn)
+// Nicht jede Nachbarschaft bekommt einen Weg: höchstens 5 je Provinz, mindestens 2 (sofern vorhanden);
+// zusätzlich fallen rund 10 % der Wege weg – bevorzugt dort, wo schon viele bestehen, und Wege mit
+// großem Umweg über die Grenze oder sehr kurzer gemeinsamer Grenze. Das Netz bleibt zusammenhängend.
+{
+  const links = provinces.map((p) => new Set(p.neighbors));
+  const key = (a: number, b: number) => `${Math.min(a, b)}:${Math.max(a, b)}`;
+  const edgeInfo = new Map<string, { detour: number; border: number; via: Pt }>();
+  for (const p of provinces) {
+    for (const n of p.neighbors) {
+      if (n < p.id) continue;
+      const b = borderMap.get(key(p.id, n));
+      const q = provinces[n];
+      const mx = (p.center[0] + q.center[0]) / 2, my = (p.center[1] + q.center[1]) / 2;
+      let via: Pt = [mx, my], bd = Infinity;
+      for (let k = 0; b && k < b.segs.length; k += 2) {
+        const d = Math.hypot(b.segs[k] - mx, b.segs[k + 1] - my);
+        if (d < bd) { bd = d; via = [b.segs[k], b.segs[k + 1]]; }
+      }
+      const straight = Math.max(1, dist(p.center as Pt, q.center as Pt));
+      const detour = (dist(p.center as Pt, via) + dist(via, q.center as Pt)) / straight;
+      edgeInfo.set(key(p.id, n), { detour, border: b?.len ?? 0, via });
+    }
+  }
+  const total = [...edgeInfo.keys()].length;
+  const deg = (i: number) => links[i].size;
+  /** bleibt v von u aus erreichbar, wenn die Verbindung u–v wegfällt? */
+  const stillConnected = (u: number, v: number) => {
+    const seen = new Set([u]);
+    const stack = [u];
+    while (stack.length) {
+      const x = stack.pop()!;
+      for (const y of links[x]) {
+        if ((x === u && y === v) || (x === v && y === u) || seen.has(y)) continue;
+        if (y === v) return true;
+        seen.add(y);
+        stack.push(y);
+      }
+    }
+    return false;
+  };
+  const score = (u: number, v: number) => {
+    const e = edgeInfo.get(key(u, v))!;
+    // Provinzen mit 5 Verbindungen zuerst entlasten (5 soll selten sein)
+    return deg(u) + deg(v) + (deg(u) >= 5 ? 6 : 0) + (deg(v) >= 5 ? 6 : 0) + 4 * (e.detour - 1) + (e.border < 25 ? 2 : 0);
+  };
+  /** Wege zwischen zwei Nationen: zwischen Nachbarländern bleiben mindestens 2 (bzw. alle, wenn es weniger gibt) */
+  const crossings = (u: number, v: number) => {
+    const na = provinces[u].nation, nb = provinces[v].nation;
+    let n = 0;
+    for (const p of provinces) if (p.nation === na) for (const q of links[p.id]) if (provinces[q].nation === nb) n++;
+    return n;
+  };
+  const removable = (u: number, v: number) => deg(u) > 2 && deg(v) > 2 && stillConnected(u, v)
+    && (provinces[u].nation === provinces[v].nation || crossings(u, v) > 2);
+  const remove = (u: number, v: number) => { links[u].delete(v); links[v].delete(u); };
+  let removed = 0;
+  // 1. höchstens 5 Verbindungen je Provinz
+  for (let guard = 0; guard < 1000; guard++) {
+    const over = provinces.map((p) => p.id).filter((i) => deg(i) > 5);
+    if (!over.length) break;
+    const cand = over.flatMap((u) => [...links[u]].map((v) => [u, v] as [number, number]))
+      .sort((a, b) => score(b[0], b[1]) - score(a[0], a[1]));
+    const pick = cand.find(([u, v]) => removable(u, v));
+    if (!pick) break;
+    remove(...pick);
+    removed++;
+  }
+  // 2. auf rund 10 % ausdünnen, nur wo viele Verbindungen bestehen
+  const want = Math.round(total * 0.1);
+  for (let guard = 0; guard < 1000 && removed < want; guard++) {
+    const cand: [number, number][] = [];
+    for (const p of provinces) for (const n of links[p.id]) if (n > p.id && deg(p.id) >= 4 && deg(n) >= 4) cand.push([p.id, n]);
+    cand.sort((a, b) => score(b[0], b[1]) - score(a[0], a[1]));
+    const pick = cand.find(([u, v]) => removable(u, v));
+    if (!pick) break;
+    remove(...pick);
+    removed++;
+  }
+  // 3. fünf Verbindungen sollen selten sein (höchstens etwa 8 % der Provinzen)
+  for (let guard = 0; guard < 1000; guard++) {
+    const five = provinces.map((p) => p.id).filter((i) => deg(i) >= 5);
+    if (five.length <= provinces.length * 0.08) break;
+    const cand = five.flatMap((u) => [...links[u]].filter((v) => deg(v) >= 3).map((v) => [u, v] as [number, number]))
+      .sort((a, b) => score(b[0], b[1]) - score(a[0], a[1]));
+    const pick = cand.find(([u, v]) => removable(u, v));
+    if (!pick) break;
+    remove(...pick);
+    removed++;
+  }
+  provinces.forEach((p, i) => (p.links = [...links[i]].sort((a, b) => a - b)));
+
+  // Verlauf der Landwege: Wo der Weg Stadt → Grenzpunkt → Stadt übers Wasser führt, wird er über
+  // ein Rasterwegenetz an Land um die Bucht herumgeführt und danach geglättet (eckiger Pfad).
+  for (const p of provinces) {
+    for (const n of p.links!) {
+      if (n < p.id) continue;
+      const r = routeOnLand(p.id, n, edgeInfo.get(key(p.id, n))!.via);
+      if (r) roads.push(r);
+    }
+  }
+  console.log(`Landwege mit eigenem Verlauf (sonst übers Wasser): ${roads.length}`);
+  // Wasserwege: jede Küstenprovinz mindestens einer (dort liegt der Hafen), höchstens 2 – Inseln ohne
+  // Landnachbarn bis 4. Behalten werden die Seegebiete, die der Stadt am nächsten liegen.
+  const seaDist = (p: MapProvince, z: number) => {
+    let best = Infinity;
+    for (const poly of seaZones[z].shape) for (const ring of poly) for (const v of ring) best = Math.min(best, dist(p.center as Pt, v));
+    return best;
+  };
+  for (const p of provinces) {
+    const max = p.neighbors.length === 0 ? 4 : 2;
+    p.seaLinks = [...p.seas].sort((a, b) => seaDist(p, a) - seaDist(p, b)).slice(0, max).sort((a, b) => a - b);
+  }
+  const seaTotal = provinces.reduce((t, p) => t + p.seas.length, 0), seaKept = provinces.reduce((t, p) => t + p.seaLinks!.length, 0);
+  console.log(`Wasserwege: ${seaKept} von ${seaTotal} Küstenanbindungen`);
+  const hist = new Map<number, number>();
+  for (const p of provinces) hist.set(p.links!.length, (hist.get(p.links!.length) ?? 0) + 1);
+  console.log(`Wege: ${total - removed} von ${total} Nachbarschaften (${removed} entfernt); Verbindungen je Provinz: ${[...hist].sort((a, b) => a[0] - b[0]).map(([k, n]) => `${k}×${n}`).join(' ')}`);
+}
 
 const borders: MapBorder[] = [...borderMap.values()].map((b) => ({ a: b.a, b: b.b, segs: b.segs }));
 
@@ -683,6 +956,7 @@ const data: MapData = {
     coasts: [...z.coasts].sort((a, b) => a - b),
   })),
   seaBorders,
+  roads,
 };
 
 const outDir = path.join(ROOT, 'public', 'maps');
