@@ -41,7 +41,7 @@ export function MarketPanel({ map, state, rates, act, onClose }: {
   const sells = others.filter((o) => o.side === 'sell').sort((a, b) => a.price - b.price);
   const buys = others.filter((o) => o.side === 'buy').sort((a, b) => b.price - a.price);
   const mine = state.market.offers.filter((o) => o.nation === me);
-  const expires = (o: MarketOffer) => fmtDuration((o.time + MARKET.offerLifetime - state.time) / state.speed);
+  const age = (o: MarketOffer) => fmtDuration((state.time - o.time) / state.speed);
 
   const row = (o: MarketOffer) => {
     const n = nation(o.nation);
@@ -103,7 +103,7 @@ export function MarketPanel({ map, state, rates, act, onClose }: {
       </div>
       <div className="muted small">
         Summe {fmtNum(amount * ask)} Geld. {side === 'sell' ? 'Die Ware' : 'Das Geld'} wird bis zum Handel zurückgelegt.
-        Preis {lo}–{hi}, Angebote gelten {MARKET.offerLifetime / 86400000} Tage.
+        Preis {lo}–{hi}. Angebote gelten, bis sie erfüllt oder zurückgezogen sind.
       </div>
 
       {mine.length > 0 && (
@@ -115,7 +115,7 @@ export function MarketPanel({ map, state, rates, act, onClose }: {
                 <td><ResIcon res={o.res} size={14} /> {o.side === 'sell' ? 'Verkauf' : 'Kauf'}</td>
                 <td>{fmtNum(o.amount)}</td>
                 <td>{o.price.toFixed(2)}</td>
-                <td className="small muted">noch {expires(o)}</td>
+                <td className="small muted">seit {age(o)}</td>
                 <td><button className="btn small" onClick={() => run({ type: 'cancelOffer', id: o.id })}>Zurückziehen</button></td>
               </tr>
             ))}

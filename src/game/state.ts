@@ -1,7 +1,7 @@
 import { RESOURCES } from './mapdata.ts';
-import { START_BONUS, START_INFANTRY, START_STOCK, type Building } from './balance.ts';
+import { START_BONUS, START_INFANTRY, START_MORALE, START_STOCK, type Building } from './balance.ts';
 import { makeRng } from './rng.ts';
-import { defaultConsumption, moraleTarget, provincePoints } from './economy.ts';
+import { defaultConsumption, provincePoints } from './economy.ts';
 import type { MapData } from './mapdata.ts';
 import type { Difficulty, GameMeta, GameState, NationState, ProvinceState } from './types.ts';
 
@@ -91,7 +91,7 @@ export function createGame(map: MapData, opt: NewGameOptions): GameState {
       caution: Math.round((0.8 + rnd() * 0.4) * 100) / 100,
     }])),
   };
-  provinces.forEach((ps, i) => (ps.morale = moraleTarget(state, map, i).target));
+  provinces.forEach((ps) => (ps.morale = START_MORALE));
 
   const addArmy = (province: number, units: GameState['armies'][number]['units']) => {
     state.armies.push({ id: state.nextArmyId++, owner: map.provinces[province].nation, node: province, units, morale: provinces[province].morale });

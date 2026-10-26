@@ -333,6 +333,8 @@ export const START_STOCK: Record<Res, number> = {
   money: 100000, grain: 6000, fish: 6000, iron: 6000, lumber: 6000, coal: 6000, oil: 6000, gas: 6000,
 };
 export const START_BONUS = 1000;
+/** Moral aller Provinzen und Truppen bei Spielbeginn */
+export const START_MORALE = 0.7;
 export const START_INFANTRY = 10;
 
 export const SPEEDS = [1, 2, 4, 8, 24, 96, 288];
@@ -342,8 +344,8 @@ export const SPEEDS = [1, 2, 4, 8, 24, 96, 288];
 export const MARKET = {
   /** Richtpreis in Geld je Einheit (Startwert der Kurse) */
   basePrice: { grain: 1, fish: 1, lumber: 1, iron: 1.5, coal: 1.5, gas: 1.5, oil: 2 } as Record<Resource, number>,
-  /** Angebote verfallen nach dieser Zeit */
-  offerLifetime: 3 * 24 * 3600_000,
+  /** Angebote gelten unbegrenzt; die KI zieht eigene Angebote nach dieser Zeit zurück und stellt sie neu ein */
+  aiRefresh: 3 * 24 * 3600_000,
   /** Preisgrenzen relativ zum Richtpreis */
   minFactor: 0.2,
   maxFactor: 5,

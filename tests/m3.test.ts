@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { DAY, HOUR, MARKET } from '../src/game/balance.ts';
+import { DAY, MARKET } from '../src/game/balance.ts';
 import { relation } from '../src/game/diplomacy.ts';
 import type { MapData } from '../src/game/mapdata.ts';
 import { findPath } from '../src/game/military.ts';
@@ -77,13 +77,15 @@ describe('Börse', () => {
     expect(sim.apply('FR', { type: 'acceptOffer', id, amount: 100 }).ok).toBe(false);
   });
 
-  it('abgelaufene Angebote geben die Rücklage zurück', () => {
+  it('Angebote gelten unbegrenzt; Zurückziehen gibt die Rücklage zurück', () => {
     const sim = newSim();
-    const before = sim.state.nations.DE.stock.coal;
     sim.apply('DE', { type: 'postOffer', side: 'sell', res: 'coal', amount: 1000, price: 2 });
-    sim.advance(MARKET.offerLifetime + HOUR);
-    expect(sim.state.market.offers.length).toBe(0);
-    expect(sim.state.nations.DE.stock.coal).toBeGreaterThan(before - 1000);
+    sim.advance(10 * MARKET.aiRefresh);
+    const o = sim.state.market.offers.find((x) => x.nation === 'DE')!;
+    expect(o).toBeTruthy();
+    const before = sim.state.nations.DE.stock.coal;
+    expect(sim.apply('DE', { type: 'cancelOffer', id: o.id }).ok).toBe(true);
+    expect(sim.state.nations.DE.stock.coal).toBe(before + 1000);
   });
 });
 

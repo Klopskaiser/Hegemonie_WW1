@@ -120,11 +120,7 @@ export function acceptOffer(ctx: MarketContext, nation: string, id: number, amou
 /** Abgelaufene Angebote und Angebote ausgeschiedener Nationen entfernen (Rücklage zurück). */
 export function expireOffers(state: GameState): void {
   const keep: MarketOffer[] = [];
-  for (const o of state.market.offers) {
-    const alive = state.nations[o.nation]?.alive;
-    if (alive && state.time - o.time < MARKET.offerLifetime) keep.push(o);
-    else if (alive) refund(state, o);
-  }
+  for (const o of state.market.offers) if (state.nations[o.nation]?.alive) keep.push(o);
   state.market.offers = keep;
   // diplomatische Angebote untergegangener Nationen (auch aus älteren Spielständen)
   const alive = (id: string) => !!state.nations[id]?.alive;

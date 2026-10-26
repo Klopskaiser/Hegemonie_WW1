@@ -173,3 +173,11 @@ describe('Untergang einer Nation', () => {
     expect(sim.state.market.offers.some((o) => o.nation === 'MN')).toBe(false);
   });
 });
+
+describe('Spielbeginn', () => {
+  it('alle Provinzen und Truppen starten mit 70 % Moral', () => {
+    const sim = newSim();
+    expect(sim.state.provinces.every((p) => p.morale === 0.7)).toBe(true);
+    expect(sim.state.armies.every((a) => a.morale === 0.7)).toBe(true);
+  });
+});

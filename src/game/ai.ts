@@ -309,7 +309,10 @@ export class BasicAI implements Controller {
     const state = view.state as GameState;
     const { nation, rates } = view;
     const stock = state.nations[nation].stock;
-    const mine = state.market.offers.filter((o) => o.nation === nation);
+    // eigene Angebote gelten unbegrenzt: nach einer Weile zurückziehen und zum aktuellen Kurs neu einstellen
+    const stale = state.market.offers.filter((o) => o.nation === nation && state.time - o.time >= MARKET.aiRefresh);
+    for (const o of stale) actions.push({ type: 'cancelOffer', id: o.id });
+    const mine = state.market.offers.filter((o) => o.nation === nation && !stale.includes(o));
     let slots = MARKET.maxOffersPerNation - mine.length;
     let budget = stock.money - 15000;
     // mit voller Kasse dürfen Käufe teurer sein

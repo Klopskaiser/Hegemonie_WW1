@@ -78,8 +78,9 @@
   Hineinzoomen bis +40 % bei größter Zoomstufe; kleiner als die Grundgröße werden sie nie.
 - M3: Beziehungen Krieg < Embargo < Frieden < Durchmarschrecht < geteilte Karte, für beide Seiten
   gleich; verschlechtern einseitig, verbessern per Angebot. Durchmarsch: Betreten erlaubt, Häfen
-  befreundet. Geteilte Karte: gemeinsame Sicht. Börse: Angebote je Rohstoff mit Rücklage, 3 Tage
-  gültig, Preis 20–500 % des Richtpreises, kein Handel bei Krieg/Embargo; KI kauft bei Engpässen
+  befreundet. Geteilte Karte: gemeinsame Sicht. Börse: Angebote je Rohstoff mit Rücklage, gültig bis
+  erfüllt, zurückgezogen oder die Nation untergeht (die KI zieht eigene nach 3 Tagen zurück und stellt
+  neu ein), Preis 20–500 % des Richtpreises, kein Handel bei Krieg/Embargo; KI kauft bei Engpässen
   und bietet Überschüsse an. Zeitung täglich (Ereignisse, Eroberungsbilanz, Rangliste, Tageskarte,
   14 Ausgaben). Sieg: 45 % aller Siegpunkte oder letzte Großmacht; Spielende hält das Spiel an.
 - Geldproduktion ×1,5 (375/1350/2700). Offen fürs Balancing: Nahrung wird bei allen knapp,
@@ -287,3 +288,4 @@
   höchstens +10 %/−8 %, bei Getreidemangel +5 %/−13 %. Kampfeffekte (Nahkampf −3 %, Beschuss −1,5 %,
   Abschüsse +1 % bis +5 % je Runde) wirken sofort und unabhängig davon. Kampfkraft je Moral linear:
   10 % → 0,4 bis 100 % → 1,2 (1,0 bei 77,5 %). Das Armeefenster zeigt Ziel und Gründe.
+- Spielbeginn: alle Provinzen und Truppen haben 70 % Moral (Startgeld 100.000).
