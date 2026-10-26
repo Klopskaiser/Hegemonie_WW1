@@ -6,10 +6,11 @@ import type { Sight } from '../game/visibility.ts';
 import type { Res } from '../game/balance.ts';
 import { closestOnEdge, edgeParts, edgePoints, edgeSlice, harborSea, isSea, nodeCount, nodeNeighbors, nodePos } from '../game/graph.ts';
 import type { MapData } from '../game/mapdata.ts';
-import { armyPosition, isNaval, normalizeTarget, remainingRoute, unitCount, unitRange, type MoveTarget } from '../game/military.ts';
+import { armyPosition, isNaval, normalizeTarget, remainingRoute, unitCount, unitRange, type MoveTarget, boardingWait } from '../game/military.ts';
 import { makeRng } from '../game/rng.ts';
 import { REBELS, type Army, type ProvinceState } from '../game/types.ts';
-import { DEFECTION, UNITS, type UnitType } from '../game/balance.ts';
+import { DEFECTION, HOUR, UNITS, type UnitType } from '../game/balance.ts';
+import { fmtDuration } from './format.ts';
 import { RES_ICON } from './icons.tsx';
 
 export type MapMode = 'political' | 'resources' | 'morale';
@@ -47,6 +48,9 @@ interface Props {
   armies?: Army[];
   /** Spielzeit für Marschpositionen */
   time?: number;
+  /** Spieltempo (für Restzeiten in Echtzeit) und Pause */
+  speed?: number;
+  paused?: boolean;
   /** eigene Nation: deren Marschwege werden gezeichnet */
   nation?: string;
   /** Sicht des Spielers: ganz einsehbare Provinzen und Sichtkreise; alles andere liegt im Nebel */
@@ -732,6 +736,12 @@ export function MapCanvas(props: Props) {
           const t = drawPinHead(ctx, hx, hy, pinShapes(q.a), prepared.colors.get(q.a.owner) ?? '#888', unitCount(q.a), small,
             chosenSet.has(q.a.id) || lassoSel.has(q.a.id), Z);
           hits.push({ id: q.a.id, ...t });
+          // Ein-/Ausschiffen: Restzeit unter dem Nadelkopf (eigene und sichtbare fremde Armeen)
+          const bw = p.time !== undefined ? boardingWait(map, q.a, p.time) : null;
+          if (bw) {
+            const left = p.paused ? `${Math.ceil(bw.remaining * 60)} min` : fmtDuration((bw.remaining * HOUR) / Math.max(1, p.speed ?? 1));
+            drawBadge(ctx, t.x + t.w / 2, t.y + t.h + 2, `${bw.landing ? 'Ausschiffen' : 'Einschiffen'} ${left}`, Z);
+          }
         }
       }
       tokens.current = hits;
@@ -1145,6 +1155,25 @@ function drawFist(ctx: CanvasRenderingContext2D, x0: number, y0: number, k = 1) 
   ctx.moveTo(x - 4.6, y - 1.4);
   ctx.lineTo(x + 1.5, y - 1.4);
   ctx.stroke();
+  ctx.restore();
+}
+
+/** kleines Schild unter einer Nadel (oben mittig an x, y) */
+function drawBadge(ctx: CanvasRenderingContext2D, x: number, y: number, text: string, zoom = 1) {
+  ctx.save();
+  ctx.font = `${Math.round(9 * zoom)}px Georgia, serif`;
+  const w = ctx.measureText(text).width + 8 * zoom, h = 12 * zoom;
+  ctx.fillStyle = 'rgba(30, 60, 95, 0.88)';
+  ctx.strokeStyle = 'rgba(245, 233, 205, 0.9)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.roundRect(x - w / 2, y, w, h, 3);
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = '#f5ecd2';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(text, x, y + h / 2 + 0.5);
   ctx.restore();
 }
 

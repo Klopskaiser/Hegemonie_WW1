@@ -566,3 +566,25 @@ svg.flag { vertical-align: -2px; border-radius: 1px; box-shadow: 0 1px 1px rgba(
 .tribute-row { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; padding: 2px 0 6px; }
 .tribute-row label { display: inline-flex; gap: 3px; align-items: center; }
 .tribute-row input { width: 70px; }
+
+/* ---------------------------------------------------------------- Provinzübersicht (Vollbild) */
+.overview-panel { position: absolute; left: 70px; top: 8px; right: 8px; bottom: 8px; z-index: 4; display: flex; flex-direction: column; }
+.overview-panel .window-body { display: flex; flex-direction: column; flex: 1; min-height: 0; padding-bottom: 8px; }
+.overview-scroll { flex: 1; overflow: auto; min-height: 0; }
+.overview-table td { vertical-align: middle; white-space: normal; }
+.overview-table th { position: sticky; top: 0; background: #efe2c4; z-index: 1; }
+.overview-morale { display: flex; align-items: center; gap: 6px; min-width: 110px; }
+.overview-morale .bar { flex: 1; min-width: 50px; }
+.overview-buildings { display: flex; flex-wrap: wrap; gap: 3px; }
+.ov-building { position: relative; display: inline-block; border: 1px solid rgba(90, 60, 30, 0.35); border-radius: 3px; line-height: 0; }
+.ov-building.off { opacity: 0.4; filter: grayscale(1); }
+.ov-building.damaged { border-color: #b3261e; box-shadow: 0 0 0 1px #b3261e; }
+.ov-level { position: absolute; right: -3px; bottom: -3px; background: #3a2414; color: #f3e5bf; font-size: 9px; line-height: 12px; min-width: 12px; text-align: center; border-radius: 6px; padding: 0 2px; }
+.overview-switches { display: flex; flex-wrap: wrap; gap: 3px; }
+.btn.off-btn { background: linear-gradient(#7a6a58, #4e4236); color: #ddd2bd; }
+.overview-order { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; }
+.overview-order select { max-width: 210px; }
+.overview-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; border-top: 1px solid rgba(140, 106, 67, 0.4); padding-top: 8px; margin-top: 6px; }
+.overview-msg { color: var(--ink); font-weight: bold; }
+.link-btn { background: none; border: none; padding: 0; font: inherit; color: var(--ink); cursor: pointer; text-align: left; }
+.link-btn:hover { text-decoration: underline; }

@@ -148,7 +148,7 @@ export function DiplomacyPanel({ map, state, act, onClose }: {
         Durchmarschrecht: Truppen dürfen durchziehen, Häfen gelten als befreundet. Geteilte Karte: zusätzlich gemeinsame Sicht.
         Verschlechtern geht sofort, Verbessern nur, wenn die andere Seite annimmt – ein Tribut (Geld, Rohstoffe) macht Angebote
         attraktiver und wird erst bei Annahme gezahlt. Jeder Krieg senkt die Moral um 5 % (höchstens 25 %); wer den Krieg erklärt,
-        verliert zusätzlich 3 Tage lang 5 % Moral.
+        verliert zusätzlich 2 Tage lang 5 % Moral (auch bei mehreren Erklärungen nur einmal).
       </p>
     </Window>
   );

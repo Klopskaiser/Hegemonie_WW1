@@ -283,9 +283,9 @@ export const MORALE = {
   battleMax: 0.3,
   /** je angrenzende eigene Provinz mit Moral unter DEFECTION.threshold */
   unrestNeighbor: 0.02,
-  /** Kriegserklärung: Abzug am Moralziel des Erklärenden je Erklärung, für so viele Tage */
+  /** Kriegserklärung: Abzug am Moralziel des Erklärenden für so viele Tage (mehrere Erklärungen zählen nicht mehrfach) */
   declareWar: 0.05,
-  declareWarDays: 3,
+  declareWarDays: 2,
   warEach: 0.05,
   warMax: 0.25,
   shortage: { food: 0.15, materials: 0.05, energy: 0.1 } as Record<Category, number>,

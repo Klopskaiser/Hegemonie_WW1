@@ -20,7 +20,8 @@ import { DiplomacyPanel } from './DiplomacyPanel.tsx';
 import { GameOver } from './GameOver.tsx';
 import { MarketPanel } from './MarketPanel.tsx';
 import { NewspaperPanel } from './NewspaperPanel.tsx';
-import { EconomyPanel, EventsPanel, netPerDay, ProvincesPanel, RankingPanel, type SidePanel } from './SidePanels.tsx';
+import { EconomyPanel, EventsPanel, netPerDay, RankingPanel, type SidePanel } from './SidePanels.tsx';
+import { ProvinceOverview } from './ProvinceOverview.tsx';
 import { useSession, type SessionStart } from './useSession.ts';
 import { Flag } from './Flag.tsx';
 
@@ -315,7 +316,7 @@ export function GameView({ start, onExit }: { start: SessionStart; onExit(): voi
         </nav>
 
         <main className={'map-area' + (own.length ? ' targeting' : '')}>
-          <MapCanvas map={map} owners={owners} morale={morale} armies={armies} time={state.time} nation={state.playerNation}
+          <MapCanvas map={map} owners={owners} morale={morale} armies={armies} time={state.time} speed={state.speed} paused={state.paused} nation={state.playerNation}
             visible={visible} provinces={state.provinces} selected={selected} selectedArmies={selectedArmies} battles={battles}
             capitals={capitals}
             previews={previews} shots={shots} mode={mode} focus={focus} onNode={onNode} onArmy={onArmy}
@@ -328,7 +329,7 @@ export function GameView({ start, onExit }: { start: SessionStart; onExit(): voi
         {panel === 'economy' && <EconomyPanel {...panelProps} act={session.act} />}
         {panel === 'ranking' && <RankingPanel {...panelProps} />}
         {panel === 'events' && <EventsPanel {...panelProps} />}
-        {panel === 'provinces' && <ProvincesPanel {...panelProps} />}
+        {panel === 'provinces' && <ProvinceOverview map={map} state={state} act={session.act} onSelect={jump} onClose={() => setPanel(null)} />}
         {panel === 'diplomacy' && <DiplomacyPanel map={map} state={state} act={session.act} onClose={() => setPanel(null)} />}
         {panel === 'market' && <MarketPanel map={map} state={state} rates={rates} act={session.act} onClose={() => setPanel(null)} />}
         {panel === 'newspaper' && <NewspaperPanel map={map} state={state} onClose={() => setPanel(null)} />}

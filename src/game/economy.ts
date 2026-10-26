@@ -261,7 +261,8 @@ export function moraleTarget(state: GameState, map: MapData, id: number): Morale
   const unrest = mp.neighbors.filter((n) => state.provinces[n].owner === ps.owner && state.provinces[n].morale < DEFECTION.threshold).length;
   if (unrest > 0) parts.push({ label: `Unruhe in ${unrest} Nachbarprovinz${unrest > 1 ? 'en' : ''}`, value: -unrest * MORALE.unrestNeighbor });
   const declared = (nation?.warPenalty ?? []).filter((t) => t > state.time).length;
-  if (declared > 0) parts.push({ label: declared > 1 ? `Kriegserklärungen (${declared})` : 'Kriegserklärung', value: -declared * MORALE.declareWar });
+  // höchstens einmal, egal wie viele Kriege erklärt wurden
+  if (declared > 0) parts.push({ label: 'Kriegserklärung', value: -MORALE.declareWar });
   const wars = warsOf(state, ps.owner);
   if (wars > 0) parts.push({ label: 'Kriege', value: -Math.min(MORALE.warMax, wars * MORALE.warEach) });
   if (nation) {

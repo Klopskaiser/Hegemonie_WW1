@@ -348,10 +348,16 @@
   gezahlt erst bei Annahme; kann der Anbieter dann nicht mehr zahlen, ist das Angebot hinfällig. Die KI wertet
   Tribut zu Börsenpreisen, nimmt Frieden gegen ordentlichen Tribut auch als Stärkere an, legt eigenen
   Friedensangeboten Tribut bei, wenn sie unterlegen ist, und bietet in festgefahrenen Kriegen (ab 8 Tagen) öfter
-  Frieden an. Wer den Krieg erklärt (auch beim Einmarsch), bekommt 3 Tage lang −5 % Moralziel je Erklärung.
+  Frieden an. Wer den Krieg erklärt (auch beim Einmarsch), bekommt 2 Tage lang −5 % Moralziel (höchstens 5 %, auch bei
+  mehreren Erklärungen; jede neue Erklärung verlängert die 2 Tage).
 - KI-Nahrung: Kasernen werden bei Getreidemangel abgeschaltet (bei Überschuss wieder eingeschaltet) und nur
   bei Getreideüberschuss gebaut; der Provinzunterhalt läuft bevorzugt über Fisch (Getreide bleibt für die
   Infanterie); bei knapper Nahrung baut sie Wirtschaftsgebäude bevorzugt in Getreide- und Fischprovinzen.
   Wehrämter schaltet sie ebenso ab (jede neue Infanterie isst 18 Getreide). Messung (3 Partien, 14 Großmächte):
   Nationen ohne Getreide an Tag 10/20/30: 39/41/42 → 0/4/11 von 42; Nahrungsmangel-Tage 286/409/414 → 0/8/77;
   Infanterie an Tag 30: 17.600 → 7.000.
+- Ein-/Ausschiffen: Die Restzeit steht auch auf der Karte als Schild unter dem Nadelkopf, für eigene und sichtbare
+  fremde Armeen.
+- Provinzübersicht im Vollbild (Knopf „Provinzen“): je eigene Provinz Ertrag, Moral, Gebäude als Bilder (Stufe,
+  abgeschaltet grau, beschädigt rot), Schalter für Wehramt/Kaserne/Eisenbahn, Bauen und Technik in Auftrag geben;
+  unten „Überall Wehrämter bauen“ sowie alle Kasernen aktivieren/deaktivieren (`ProvinceOverview.tsx`).

@@ -585,7 +585,7 @@ describe('Diplomatie: Tribut und Kriegserklärung', () => {
     expect(sim.apply('DE', { type: 'propose', nation: 'IT', kind: 'rightOfWay', tribute: { money: 999999 } }).ok).toBe(false);
   });
 
-  it('wer den Krieg erklärt, verliert 3 Tage lang 5 % Moralziel', () => {
+  it('wer den Krieg erklärt, verliert 2 Tage lang 5 % Moralziel, auch bei mehreren Erklärungen nur einmal', () => {
     const sim = newSim();
     const berlin = prov('Berlin');
     const before = moraleTarget(sim.state, map, berlin).target;
@@ -597,7 +597,9 @@ describe('Diplomatie: Tribut und Kriegserklärung', () => {
     // die angegriffene Seite bekommt keinen Erklärungsabzug
     const dk = map.provinces.find((p) => p.nation === 'DK')!.id;
     expect(moraleTarget(sim.state, map, dk).parts.some((p) => p.label.startsWith('Kriegserklärung'))).toBe(false);
-    sim.advance(3 * DAY + 1);
+    sim.apply('DE', { type: 'declareWar', nation: 'NL' });
+    expect(moraleTarget(sim.state, map, berlin).parts.filter((p) => p.label.startsWith('Kriegserklärung')).map((p) => p.value)).toEqual([-0.05]);
+    sim.advance(2 * DAY + 1);
     expect(moraleTarget(sim.state, map, berlin).parts.some((p) => p.label.startsWith('Kriegserklärung'))).toBe(false);
   });
 });
