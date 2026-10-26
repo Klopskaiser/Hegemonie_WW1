@@ -64,7 +64,7 @@ export function EconomyPanel({ map, state, rates, act, onClose }: Props & { act(
           </details>
         ))}
       </div>
-      <p className="muted small">Kaserne und Eisenbahn lassen sich in der Provinzansicht abschalten: kein Unterhalt, aber auch keine Wirkung.</p>
+      <p className="muted small">Kaserne, Wehramt und Eisenbahn lassen sich in der Provinzansicht abschalten: kein Unterhalt, aber auch keine Wirkung (ohne Wehramt und Kaserne keine neue Infanterie).</p>
       <h4>Verbrauchsregler</h4>
       <p className="muted small">
         Provinzunterhalt: {provinces} Provinzen × {PROVINCE.upkeep} = {fmtNum(rates.upkeep)} je Kategorie und Tag.

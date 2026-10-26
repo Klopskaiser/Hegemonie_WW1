@@ -1,5 +1,6 @@
-import { useState } from 'react';
-import type { Action, ActionResult } from '../game/actions.ts';
+import { Fragment, useState } from 'react';
+import { tributeText, type Action, type ActionResult } from '../game/actions.ts';
+import { ALL_RES, RES_NAMES, type Res } from '../game/balance.ts';
 import { relation, RELATION_NAMES, relationLabel, warKey } from '../game/diplomacy.ts';
 import type { MapData } from '../game/mapdata.ts';
 import type { GameState, Relation } from '../game/types.ts';
@@ -45,11 +46,17 @@ export function DiplomacyPanel({ map, state, act, onClose }: {
   const [choice, setChoice] = useState<Record<string, string>>({});
   const [confirm, setConfirm] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
+  /** Tribut-Eingabe für ein Angebot an eine Nation (eine zur Zeit) */
+  const [tribute, setTribute] = useState<{ nation: string; amounts: Partial<Record<Res, number>> } | null>(null);
   const run = async (a: Action) => {
     const r = await act(a);
     setMsg(r.ok ? null : r.error);
     setConfirm(null);
+    if (r.ok && a.type === 'propose') setTribute(null);
   };
+  const withTribute = (a: Action, nation: string): Action =>
+    a.type === 'propose' && tribute?.nation === nation && Object.values(tribute.amounts).some((v) => (v ?? 0) > 0)
+      ? { ...a, tribute: tribute.amounts } : a;
   const name = (id: string) => map.nations.find((n) => n.id === id)?.name ?? id;
   const incoming = state.proposals.filter((p) => p.to === me);
   const outgoing = state.proposals.filter((p) => p.from === me);
@@ -61,7 +68,10 @@ export function DiplomacyPanel({ map, state, act, onClose }: {
           <h4>Angebote an uns</h4>
           {incoming.map((p) => (
             <div key={p.from} className="army-row">
-              <span>{name(p.from)} bietet <b>{RELATION_NAMES[p.kind]}</b> an.</span>
+              <span>
+                {name(p.from)} bietet <b>{RELATION_NAMES[p.kind]}</b> an
+                {p.tribute ? <> und zahlt dafür <b>{tributeText(p.tribute)}</b></> : null}.
+              </span>
               <button className="btn small" onClick={() => run({ type: 'answer', nation: p.from, accept: true })}>Annehmen</button>
               <button className="btn small" onClick={() => run({ type: 'answer', nation: p.from, accept: false })}>Ablehnen</button>
             </div>
@@ -70,7 +80,7 @@ export function DiplomacyPanel({ map, state, act, onClose }: {
       )}
       {outgoing.length > 0 && (
         <div className="muted small">
-          Offene Angebote: {outgoing.map((p) => `${RELATION_NAMES[p.kind]} an ${name(p.to)}`).join(', ')}
+          Offene Angebote: {outgoing.map((p) => `${RELATION_NAMES[p.kind]} an ${name(p.to)}${p.tribute ? ` (Tribut: ${tributeText(p.tribute)})` : ''}`).join(', ')}
         </div>
       )}
       <table className="table">
@@ -82,8 +92,10 @@ export function DiplomacyPanel({ map, state, act, onClose }: {
             const since = state.warSince[warKey(me, n.id)];
             const opts = alive ? options(state, me, n.id) : [];
             const selected = opts.find((o) => o.id === choice[n.id]) ?? opts[0];
+            const editing = tribute?.nation === n.id && selected?.action.type === 'propose';
             return (
-              <tr key={n.id} className={rel === 'war' ? 'war' : ''}>
+              <Fragment key={n.id}>
+              <tr className={rel === 'war' ? 'war' : ''}>
                 <td><Flag nation={n.id} /> {n.name}</td>
                 <td className="small">
                   {!alive ? 'vernichtet' : rel === 'war' ? `Krieg seit ${fmtDay(since ?? 0)}` : relationLabel(state, me, n.id)}
@@ -100,11 +112,32 @@ export function DiplomacyPanel({ map, state, act, onClose }: {
                       <select value={selected.id} onChange={(e) => setChoice({ ...choice, [n.id]: e.target.value })}>
                         {opts.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
                       </select>
-                      <button className="btn small" onClick={() => (selected.confirm ? setConfirm(n.id) : run(selected.action))}>OK</button>
+                      {selected.action.type === 'propose' && (
+                        <button className={'btn small' + (editing ? ' active' : '')} title="Tribut beilegen (wird bei Annahme gezahlt)"
+                          onClick={() => setTribute(editing ? null : { nation: n.id, amounts: {} })}>+ Tribut</button>
+                      )}
+                      <button className="btn small" onClick={() => (selected.confirm ? setConfirm(n.id) : run(withTribute(selected.action, n.id)))}>OK</button>
                     </>
                   ))}
                 </td>
               </tr>
+              {editing && (
+                <tr>
+                  <td colSpan={4}>
+                    <div className="tribute-row small">
+                      <span>Tribut an {n.name}:</span>
+                      {ALL_RES.map((r) => (
+                        <label key={r}>
+                          {RES_NAMES[r]}
+                          <input type="number" className="num" min={0} step={1000} value={tribute!.amounts[r] ?? ''}
+                            onChange={(e) => setTribute({ nation: n.id, amounts: { ...tribute!.amounts, [r]: Math.max(0, Number(e.target.value) || 0) } })} />
+                        </label>
+                      ))}
+                    </div>
+                  </td>
+                </tr>
+              )}
+              </Fragment>
             );
           })}
         </tbody>
@@ -113,7 +146,9 @@ export function DiplomacyPanel({ map, state, act, onClose }: {
       <p className="muted small">
         Krieg: Kampf und Eroberung, kein Handel. Embargo: kein Handel. Frieden: Handel, aber kein Betreten fremden Gebiets.
         Durchmarschrecht: Truppen dürfen durchziehen, Häfen gelten als befreundet. Geteilte Karte: zusätzlich gemeinsame Sicht.
-        Verschlechtern geht sofort, Verbessern nur, wenn die andere Seite annimmt. Jeder Krieg senkt die Moral um 5 % (höchstens 25 %).
+        Verschlechtern geht sofort, Verbessern nur, wenn die andere Seite annimmt – ein Tribut (Geld, Rohstoffe) macht Angebote
+        attraktiver und wird erst bei Annahme gezahlt. Jeder Krieg senkt die Moral um 5 % (höchstens 25 %); wer den Krieg erklärt,
+        verliert zusätzlich 3 Tage lang 5 % Moral.
       </p>
     </Window>
   );

@@ -121,8 +121,8 @@ export const BUILDINGS: Record<Building, BuildingDef> = {
     describe: (l) => `Infanterie bei 100 % Moral alle ${RECRUIT_BASE_HOURS / 2 ** l} h. Arbeitet auch ohne Wehramt, dann halb so schnell. Unterhalt 1000 Getreide je Stufe und Tag.`,
   },
   recruitment: {
-    name: 'Wehramt', maxLevel: 1,
-    cost: () => ({ money: 2000, lumber: 500 }),
+    name: 'Wehramt', maxLevel: 1, switchable: true,
+    cost: () => ({ money: 2000, lumber: 125, iron: 125 }),
     hours: () => 2,
     prodBonus: () => 0,
     morale: () => 0,
@@ -283,6 +283,9 @@ export const MORALE = {
   battleMax: 0.3,
   /** je angrenzende eigene Provinz mit Moral unter DEFECTION.threshold */
   unrestNeighbor: 0.02,
+  /** Kriegserklärung: Abzug am Moralziel des Erklärenden je Erklärung, für so viele Tage */
+  declareWar: 0.05,
+  declareWarDays: 3,
   warEach: 0.05,
   warMax: 0.25,
   shortage: { food: 0.15, materials: 0.05, energy: 0.1 } as Record<Category, number>,

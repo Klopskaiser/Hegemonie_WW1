@@ -4,7 +4,7 @@ import {
   BUILDING_DAMAGE_CHANCE, BUILDINGS, buildingLives, DAY, DEFECTION, FORTRESS_REDUCTION, HOUR, MILITARY, MINUTE, MORALE, SPLIT_REJOIN, TROOP_MORALE, UNITS,
   type Building, type UnitType,
 } from './balance.ts';
-import { atWar, hasRightOfWay, setRelation } from './diplomacy.ts';
+import { atWar, hasRightOfWay, setRelation, noteWarDeclaration } from './diplomacy.ts';
 import { edgeParts, edgePoint, edgePoints, edgeSlice, edgeThrough, isSea, nodeCount, nodeName, nodeNeighbors, nodePos } from './graph.ts';
 import type { MapData } from './mapdata.ts';
 import { activeCapital, activeLevel } from './economy.ts';
@@ -658,6 +658,7 @@ function declareOnArrival(ctx: MilitaryContext, a: Army): void {
   if (owner === a.owner || !a.warOn.includes(owner) || atWar(ctx.state, a.owner, owner)) return;
   const name = (id: string) => ctx.map.nations.find((n) => n.id === id)?.name ?? id;
   setRelation(ctx.state, a.owner, owner, 'war');
+  noteWarDeclaration(ctx.state, a.owner);
   ctx.log(`${name(a.owner)} erklärt ${name(owner)} den Krieg!`);
   ctx.invalidate();
 }

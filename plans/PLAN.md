@@ -167,7 +167,7 @@
 - Manufaktur (Vorgabe): 4 Stufen, Rohstoffproduktion +10 % je Stufe (nicht Geld), Moral +2,5 % je Stufe wie die Fabrik, schließt sich
   mit der Fabrik aus, keine Einheiten.
 - Gebäudekosten (Vorgabe, je Stufe gleich; nur die Festung dauert je Stufe länger): Fabrik 10000 Geld,
-  2500 Eisen/Holz/Öl, 48 h; Manufaktur 10000 Geld, 2000 Eisen/Holz, 3000 Gas, 50 h; Wehramt 2000 Geld, 500 Holz, 2 h;
+  2500 Eisen/Holz/Öl, 48 h; Manufaktur 10000 Geld, 2000 Eisen/Holz, 3000 Gas, 50 h; Wehramt 2000 Geld, 125 Holz, 125 Eisen, 2 h;
   Festung 4000 Geld, 2000 Eisen je Stufe, 8·L h; Eisenbahn 10000 Geld, 5000 Holz, 3000 Eisen,
   1000 Kohle, 72 h; Hafen 10000 Geld, 10000 Holz, 72 h; Kaserne beide Stufen 4000 Geld,
   1500 Getreide, 1500 Holz, 24 h.
@@ -256,7 +256,7 @@
   auch im Frieden/Embargo (dann beginnt der Krieg); Durchmarschrecht und geteilte Karte lassen passieren.
   Auf See kämpfen nur Nationen im Krieg. Wer in einen laufenden Kampf nachrückt, verschmilzt mit der
   größten eigenen Armee dort; alle Kämpfe laufen im selben Stundentakt.
-- Kaserne und Eisenbahn lassen sich je Provinz abschalten: kein Unterhalt, aber auch keine Wirkung
+- Kaserne, Wehramt und Eisenbahn lassen sich je Provinz abschalten: kein Unterhalt, aber auch keine Wirkung
   (Rekrutierung, Produktion, Moral, Bahntempo, Eisenbahngeschütze).
 - Wirtschaft: Verbrauch je Rohstoff nach Verursachern (Provinzunterhalt laut Regler, Gebäude je Art,
   Einheiten je Typ). Provinz: Moralziel mit allen Gründen (Gebäude einzeln, Kämpfe in der Provinz −10 %
@@ -339,3 +339,19 @@
   mit 1/3 Leben: 2/3 des Preises), nicht solange Feinde in der Stadt stehen. Die KI repariert selbst.
 - Grundmoral der Provinzen 80 %. Börse: Höchstpreis 1000 je Einheit.
 - Kampfanzeige (Karte, Armeefenster) nach dem tatsächlichen Ort, nicht dem nächsten Knoten.
+- KI-Angriffe: Feindliche Provinzen greift die KI erst ab einer Stärke von etwa 10 Infanteristen an
+  (`MIN_STRIKE` in `ai.ts`). Ist die Zielprovinz nicht einsehbar oder verbirgt eine Festung die Truppen,
+  rechnet sie mit der üblichen Besatzung (10 Infanterie); die Schadensminderung der Festung erhöht die
+  nötige Überlegenheit. Zu kleine Überschüsse sammeln sich bei der stärksten eigenen Armee an der Front.
+  Messung (3 KI-Partien à 30 Tage): vernichtete Armeen 686 → 231, Kleinsttrupps (≤ 3) im Feindesland 487 → 98.
+- Diplomatie: Angebote (Frieden, Durchmarschrecht, geteilte Karte) können einen Tribut (Geld, Rohstoffe) tragen,
+  gezahlt erst bei Annahme; kann der Anbieter dann nicht mehr zahlen, ist das Angebot hinfällig. Die KI wertet
+  Tribut zu Börsenpreisen, nimmt Frieden gegen ordentlichen Tribut auch als Stärkere an, legt eigenen
+  Friedensangeboten Tribut bei, wenn sie unterlegen ist, und bietet in festgefahrenen Kriegen (ab 8 Tagen) öfter
+  Frieden an. Wer den Krieg erklärt (auch beim Einmarsch), bekommt 3 Tage lang −5 % Moralziel je Erklärung.
+- KI-Nahrung: Kasernen werden bei Getreidemangel abgeschaltet (bei Überschuss wieder eingeschaltet) und nur
+  bei Getreideüberschuss gebaut; der Provinzunterhalt läuft bevorzugt über Fisch (Getreide bleibt für die
+  Infanterie); bei knapper Nahrung baut sie Wirtschaftsgebäude bevorzugt in Getreide- und Fischprovinzen.
+  Wehrämter schaltet sie ebenso ab (jede neue Infanterie isst 18 Getreide). Messung (3 Partien, 14 Großmächte):
+  Nationen ohne Getreide an Tag 10/20/30: 39/41/42 → 0/4/11 von 42; Nahrungsmangel-Tage 286/409/414 → 0/8/77;
+  Infanterie an Tag 30: 17.600 → 7.000.

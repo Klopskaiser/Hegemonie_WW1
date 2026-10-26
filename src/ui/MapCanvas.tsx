@@ -20,14 +20,18 @@ export interface Shot {
   kind: UnitType;
   shooter: number;
   target: number;
+  /** Anzahl der feuernden Einheiten dieses Typs: je Einheit eine Kugel */
+  count: number;
 }
 
-/** Flugbild je Waffe: Takt, Flugzeit (ms), Bogenhöhe relativ zur Entfernung, Geschosse je Salve */
-const BALLISTICS: Partial<Record<UnitType, { period: number; flight: number; arc: number; shells: number; size: number }>> = {
-  artillery: { period: 1800, flight: 1100, arc: 0.45, shells: 1, size: 2.4 },
-  railgun: { period: 2600, flight: 1700, arc: 0.6, shells: 1, size: 3.6 },
-  battleship: { period: 1600, flight: 800, arc: 0.15, shells: 2, size: 2.8 },
+/** Flugbild je Waffe: Takt je Einheit, Flugzeit (ms), Bogenhöhe relativ zur Entfernung, Kugelgröße */
+const BALLISTICS: Partial<Record<UnitType, { period: number; flight: number; arc: number; size: number }>> = {
+  artillery: { period: 3600, flight: 1500, arc: 0.45, size: 2.4 },
+  railgun: { period: 5200, flight: 2400, arc: 0.6, size: 3.6 },
+  battleship: { period: 3200, flight: 1100, arc: 0.15, size: 2.8 },
 };
+/** höchstens so viele Kugeln je Waffentyp und Gefecht (große Verbände bleiben flüssig) */
+const MAX_SHELLS = 40;
 
 function hashKey(s: string): number {
   let h = 0;
@@ -322,9 +326,19 @@ export function MapCanvas(props: Props) {
       f.setTransform(1, 0, 0, 1, 0, 0);
       f.clearRect(0, 0, fog.width, fog.height);
       f.setTransform(dpr * s, 0, 0, dpr * s, dpr * ox, dpr * oy);
+      // Meer: eigener, bläulicher Nebel über der ganzen Karte, an Land wieder ausgespart
+      const [bx0, by0, bx1, by1] = map.bounds;
+      f.globalCompositeOperation = 'source-over';
+      f.fillStyle = 'rgba(20, 35, 55, 0.3)';
+      f.fillRect(bx0, by0, bx1 - bx0, by1 - by0);
+      f.globalCompositeOperation = 'destination-out';
+      f.fillStyle = '#000';
+      for (let i = 0; i < map.provinces.length; i++) f.fill(prepared.paths[i]);
+      // Land: nicht ganz einsehbare Provinzen
       f.globalCompositeOperation = 'source-over';
       f.fillStyle = 'rgba(105, 95, 80, 0.32)';
       for (let i = 0; i < map.provinces.length; i++) if (!p.visible.full.has(i)) f.fill(prepared.paths[i]);
+      // Sichtkreise der Armeen (an Land und auf See) freilegen
       f.globalCompositeOperation = 'destination-out';
       f.fillStyle = '#000';
       f.beginPath();
@@ -753,10 +767,12 @@ export function MapCanvas(props: Props) {
           const dist = Math.hypot(x1 - x0, y1 - y0);
           const height = Math.max(10, Math.min(140, dist * b.arc));
           const base = hashKey(sh.key) % b.period;
-          for (let k = 0; k < b.shells; k++) {
-            const t = (now + base + k * 140) % b.period;
-            const jitter = b.shells > 1 ? (k ? 4 : -4) : 0;
-            const tx = x1 + jitter, ty = y1 - jitter / 2;
+          const shells = Math.min(MAX_SHELLS, Math.max(1, sh.count));
+          for (let k = 0; k < shells; k++) {
+            // je Einheit eine Kugel, über den Takt verteilt und leicht gestreut um das Ziel
+            const t = (now + base + (k * b.period) / shells) % b.period;
+            const h = hashKey(`${sh.key}-${k}`);
+            const tx = x1 + ((h % 13) - 6), ty = y1 + (((h >> 4) % 9) - 4);
             if (t < b.flight) {
               const f = t / b.flight;
               const pos = (q: number) => [x0 + (tx - x0) * q, y0 + (ty - y0) * q - height * 4 * q * (1 - q)] as const;

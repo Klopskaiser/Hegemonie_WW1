@@ -2,7 +2,7 @@
 // Frieden, Durchmarschrecht, geteilte Karte. Beziehungen gelten für beide Seiten gleich.
 // Verschlechtern geht einseitig, Verbessern nur per Angebot und Annahme.
 
-import { DAY } from './balance.ts';
+import { DAY, MORALE } from './balance.ts';
 import type { GameState, Relation } from './types.ts';
 import { REBELS } from './types.ts';
 
@@ -37,6 +37,13 @@ export function atWar(state: GameState, a: string, b: string): boolean {
 /** Darf `a` das Gebiet von `b` betreten (Durchmarschrecht oder besser)? */
 export function hasRightOfWay(state: GameState, a: string, b: string): boolean {
   return a === b || relationRank(relation(state, a, b)) >= relationRank('rightOfWay');
+}
+
+/** Wer den Krieg erklärt, bekommt für einige Tage einen Moralabzug in allen Provinzen */
+export function noteWarDeclaration(state: GameState, nation: string): void {
+  const n = state.nations[nation];
+  if (!n) return;
+  n.warPenalty = [...(n.warPenalty ?? []).filter((t) => t > state.time), state.time + MORALE.declareWarDays * DAY];
 }
 
 export function sharesMap(state: GameState, a: string, b: string): boolean {

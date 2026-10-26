@@ -13,6 +13,7 @@ import { atWar } from '../src/game/diplomacy.ts';
 import { armyName } from '../src/game/names.ts';
 import { makeRng } from '../src/game/rng.ts';
 import { Simulation } from '../src/game/sim.ts';
+import { BasicAI } from '../src/game/ai.ts';
 import { createGame } from '../src/game/state.ts';
 import type { Army } from '../src/game/types.ts';
 
@@ -496,5 +497,144 @@ describe('Gebäudeleben und Reparatur', () => {
   it('Börse: Höchstpreis 1000 je Einheit', () => {
     expect(priceBounds('grain')[1]).toBe(1000);
     expect(priceBounds('oil')[1]).toBe(1000);
+  });
+});
+
+describe('Vorbeimarsch an einem laufenden Kampf', () => {
+  const border = () => {
+    for (const p of map.provinces) {
+      if (p.nation !== 'DE') continue;
+      const q = (p.links ?? []).find((n) => map.provinces[n].nation === 'FR');
+      if (q !== undefined) return [p.id, q] as const;
+    }
+    throw new Error('kein Grenzweg');
+  };
+
+  it('eine dritte Armee, die über den Weg an der Kampfstelle vorbeizieht, wird gestellt', () => {
+    const sim = newSim();
+    const [p, q] = border();
+    sim.apply('DE', { type: 'declareWar', nation: 'FR' });
+    sim.state.armies = sim.state.armies.filter((a) => a.node !== p && a.node !== q);
+    // Kampf mitten auf dem Weg
+    const de: Army = { id: sim.state.nextArmyId++, owner: 'DE', node: p, pos: { a: p, b: q, f: 0.5 }, units: { infantry: 40 } };
+    const fr: Army = { id: sim.state.nextArmyId++, owner: 'FR', node: p, pos: { a: p, b: q, f: 0.5 }, units: { infantry: 40 } };
+    // französischer Nachschub zieht von der eigenen Stadt aus über den Weg nach Deutschland
+    const third: Army = { id: sim.state.nextArmyId++, owner: 'FR', node: q, units: { infantry: 10 } };
+    sim.state.armies.push(de, fr, third);
+    expect(sim.apply('FR', { type: 'move', army: third.id, to: p }).ok).toBe(true);
+    sim.advance(DAY);
+    // nicht vorbeigekommen: Deutschland hält die Stadt p, der Nachschub steht an der Kampfstelle (oder ist gefallen)
+    expect(sim.state.provinces[p].owner).toBe('DE');
+    if (sim.state.armies.includes(third)) expect(third.node === p && !third.pos).toBe(false);
+  });
+
+  it('eine dritte Armee, die durch eine umkämpfte Stadt marschieren will, bleibt dort stehen', () => {
+    const sim = newSim();
+    const [p, q] = border();
+    sim.apply('DE', { type: 'declareWar', nation: 'FR' });
+    sim.state.armies = sim.state.armies.filter((a) => a.node !== p && a.node !== q);
+    const de: Army = { id: sim.state.nextArmyId++, owner: 'DE', node: p, units: { infantry: 40 } };
+    const fr: Army = { id: sim.state.nextArmyId++, owner: 'FR', node: p, units: { infantry: 40 } };
+    const beyond = map.provinces[p].links!.find((n) => n !== q && map.provinces[n].nation === 'DE')!;
+    // hinter der Stadt keine Besatzung: käme der Nachschub durch, würde er die Provinz sofort erobern
+    sim.state.armies = sim.state.armies.filter((a) => a.node !== beyond);
+    const third: Army = { id: sim.state.nextArmyId++, owner: 'FR', node: q, units: { infantry: 10 } };
+    sim.state.armies.push(de, fr, third);
+    expect(sim.apply('FR', { type: 'move', army: third.id, to: beyond }).ok).toBe(true);
+    sim.advance(DAY);
+    expect(sim.state.provinces[beyond].owner).toBe('DE');
+  });
+});
+
+describe('KI: keine Kleinsttrupps in den Tod', () => {
+  it('ein kleiner Überschuss greift eine nicht einsehbare feindliche Provinz nicht an, ein großer schon', () => {
+    const decide = (extra: number) => {
+      const sim = newSim();
+      sim.apply('DE', { type: 'declareWar', nation: 'FR' });
+      const p = map.provinces.find((x) => x.nation === 'DE' && (x.links ?? []).some((n) => map.provinces[n].nation === 'FR'))!;
+      // Grenzprovinz mit Besatzung + Überschuss; die französische Provinz dahinter liegt im Nebel
+      sim.state.armies = sim.state.armies.filter((a) => a.node !== p.id);
+      sim.state.armies.push({ id: sim.state.nextArmyId++, owner: 'DE', node: p.id, units: { infantry: 5 + extra }, morale: 1 });
+      const view = { state: sim.state, map, nation: 'DE', rates: nationRates(sim.state, map, 'DE'), random: () => 0.5 };
+      // Märsche in feindliches Gebiet (Sammeln in eigenen Provinzen ist erlaubt)
+      return new BasicAI().decide(view).filter((x) => x.type === 'move' && sim.state.provinces[x.to]?.owner !== 'DE');
+    };
+    expect(decide(3)).toEqual([]);
+    expect(decide(30).length).toBeGreaterThan(0);
+  });
+});
+
+describe('Diplomatie: Tribut und Kriegserklärung', () => {
+  it('Tribut wird erst bei Annahme gezahlt; die KI nimmt Frieden gegen ordentlichen Tribut an', () => {
+    const sim = newSim();
+    sim.apply('DE', { type: 'declareWar', nation: 'FR' });
+    const de = sim.state.nations.DE.stock, fr = sim.state.nations.FR.stock;
+    de.money = 100000;
+    expect(sim.apply('DE', { type: 'propose', nation: 'FR', kind: 'peace', tribute: { money: 60000, coal: 1000 } }).ok).toBe(true);
+    expect(de.money).toBe(100000);
+    const frBefore = fr.money;
+    // die französische KI entscheidet: deutlich stärker, aber der Tribut lohnt sich
+    const view = { state: sim.state, map, nation: 'FR', rates: nationRates(sim.state, map, 'FR'), random: () => 0.99 };
+    const answer = new BasicAI().decide(view).find((a) => a.type === 'answer');
+    expect(answer).toMatchObject({ nation: 'DE', accept: true });
+    expect(sim.apply('FR', answer!).ok).toBe(true);
+    expect(atWar(sim.state, 'DE', 'FR')).toBe(false);
+    expect(de.money).toBe(40000);
+    expect(fr.money).toBe(frBefore + 60000);
+    // nicht bezahlbarer Tribut wird abgelehnt
+    expect(sim.apply('DE', { type: 'propose', nation: 'IT', kind: 'rightOfWay', tribute: { money: 999999 } }).ok).toBe(false);
+  });
+
+  it('wer den Krieg erklärt, verliert 3 Tage lang 5 % Moralziel', () => {
+    const sim = newSim();
+    const berlin = prov('Berlin');
+    const before = moraleTarget(sim.state, map, berlin).target;
+    sim.apply('DE', { type: 'declareWar', nation: 'DK' });
+    const t = moraleTarget(sim.state, map, berlin);
+    expect(t.parts.find((p) => p.label === 'Kriegserklärung')?.value).toBeCloseTo(-0.05, 9);
+    // dazu kommt der übliche Abzug für den Krieg selbst
+    expect(t.target).toBeCloseTo(before - 0.05 - MORALE.warEach, 6);
+    // die angegriffene Seite bekommt keinen Erklärungsabzug
+    const dk = map.provinces.find((p) => p.nation === 'DK')!.id;
+    expect(moraleTarget(sim.state, map, dk).parts.some((p) => p.label.startsWith('Kriegserklärung'))).toBe(false);
+    sim.advance(3 * DAY + 1);
+    expect(moraleTarget(sim.state, map, berlin).parts.some((p) => p.label.startsWith('Kriegserklärung'))).toBe(false);
+  });
+});
+
+describe('KI: Nahrung', () => {
+  it('schaltet Kasernen bei Getreidemangel ab und deckt den Provinzunterhalt mit Fisch', () => {
+    const sim = newSim();
+    const berlin = prov('Berlin');
+    sim.state.provinces[berlin].buildings.barracks = 2;
+    sim.state.provinces[berlin].buildings.recruitment = 1;
+    sim.state.nations.DE.stock.grain = 100;
+    sim.invalidate();
+    sim.advance(60_000);
+    const view = { state: sim.state, map, nation: 'DE', rates: nationRates(sim.state, map, 'DE'), random: () => 0.5 };
+    const acts = new BasicAI().decide(view);
+    expect(acts).toContainEqual({ type: 'switchBuilding', province: berlin, building: 'barracks', on: false });
+    expect(acts).toContainEqual({ type: 'switchBuilding', province: berlin, building: 'recruitment', on: false });
+    const food = acts.find((a) => a.type === 'setConsumption' && a.category === 'food');
+    if (food && food.type === 'setConsumption') expect(food.shares.fish ?? 0).toBeGreaterThan(food.shares.grain ?? 0);
+    // keine neuen Kasernen ohne Getreideüberschuss
+    expect(acts.some((a) => a.type === 'build' && a.building === 'barracks')).toBe(false);
+  });
+});
+
+describe('Wehramt abschaltbar', () => {
+  it('abgeschaltetes Wehramt stellt keine Infanterie auf; mit Kaserne geht es halb so schnell weiter', () => {
+    const sim = newSim();
+    const berlin = prov('Berlin');
+    const ps = sim.state.provinces[berlin];
+    ps.buildings.recruitment = 1;
+    ps.buildings.barracks = 0;
+    expect(recruitHours(ps)).not.toBeNull();
+    expect(sim.apply('DE', { type: 'switchBuilding', province: berlin, building: 'recruitment', on: false }).ok).toBe(true);
+    expect(recruitHours(ps)).toBeNull();
+    ps.buildings.barracks = 1;
+    const half = recruitHours(ps)!;
+    sim.apply('DE', { type: 'switchBuilding', province: berlin, building: 'recruitment', on: true });
+    expect(recruitHours(ps)!).toBeCloseTo(half / 2, 6);
   });
 });

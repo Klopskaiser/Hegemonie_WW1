@@ -3,7 +3,7 @@
 // Persönlichkeit je Nation (state.aiProfiles) und Schwierigkeitsgrad (state.difficulty).
 
 import { checkBuild, checkProduce, canAfford, type Action, checkRepair } from './actions.ts';
-import { BUILDINGS, CATEGORIES, CATEGORY_RES, DAY, DIFFICULTY, MARKET, UNITS, type Building, type UnitType, CAPITAL_MOVE } from './balance.ts';
+import { BUILDINGS, CATEGORIES, CATEGORY_RES, DAY, DIFFICULTY, MARKET, UNITS, type Building, type UnitType, CAPITAL_MOVE, FORTRESS_REDUCTION, START_INFANTRY, type Res } from './balance.ts';
 import type { Controller, NationView } from './controller.ts';
 import { atWar, enemiesOf, relation, warKey } from './diplomacy.ts';
 import { netRate, provinceOutput, toShares, activeCapital, capitalOf, provincePoints } from './economy.ts';
@@ -12,7 +12,7 @@ import { priceBounds, priceOf, tradeableOffers } from './market.ts';
 import { isSea, nodeDist } from './graph.ts';
 import { armyPower, isNaval, isRailOnly, pathsFrom, pathTo, unitCount } from './military.ts';
 import type { AIProfile, Army, GameState } from './types.ts';
-import { armyVisible, visibleNodes } from './visibility.ts';
+import { armyVisible, visibleNodes, type Sight } from './visibility.ts';
 
 /** Friedenszeit zu Spielbeginn, bevor KI-Großmächte Kriege beginnen */
 const PEACE_TIME = 3 * DAY;
@@ -20,6 +20,8 @@ const PEACE_TIME = 3 * DAY;
 const MONEY_RESERVE = 1500;
 /** längster Angriffs- bzw. Verlegungsweg in Stunden */
 const REACH_HOURS = 72;
+/** Mindeststärke eines Angriffs auf feindliche Provinzen (≈ 10 Infanteristen); kleinere Überschüsse sammeln sich */
+const MIN_STRIKE = 12;
 const DEFAULT_PROFILE: AIProfile = { aggression: 1, caution: 1 };
 
 /** Lagebild einer Nation für eine Entscheidungsrunde */
@@ -38,6 +40,8 @@ interface Situation {
   front: Map<number, number>;
   /** eigene Kampfkraft je Knoten, inklusive Armeen auf dem Weg dorthin */
   friendly: Map<number, number>;
+  /** eigene Sicht (Nebel des Krieges) */
+  vis: Sight;
 }
 
 export class BasicAI implements Controller {
@@ -89,7 +93,7 @@ export class BasicAI implements Controller {
       major: map.nations.find((n) => n.id === nation)?.major ?? false,
       profile: state.aiProfiles?.[nation] ?? DEFAULT_PROFILE,
       diff: DIFFICULTY[state.difficulty ?? 'normal'],
-      own, enemies, hostile, front, friendly,
+      own, enemies, hostile, front, friendly, vis,
     };
   }
 
@@ -115,6 +119,20 @@ export class BasicAI implements Controller {
     const maxParallel = Math.max(1, Math.ceil(own.length / (major ? 6 : 10)));
     if (building >= maxParallel) return;
     const factories = own.filter((i) => state.provinces[i].buildings.factory > 0).length;
+    // Nahrungslage: Getreide ernährt die Infanterie, Fisch den Provinzunterhalt
+    const grainNet = netRate(view.rates, 'grain'), fishNet = netRate(view.rates, 'fish');
+    const foodShort = grainNet < 0 || fishNet < 0 || stock.grain < 3000;
+    // Kasernen (1000 Getreide je Stufe und Tag) und Wehrämter (jede neue Infanterie isst 18 Getreide am Tag):
+    // bei Getreidemangel abschalten, bei Überschuss wieder an
+    const starving = grainNet < 0 && stock.grain < -grainNet * 5, plenty = grainNet > 1500 && stock.grain > 10000;
+    for (const i of own) {
+      const ps = state.provinces[i];
+      for (const b of ['barracks', 'recruitment'] as const) {
+        if (ps.buildings[b] <= 0) continue;
+        if (!ps.off?.[b] && starving) actions.push({ type: 'switchBuilding', province: i, building: b, on: false });
+        else if (ps.off?.[b] && plenty) actions.push({ type: 'switchBuilding', province: i, building: b, on: true });
+      }
+    }
     const maxFortress = state.difficulty === 'hard' ? 3 : 2;
     let best: { province: number; building: Building; score: number } | null = null;
     for (const i of own) {
@@ -155,6 +173,10 @@ export class BasicAI implements Controller {
             else if (border && chk.level === 1 && mp.city) score = 350;
             break;
         }
+        // Nahrung knapp: Wirtschaftsgebäude in Getreide- und Fischprovinzen bevorzugen, Kasernen erst bei Getreideüberschuss
+        const food = mp.resource === 'grain' || mp.resource === 'fish';
+        if (foodShort && food && (b === 'railroad' || b === 'harbor' || b === 'factory' || b === 'manufactory')) score *= 2.5;
+        if (b === 'barracks' && grainNet < BUILDINGS.barracks.upkeep!.grain! * 1.5) score = 0;
         score *= 0.9 + view.random() * 0.2;
         if (score > 0 && (!best || score > best.score)) best = { province: i, building: b, score };
       }
@@ -224,24 +246,40 @@ export class BasicAI implements Controller {
     const { state, map, nation, major, enemies, profile, diff } = sit;
     const power = (n: string) => state.armies.filter((a) => a.owner === n).reduce((s, a) => s + armyPower(a), 0);
     const mine = power(nation);
+    const stock = state.nations[nation].stock;
+    // Wert eines Tributs zu Börsenpreisen (Geld zählt 1:1); nur, was der Anbieter auch zahlen kann
+    const worth = (p: { from: string; tribute?: Partial<Record<Res, number>> }) => {
+      if (!p.tribute || !canAfford(state.nations[p.from].stock, p.tribute)) return 0;
+      return (Object.keys(p.tribute) as Res[]).reduce((s, r) => s + p.tribute![r]! * (r === 'money' ? 1 : priceOf(state, r as Resource)), 0);
+    };
     // Angebote beantworten
     for (const p of state.proposals.filter((x) => x.to === nation)) {
       const theirs = power(p.from);
+      const w = worth(p);
       let accept: boolean;
       if (p.kind === 'peace') {
         const age = state.time - (state.warSince[warKey(nation, p.from)] ?? state.time);
-        // der Stärkere nimmt nur selten an, der Schwächere gern
-        accept = mine < theirs * 0.9 || (age > 6 * DAY && view.random() < 0.25 / profile.aggression);
+        // der Stärkere nimmt nur selten an, der Schwächere gern; ein ordentlicher Tribut macht Frieden attraktiv
+        const price = 15000 * profile.aggression * Math.max(1, mine / Math.max(1, theirs));
+        accept = mine < theirs * 0.9 || w >= price || (age > 6 * DAY && view.random() < (0.25 + w / price) / profile.aggression);
       } else {
-        // Durchmarsch/geteilte Karte: nicht mit deutlich stärkeren Nationen
-        accept = theirs < mine * 1.5 && view.random() < (p.kind === 'rightOfWay' ? 0.5 : 0.3);
+        // Durchmarsch/geteilte Karte: nicht mit deutlich stärkeren Nationen – außer gegen Tribut
+        accept = (theirs < mine * 1.5 && view.random() < (p.kind === 'rightOfWay' ? 0.5 : 0.3)) || w >= (p.kind === 'rightOfWay' ? 8000 : 15000);
       }
       actions.push({ type: 'answer', nation: p.from, accept });
     }
-    // selbst Frieden anbieten, wenn klar unterlegen
+    // selbst Frieden anbieten: klar unterlegen (mit Tribut) oder in einem festgefahrenen Krieg
     for (const e of enemies) {
-      const offered = state.proposals.some((p) => p.from === nation && p.to === e);
-      if (!offered && mine < power(e) * 0.5 && view.random() < 0.2) actions.push({ type: 'propose', nation: e, kind: 'peace' });
+      if (state.proposals.some((p) => p.from === nation && p.to === e)) continue;
+      const theirs = power(e);
+      const age = state.time - (state.warSince[warKey(nation, e)] ?? state.time);
+      const losing = mine < theirs * 0.5;
+      const stalemate = age > 8 * DAY && mine < theirs * 1.3 && mine > theirs * 0.7;
+      if (!(losing && view.random() < 0.2) && !(stalemate && view.random() < 0.05)) continue;
+      // Tribut: ein Teil der Kasse, umso mehr, je klarer die Unterlegenheit
+      const share = losing ? 0.3 : mine < theirs ? 0.1 : 0;
+      const money = Math.floor(Math.min(stock.money * share, 50000) / 1000) * 1000;
+      actions.push({ type: 'propose', nation: e, kind: 'peace', ...(money >= 5000 ? { tribute: { money } } : {}) });
     }
     // Kriegserklärungen: nur Großmächte, nach der Friedenszeit, höchstens ein Krieg zugleich
     if (!major || enemies.length > 0 || state.time < PEACE_TIME) return;
@@ -297,8 +335,11 @@ export class BasicAI implements Controller {
       const weights: Partial<Record<Resource, number>> = {};
       for (const r of CATEGORY_RES[cat]) {
         const free = rates.prod[r] - rates.cons[r];
-        weights[r] = Math.max(0, n.stock[r] + 5 * free) * (r === 'oil' ? 0.3 : 1);
+        // Öl wird für Einheiten geschont, Getreide für die Infanterie (die nur Getreide isst)
+        weights[r] = Math.max(0, n.stock[r] + 5 * free) * (r === 'oil' ? 0.3 : r === 'grain' ? 0.4 : 1);
       }
+      // Nahrung: reicht beides nicht, deckt Fisch den Provinzunterhalt allein
+      if (cat === 'food' && !(weights.grain! > 0) && !(weights.fish! > 0)) weights.fish = 1;
       const shares = toShares(cat, weights);
       const change = CATEGORY_RES[cat].some((r) => Math.abs((shares[r] ?? 0) - (n.consumption[r] ?? 0)) >= 10);
       if (change) actions.push({ type: 'setConsumption', category: cat, shares });
@@ -392,6 +433,16 @@ export class BasicAI implements Controller {
 
     const capital = activeCapital(state, map, nation);
     const superiority = diff.attack * profile.caution / Math.sqrt(profile.aggression);
+    // übliche Besatzung, mit der in nicht einsehbaren Provinzen zu rechnen ist
+    const assumed = armyPower({ id: 0, owner: nation, node: 0, units: { infantry: START_INFANTRY } });
+    /** erwartete Verteidigung einer feindlichen Provinz: sichtbare Truppen, sonst die übliche Besatzung; Festung zählt mit */
+    const defence = (n: number): number => {
+      const ps = state.provinces[n];
+      let d = hostile.get(n) ?? 0;
+      const hidden = !sit.vis.has(n) || (ps.buildings.fortress >= 2 && !sit.vis.full.has(n));
+      if (hidden) d = Math.max(d, assumed);
+      return d / Math.max(0.25, 1 - FORTRESS_REDUCTION[ps.buildings.fortress]);
+    };
     for (const [node, group] of byNode) {
       if (isSea(map, node)) continue; // Truppen auf See führen ihren Befehl aus
       const land = group.filter((x) => !x.target && !isRailOnly(x));
@@ -430,7 +481,9 @@ export class BasicAI implements Controller {
         if (!major && !own && map.provinces[n].nation !== nation) continue;
         const hours = tree.hours[n];
         if (!isFinite(hours) || hours > REACH_HOURS) continue;
-        if (power < threat * superiority) continue;
+        // eigene Provinzen mit Eindringlingen: genug Überlegenheit; feindliche: auch die nicht sichtbare
+        // Besatzung und Festung einrechnen und nie mit Kleinsttrupps
+        if (own ? power < threat * superiority : power < Math.max(MIN_STRIKE, defence(n) * superiority)) continue;
         // Landungen nur für Großmächte und mit spürbarem Aufschlag gegenüber dem Landweg
         const sea = viaSea(n);
         if (sea && !major) continue;
@@ -447,6 +500,19 @@ export class BasicAI implements Controller {
           const lack = threat * 1.3 - (friendly.get(f) ?? 0);
           if (lack <= 0) continue;
           const score = lack / (6 + hours);
+          if (!best || score > best.score) best = { node: f, score };
+        }
+      }
+      // 3. Sammeln: zu kleine Überschüsse ziehen zur stärksten eigenen Armee an der Front, statt einzeln anzugreifen
+      if (!best && power < MIN_STRIKE && sit.enemies.length) {
+        const here = friendly.get(node) ?? 0;
+        for (const f of front.keys()) {
+          if (f === node) continue;
+          const hours = tree.hours[f];
+          if (!isFinite(hours) || hours > REACH_HOURS || viaSea(f)) continue;
+          const there = friendly.get(f) ?? 0;
+          if (there <= here) continue;
+          const score = there / (6 + hours);
           if (!best || score > best.score) best = { node: f, score };
         }
       }

@@ -6,7 +6,7 @@ CAPITAL_MOVE, DAY, buildingLives,   ALL_RES, BUILD_QUEUE_LIMIT, BUILD_REFUND, BU
   type Building, type Category, type Cost, type Res, type UnitType,
 } from './balance.ts';
 import { validShares, activeCapital, activeLevel } from './economy.ts';
-import { atWar, hasRightOfWay, relation, relationRank, RELATION_NAMES, setRelation } from './diplomacy.ts';
+import { atWar, hasRightOfWay, relation, relationRank, RELATION_NAMES, setRelation, noteWarDeclaration } from './diplomacy.ts';
 import { isSea, nodeNeighbors } from './graph.ts';
 import type { MapData, Resource } from './mapdata.ts';
 import { acceptOffer, cancelOffer, postOffer } from './market.ts';
@@ -25,7 +25,7 @@ export type ProvinceAction =
   | { type: 'enqueue'; province: number; unit: UnitType }
   | { type: 'dequeue'; province: number; index: number }
   | { type: 'setRepeat'; province: number; repeat: boolean }
-  /** Kaserne oder Eisenbahn ab- bzw. wieder einschalten (kein Unterhalt, keine Wirkung) */
+  /** Kaserne, Wehramt oder Eisenbahn ab- bzw. wieder einschalten (kein Unterhalt, keine Wirkung) */
   | { type: 'switchBuilding'; province: number; building: Building; on: boolean }
   /** beschädigtes Gebäude reparieren (Kosten: Anteil der fehlenden Leben an den Kosten der obersten Stufe) */
   | { type: 'repair'; province: number; building: Building }
@@ -60,8 +60,8 @@ export type DiplomacyAction =
   | { type: 'declareWar'; nation: string }
   /** einseitig verschlechtern (Embargo, Durchmarsch entziehen, Karte nicht mehr teilen) */
   | { type: 'downgrade'; nation: string; to: Relation }
-  /** bessere Beziehung anbieten (Frieden, Durchmarschrecht, geteilte Karte) */
-  | { type: 'propose'; nation: string; kind: Relation }
+  /** bessere Beziehung anbieten (Frieden, Durchmarschrecht, geteilte Karte), optional mit Tribut (bei Annahme gezahlt) */
+  | { type: 'propose'; nation: string; kind: Relation; tribute?: Partial<Record<Res, number>> }
   | { type: 'answer'; nation: string; accept: boolean };
 
 export type MarketAction =
@@ -350,6 +350,12 @@ export function requiredWars(state: GameState, map: MapData, a: Army, target: Mo
   return [...new Set(nodes.map((n) => state.provinces[n].owner))].filter((o) => peaceful.includes(o));
 }
 
+/** Tribut als Text, z. B. „20.000 Geld, 5.000 Kohle“ */
+export function tributeText(t: Partial<Record<Res, number>>): string {
+  return (Object.keys(t) as Res[]).filter((r) => (t[r] ?? 0) > 0)
+    .map((r) => `${Math.round(t[r]!).toLocaleString('de-DE')} ${RES_NAMES[r]}`).join(', ');
+}
+
 export function targetOwners(map: MapData, state: GameState, t: MoveTarget): string[] {
   const nodes = 'node' in t ? [t.node] : [t.road.a, t.road.b];
   return [...new Set(nodes.filter((n) => !isSea(map, n)).map((n) => state.provinces[n].owner))];
@@ -506,6 +512,7 @@ function applyDiplomacy(ctx: ActionContext, nation: string, action: DiplomacyAct
     case 'declareWar': {
       if (current === 'war') return { ok: false, error: 'Bereits im Krieg' };
       setRelation(state, nation, action.nation, 'war');
+      noteWarDeclaration(state, nation);
       ctx.log(`${name(nation)} erklärt ${name(action.nation)} den Krieg!`);
       ctx.invalidate();
       return { ok: true };
@@ -525,9 +532,19 @@ function applyDiplomacy(ctx: ActionContext, nation: string, action: DiplomacyAct
       if (relationRank(action.kind) <= relationRank(current)) return { ok: false, error: 'Diese Beziehung besteht bereits' };
       if (action.kind !== 'peace' && relationRank(current) < relationRank('peace')) return { ok: false, error: 'Zuerst Frieden schließen' };
       if (state.proposals.some((p) => p.from === nation && p.to === action.nation)) return { ok: false, error: 'Angebot liegt bereits vor' };
-      state.proposals.push({ from: nation, to: action.nation, kind: action.kind, time: state.time });
-      ctx.log(`${name(nation)} bietet ${RELATION_NAMES[action.kind]} an.`, action.nation);
-      ctx.log(`Angebot (${RELATION_NAMES[action.kind]}) an ${name(action.nation)} gesendet.`, nation);
+      // Tribut: ganze, nicht negative Mengen bekannter Rohstoffe; muss jetzt bezahlbar sein (gezahlt wird bei Annahme)
+      const tribute: Partial<Record<Res, number>> = {};
+      for (const [r, v] of Object.entries(action.tribute ?? {})) {
+        const n = Math.floor(Number(v));
+        if (!(ALL_RES as string[]).includes(r) || !(n >= 0)) return { ok: false, error: 'Ungültiger Tribut' };
+        if (n > 0) tribute[r as Res] = n;
+      }
+      const hasTribute = Object.keys(tribute).length > 0;
+      if (hasTribute && !canAfford(state.nations[nation].stock, tribute)) return { ok: false, error: `Tribut nicht bezahlbar: zu wenig ${missing(state.nations[nation].stock, tribute)}` };
+      state.proposals.push({ from: nation, to: action.nation, kind: action.kind, time: state.time, ...(hasTribute ? { tribute } : {}) });
+      const extra = hasTribute ? ` (Tribut: ${tributeText(tribute)})` : '';
+      ctx.log(`${name(nation)} bietet ${RELATION_NAMES[action.kind]} an${extra}.`, action.nation);
+      ctx.log(`Angebot (${RELATION_NAMES[action.kind]}) an ${name(action.nation)} gesendet${extra}.`, nation);
       return { ok: true };
     }
     case 'answer': {
@@ -538,7 +555,19 @@ function applyDiplomacy(ctx: ActionContext, nation: string, action: DiplomacyAct
         ctx.log(`${name(nation)} lehnt ${RELATION_NAMES[p.kind]} ab.`, action.nation);
         return { ok: true };
       }
+      if (p.tribute) {
+        const payer = state.nations[action.nation].stock;
+        if (!canAfford(payer, p.tribute)) {
+          ctx.log(`${name(action.nation)} kann den angebotenen Tribut nicht mehr zahlen – das Angebot ist hinfällig.`, nation);
+          ctx.log(`Unser Angebot an ${name(nation)} ist hinfällig: Tribut nicht mehr bezahlbar.`, action.nation);
+          return { ok: false, error: 'Der Anbieter kann den Tribut nicht mehr zahlen' };
+        }
+        pay(payer, p.tribute);
+        const stock = state.nations[nation].stock;
+        for (const r of Object.keys(p.tribute) as Res[]) stock[r] += p.tribute[r]!;
+      }
       setRelation(state, nation, action.nation, p.kind);
+      if (p.tribute) ctx.log(`${name(action.nation)} zahlt ${name(nation)} Tribut: ${tributeText(p.tribute)}.`);
       if (current === 'war') {
         // Märsche in das Gebiet des bisherigen Feindes enden
         for (const a of state.armies) {

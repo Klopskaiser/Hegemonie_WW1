@@ -562,3 +562,7 @@ svg.flag { vertical-align: -2px; border-radius: 1px; box-shadow: 0 1px 1px rgba(
 .use-sources .table td:first-child { white-space: normal; }
 .rename-row { display: flex; gap: 4px; margin: 4px 0; }
 .rename-row input { flex: 1; min-width: 0; }
+
+.tribute-row { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; padding: 2px 0 6px; }
+.tribute-row label { display: inline-flex; gap: 3px; align-items: center; }
+.tribute-row input { width: 70px; }

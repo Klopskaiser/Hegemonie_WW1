@@ -2,10 +2,10 @@ import { useEffect, useMemo, useState, useRef } from 'react';
 import { ALL_RES, DAY, HOUR, RES_NAMES, SPEEDS } from '../game/balance.ts';
 import { atWar } from '../game/diplomacy.ts';
 import { nodeName } from '../game/graph.ts';
-import { armyLocation, engagedTarget, isRangedOnly, planRoute, routePoints, type MoveTarget, samePlace } from '../game/military.ts';
+import { armyLocation, engagedTarget, isRangedOnly, planRoute, routePoints, type MoveTarget, samePlace, inMelee, unitRange } from '../game/military.ts';
 import { requiredWars, type Action } from '../game/actions.ts';
 import { MultiArmyPanel } from './MultiArmyPanel.tsx';
-import { UNITS, type UnitType } from '../game/balance.ts';
+import type { UnitType } from '../game/balance.ts';
 import type { Army } from '../game/types.ts';
 import { capitalOf } from '../game/economy.ts';
 import { armyVisible, visibleNodes } from '../game/visibility.ts';
@@ -80,9 +80,11 @@ export function GameView({ start, onExit }: { start: SessionStart; onExit(): voi
     for (const a of armies) {
       const t = engagedTarget(state, map, a);
       if (!t || !armies.includes(t)) continue;
+      // im Nahkampf gebundene Schützen feuern nicht sichtbar
+      if (inMelee(state, a)) continue;
       for (const u of Object.keys(a.units) as UnitType[]) {
-        if ((a.units[u] ?? 0) > 0 && UNITS[u].range > 0) {
-          out.push({ key: `${a.id}-${t.id}-${u}`, kind: u, shooter: a.id, target: t.id });
+        if ((a.units[u] ?? 0) > 0 && unitRange(a, u, map) > 0) {
+          out.push({ key: `${a.id}-${t.id}-${u}`, kind: u, shooter: a.id, target: t.id, count: a.units[u]! });
         }
       }
     }

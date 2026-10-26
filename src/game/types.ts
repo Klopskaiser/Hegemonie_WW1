@@ -114,6 +114,8 @@ export interface Proposal {
   to: string;
   kind: Relation;
   time: number;
+  /** Tribut des Anbieters an den Empfänger (Geld und Rohstoffe), gezahlt bei Annahme */
+  tribute?: Partial<Record<Res, number>>;
 }
 
 export interface MarketOffer {
@@ -187,6 +189,8 @@ export interface NationState {
   capital?: number;
   /** laufende Verlegung der Hauptstadt */
   capitalMove?: { province: number; start: number; end: number } | null;
+  /** Kriegserklärungen: Ende des Moralabzugs je Erklärung (Spielzeit) */
+  warPenalty?: number[];
 }
 
 export interface GameEvent {

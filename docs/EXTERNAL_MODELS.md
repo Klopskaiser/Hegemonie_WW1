@@ -43,7 +43,7 @@ Typdefinitionen (maßgeblich): `src/game/bridgeProtocol.ts` (Nachrichten, Karten
 {"type":"enqueue","province":12,"unit":"tank"}           // artillery, armoredCar, tank, railgun, battleship (Infanterie entsteht automatisch)
 {"type":"dequeue","province":12,"index":0}
 {"type":"setRepeat","province":12,"repeat":true}
-{"type":"switchBuilding","province":12,"building":"barracks","on":false}   // Kaserne/Eisenbahn abschalten: kein Unterhalt, keine Wirkung
+{"type":"switchBuilding","province":12,"building":"barracks","on":false}   // Kaserne/Wehramt/Eisenbahn abschalten: kein Unterhalt, keine Wirkung
 {"type":"moveCapital","province":12}                     // Hauptstadt verlegen (20000 Geld, je 5000 Holz/Eisen/Getreide/Kohle, 48 h)
 {"type":"cancelCapitalMove"}                             // Verlegung abbrechen (Kosten kommen ganz zurück)
 {"type":"move","army":57,"to":180}                       // Provinz oder Seegebiet; Landungen werden automatisch geplant
@@ -55,6 +55,7 @@ Typdefinitionen (maßgeblich): `src/game/bridgeProtocol.ts` (Nachrichten, Karten
 {"type":"declareWar","nation":"FR"}
 {"type":"downgrade","nation":"FR","to":"embargo"}
 {"type":"propose","nation":"FR","kind":"peace"}          // peace, rightOfWay, sharedMap
+{"type":"propose","nation":"FR","kind":"peace","tribute":{"money":20000,"coal":5000}}   // mit Tribut, gezahlt bei Annahme
 {"type":"answer","nation":"FR","accept":true}
 {"type":"postOffer","side":"sell","res":"coal","amount":1000,"price":2}
 {"type":"cancelOffer","id":4}
