@@ -274,7 +274,7 @@
   (mindestens halb so weit vom Rand wie der innerste Punkt, nicht direkt am Rohstoffsymbol). Echte Städte
   und Vorgaben (`cityAt`) bleiben. Ergebnis: 33 verlegt, 8 bleiben; Mittelpunkte unter 10 km am Meer
   62 → 29 (davon 19 echte Städte). Je Ortspaar gibt es nur noch eine Abkürzung (die kürzere).
-- Provinzmoral (Vorgabe): Ziel = 80 % − Entfernung zur Hauptstadt (1 % je 100 km ab 300 km, höchstens
+- Provinzmoral (Vorgabe): Ziel = 80 % − Entfernung zur Hauptstadt (1 % je 120 km ab 300 km, höchstens
   35 %; ohne Hauptstadt die vollen 35 %) + Gebäude − 5 % je Krieg (höchstens 25 %) − Mangel (Nahrung 15 %,
   Baustoffe 5 %, Energie 10 %) − Kämpfe in der Provinz (−10 % je Tag in Folge mit Kampf, höchstens −30 %; ein Tag ohne Kampf setzt
   zurück) − 2 % je angrenzender eigener Provinz

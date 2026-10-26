@@ -274,8 +274,9 @@ export const FACTORY_SPEEDUP = 0.25;
 
 export const MORALE = {
   base: 0.8,
-  /** Abzug je 100 km Entfernung zur Hauptstadt ab `distanceFree` km; ohne Hauptstadt der volle Abzug */
-  distancePer100: 0.01,
+  /** Abzug je `distanceStep` km Entfernung zur Hauptstadt ab `distanceFree` km; ohne Hauptstadt der volle Abzug */
+  distancePerStep: 0.01,
+  distanceStep: 120,
   distanceFree: 300,
   distanceMax: 0.35,
   /** Kämpfe in der Provinz: je Tag in Folge mit Kampf dieser Abzug, höchstens battleMax */

@@ -244,7 +244,7 @@ export function moraleTarget(state: GameState, map: MapData, id: number): Morale
     if (cap !== null) {
       const c = map.provinces[cap].center;
       const d = Math.hypot(c[0] - mp.center[0], c[1] - mp.center[1]);
-      pen = Math.min(MORALE.distanceMax, (Math.max(0, d - MORALE.distanceFree) / 100) * MORALE.distancePer100);
+      pen = Math.min(MORALE.distanceMax, (Math.max(0, d - MORALE.distanceFree) / MORALE.distanceStep) * MORALE.distancePerStep);
     }
     if (pen > 0) parts.push({ label: cap === null ? 'Hauptstadt verloren (verlegen!)' : 'Entfernung zur Hauptstadt', value: -pen });
   }

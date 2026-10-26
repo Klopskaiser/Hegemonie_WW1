@@ -121,7 +121,7 @@ describe('Moral, Abschüsse, Namen', () => {
 });
 
 describe('Provinzmoral und Hauptstadt', () => {
-  it('Moralziel: Grundwert 80 %, kein Hauptstadtbonus, Entfernung 1 % je 100 km, Unruhe der Nachbarn −2 %', () => {
+  it('Moralziel: Grundwert 80 %, kein Hauptstadtbonus, Entfernung 1 % je 120 km, Unruhe der Nachbarn −2 %', () => {
     const sim = newSim();
     const berlin = prov('Berlin');
     const cap = moraleTarget(sim.state, map, berlin);
@@ -131,7 +131,7 @@ describe('Provinzmoral und Hauptstadt', () => {
       .map((p) => ({ p, d: Math.hypot(p.center[0] - map.provinces[berlin].center[0], p.center[1] - map.provinces[berlin].center[1]) }))
       .sort((x, y) => y.d - x.d)[0];
     const dist = moraleTarget(sim.state, map, far.p.id).parts.find((x) => x.label === 'Entfernung zur Hauptstadt');
-    if (far.d > MORALE.distanceFree) expect(dist!.value).toBeCloseTo(-Math.min(MORALE.distanceMax, ((far.d - MORALE.distanceFree) / 100) * 0.01), 6);
+    if (far.d > MORALE.distanceFree) expect(dist!.value).toBeCloseTo(-Math.min(MORALE.distanceMax, ((far.d - MORALE.distanceFree) / 120) * 0.01), 6);
     const n = map.provinces[berlin].neighbors.find((x) => map.provinces[x].nation === 'DE')!;
     sim.state.provinces[n].morale = 0.2;
     expect(moraleTarget(sim.state, map, berlin).parts.find((p) => p.label.startsWith('Unruhe'))!.value).toBeCloseTo(-0.02, 9);
