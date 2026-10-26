@@ -41,8 +41,10 @@ Kartenbau nötig, nicht zur Laufzeit.
   - `ai.ts` eingebaute KI: Wirtschaft, Rekrutierung, Krieg/Frieden, Börse, Fronten/Reserven,
     Landungen, Flotten, Eisenbahngeschütze; Profile (`state.aiProfiles`) und Stärke (`DIFFICULTY`).
   - `bridgeProtocol.ts` Nachrichten für externe Modelle (WebSocket); Doku `docs/EXTERNAL_MODELS.md`.
-  - `military.ts` Wegfindung, Marsch (Gebiet, Bahn, Einschiffen), Nah-/Fernkampf, Eroberung, Aufstände.
-  - `graph.ts` Bewegungsnetz: Knoten 0..P-1 Provinzen, P.. Seegebiete. `visibility.ts` Nebel des Krieges.
+  - `military.ts` Wegfindung (`planRoute`, Ziele auch auf Wegen), Marsch, Nah-/Fernkampf, Truppenmoral,
+    Eroberung, Überlaufen von Provinzen. `names.ts` Armeenamen und -nummern.
+  - `graph.ts` Bewegungsnetz: Knoten 0..P-1 Provinzen, P.. Seegebiete; Landwege knicken an der Grenze
+    (`edgePoints`, `edgePoint`). `visibility.ts` Nebel des Krieges.
   - `diplomacy.ts` Beziehungsstufen (Krieg, Embargo, Frieden, Durchmarsch, geteilte Karte).
   - `market.ts` Börse (Angebote mit Rücklage), `newspaper.ts` Tageszeitung; Sieg in `sim.ts`.
   - `economy.ts` Produktion, Verbrauch, Moral, Siegpunkte.
@@ -52,7 +54,8 @@ Kartenbau nötig, nicht zur Laufzeit.
 - `src/headless/env.ts` – `HeadlessEnv` (reset/step) und `RecordingController`; CLI
   `scripts/headless.ts`, Beispielmodell `scripts/example-model.ts` (devDependency `ws`).
 - `src/persist/db.ts` – IndexedDB (`meta` für das Menü, `saves` für den Zustand).
-- `src/ui/` – React-Oberfläche, `MapCanvas.tsx` zeichnet die Karte auf Canvas.
+- `src/ui/` – React-Oberfläche, `MapCanvas.tsx` zeichnet die Karte auf Canvas (Lasso, Rechtsklick-Befehle).
+  Bilder unter `public/images` (Platzhalter, solange Dateien fehlen; Liste in `public/images/README.md`).
 - `scripts/build-map.ts` + `scripts/maps/<id>.ts` – Kartenpipeline: Admin-1-Regionen →
   Grenzen von 1914 → Topologie/Vereinfachung → Projektion (km) → feste Provinzzahl je Nation
   (Großmacht 10, Kleinstaat nach Fläche) per gewichtetem k-Means + Voronoi → Nachbarn,

@@ -1,8 +1,10 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useRef } from 'react';
 import { ALL_RES, DAY, HOUR, RES_NAMES, SPEEDS } from '../game/balance.ts';
 import { atWar } from '../game/diplomacy.ts';
 import { nodeName } from '../game/graph.ts';
-import { engagedTarget, isRangedOnly, nearestNode, planMove } from '../game/military.ts';
+import { armyLocation, engagedTarget, isRangedOnly, planRoute, routePoints, type MoveTarget } from '../game/military.ts';
+import type { Action } from '../game/actions.ts';
+import { MultiArmyPanel } from './MultiArmyPanel.tsx';
 import { UNITS, type UnitType } from '../game/balance.ts';
 import type { Army } from '../game/types.ts';
 import { armyVisible, visibleNodes } from '../game/visibility.ts';
@@ -19,6 +21,7 @@ import { MarketPanel } from './MarketPanel.tsx';
 import { NewspaperPanel } from './NewspaperPanel.tsx';
 import { EconomyPanel, EventsPanel, netPerDay, ProvincesPanel, RankingPanel, type SidePanel } from './SidePanels.tsx';
 import { useSession, type SessionStart } from './useSession.ts';
+import { Flag } from './Flag.tsx';
 
 const MENU: { id: SidePanel; label: string; glyph: string; soon?: boolean }[] = [
   { id: 'provinces', label: 'Provinzen', glyph: '♜' },
@@ -35,8 +38,11 @@ export function GameView({ start, onExit }: { start: SessionStart; onExit(): voi
   const session = useSession(start);
   const { state, map, rates } = session;
   const [selected, setSelected] = useState<number | null>(null);
-  const [selectedArmy, setSelectedArmy] = useState<number | null>(null);
-  const [hoverNode, setHoverNode] = useState<number | null>(null);
+  const [selectedArmies, setSelectedArmies] = useState<number[]>([]);
+  const [hoverTarget, setHoverTarget] = useState<MoveTarget | null>(null);
+  /** nach dem Teilen auszuwählende Armee (sobald sie im Spielstand auftaucht) */
+  const [pendingSelect, setPendingSelect] = useState<number | null>(null);
+  const prevSelection = useRef<number[]>([]);
   const [panel, setPanel] = useState<SidePanel | null>(null);
   const [mode, setMode] = useState<MapMode>('political');
   const [focus, setFocus] = useState<{ province: number; seq: number } | null>(null);
@@ -75,25 +81,35 @@ export function GameView({ start, onExit }: { start: SessionStart; onExit(): voi
     }
     return out;
   }, [armies, state, map]);
-  const army = armies.find((a) => a.id === selectedArmy) ?? null;
-  const ownArmy = army && state && army.owner === state.playerNation ? army : null;
+  const chosen = useMemo(() => armies.filter((a) => selectedArmies.includes(a.id)), [armies, selectedArmies]);
+  const own = useMemo(() => (state ? chosen.filter((a) => a.owner === state.playerNation) : []), [chosen, state]);
+  const army = chosen.length === 1 ? chosen[0] : null;
 
-  const preview = useMemo(() => {
-    if (!ownArmy || hoverNode === null || !state || !map) return null;
-    const from = nearestNode(map, ownArmy, state.time);
-    if (from === hoverNode) return null;
-    const r = planMove(state, map, ownArmy, from, hoverNode);
-    if (!r) return { path: [from, hoverNode], label: `${nodeName(map, hoverNode)}: kein Weg` };
-    const eta = state.paused ? `${Math.round(r.hours)} h Spielzeit` : fmtDuration((r.hours * HOUR) / state.speed);
-    // Landung: Fahrt der Flotte, danach Weg der Truppen
-    const path = r.then ? [...r.path, ...r.then.slice(1)] : r.path;
-    return { path, label: `${r.then ? 'Landung: ' : ''}${nodeName(map, hoverNode)} · ${eta}` };
-  }, [ownArmy, hoverNode, state, map]);
+  // Marschvorschau für die ausgewählten eigenen Armeen zum Ziel unter dem Mauszeiger
+  const previews = useMemo(() => {
+    if (!own.length || !hoverTarget || !state || !map) return [];
+    const dest = 'node' in hoverTarget ? nodeName(map, hoverTarget.node)
+      : `Weg ${nodeName(map, hoverTarget.road.a)} – ${nodeName(map, hoverTarget.road.b)}`;
+    let longest = 0;
+    const out = own.slice(0, 12).map((a) => {
+      const r = planRoute(state, map, a, state.time, hoverTarget);
+      if (!r) return { pts: [] as [number, number][], label: '' };
+      longest = Math.max(longest, r.hours);
+      const pts = routePoints(map, r.path, r.startFrac ?? 0, r.endFrac ?? 1);
+      if (r.then) pts.push(...routePoints(map, r.then).slice(1));
+      return { pts, label: '', landing: !!r.then };
+    });
+    const first = out.find((x) => x.pts.length > 1);
+    if (!first) return [{ pts: [], label: `${dest}: kein Weg` }];
+    const eta = state.paused ? `${Math.round(longest)} h Spielzeit` : fmtDuration((longest * HOUR) / state.speed);
+    first.label = `${'landing' in first && first.landing ? 'Landung: ' : ''}${dest} · ${eta}${own.length > 1 ? ` (${own.length} Armeen)` : ''}`;
+    return out;
+  }, [own, hoverTarget, state, map]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        setSelectedArmy(null);
+        setSelectedArmies([]);
         setSelected(null);
       }
     };
@@ -102,8 +118,29 @@ export function GameView({ start, onExit }: { start: SessionStart; onExit(): voi
   }, []);
 
   useEffect(() => {
-    if (selectedArmy !== null && state && !state.armies.some((a) => a.id === selectedArmy)) setSelectedArmy(null);
-  }, [state, selectedArmy]);
+    if (pendingSelect === null || !state?.armies.some((a) => a.id === pendingSelect)) return;
+    setSelectedArmies([pendingSelect]);
+    setPendingSelect(null);
+  }, [state, pendingSelect]);
+
+  // abgetrennte Armeen, die ohne Befehl abgewählt werden, gliedern sich wieder ein
+  useEffect(() => {
+    const prev = prevSelection.current;
+    prevSelection.current = selectedArmies;
+    if (!state) return;
+    for (const id of prev) {
+      if (selectedArmies.includes(id)) continue;
+      const a = state.armies.find((x) => x.id === id);
+      if (a && a.owner === state.playerNation && a.split && !a.move) void session.act({ type: 'rejoin', army: id });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedArmies]);
+
+  useEffect(() => {
+    if (!state || !selectedArmies.length) return;
+    const alive = selectedArmies.filter((id) => state.armies.some((a) => a.id === id));
+    if (alive.length !== selectedArmies.length) setSelectedArmies(alive);
+  }, [state, selectedArmies]);
 
   const exit = async () => {
     setLeaving(true);
@@ -147,37 +184,51 @@ export function GameView({ start, onExit }: { start: SessionStart; onExit(): voi
   const stock = state.nations[state.playerNation].stock;
   const incoming = state.proposals.filter((p) => p.to === state.playerNation).length;
   const jump = (id: number) => {
-    setSelectedArmy(null);
+    setSelectedArmies([]);
     setSelected(id);
     setFocus((f) => ({ province: id, seq: (f?.seq ?? 0) + 1 }));
   };
   const selectArmy = (id: number) => {
-    setSelectedArmy(id);
+    setSelectedArmies([id]);
     setSelected(null);
   };
-  /** Klick auf ein Armeesymbol: mit eigener Armee in der Hand ist eine fremde Armee ein Angriffsziel. */
-  const onArmy = async (id: number) => {
-    const other = armies.find((a) => a.id === id);
-    if (ownArmy && other && other.owner !== state.playerNation) {
-      // reine Fernkampfverbände beschießen, alle anderen marschieren zum Gegner
-      const ranged = isRangedOnly(ownArmy) && atWar(state, state.playerNation, other.owner);
-      const r = ranged
-        ? await session.act({ type: 'attack', army: ownArmy.id, target: other.id })
-        : await session.act({ type: 'move', army: ownArmy.id, to: nearestNode(map, other, state.time) });
-      setNotice(r.ok ? null : r.error);
-      return;
-    }
-    selectArmy(id);
+  /** Linksklick auf einen Nadelkopf: auswählen (mit Umschalt hinzufügen/entfernen) */
+  const onArmy = (id: number, add: boolean) => {
+    setSelected(null);
+    setSelectedArmies((cur) => (add ? (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]) : [id]));
   };
-  const onNode = async (node: number | null) => {
-    if (ownArmy) {
-      if (node === null) return;
-      const r = await session.act({ type: 'move', army: ownArmy.id, to: node });
-      setNotice(r.ok ? null : r.error);
-      return;
-    }
-    setSelectedArmy(null);
+  /** Lasso: eigene Armeen im Lasso auswählen (mit Umschalt zur Auswahl hinzufügen) */
+  const onLasso = (ids: number[], add: boolean) => {
+    if (!ids.length && add) return;
+    setSelected(null);
+    setSelectedArmies((cur) => (add ? [...new Set([...cur, ...ids])] : ids));
+  };
+  /** Linksklick auf die Karte: Provinz auswählen, Armeeauswahl aufheben */
+  const onNode = (node: number | null) => {
+    setSelectedArmies([]);
     setSelected(node !== null && node < map.provinces.length ? node : null);
+  };
+  const moveAction = (id: number, t: MoveTarget): Action => ('node' in t
+    ? { type: 'move', army: id, to: t.node }
+    : { type: 'move', army: id, to: t.road.a, toward: t.road.b, frac: t.road.f });
+  /** Rechtsklick: alle ausgewählten eigenen Armeen marschieren dorthin bzw. greifen an */
+  const onTarget = async (t: MoveTarget | { army: number }) => {
+    if (!own.length) return;
+    const errors: string[] = [];
+    for (const a of own) {
+      let action: Action;
+      if ('army' in t) {
+        const other = armies.find((b) => b.id === t.army);
+        if (!other || other.id === a.id) continue;
+        // reine Fernkampfverbände beschießen Feinde, alle anderen marschieren zum Ziel
+        action = isRangedOnly(a) && atWar(state, state.playerNation, other.owner)
+          ? { type: 'attack', army: a.id, target: other.id }
+          : moveAction(a.id, armyLocation(other, state.time));
+      } else action = moveAction(a.id, t);
+      const r = await session.act(action);
+      if (!r.ok) errors.push(r.error);
+    }
+    setNotice(errors.length ? (own.length > 1 ? `${errors.length} von ${own.length} Armeen: ${errors[0]}` : errors[0]) : null);
   };
   const panelProps = { map, state, rates, onSelect: jump, onClose: () => setPanel(null) };
 
@@ -185,7 +236,7 @@ export function GameView({ start, onExit }: { start: SessionStart; onExit(): voi
     <div className="game">
       <header className="topbar">
         <div className="tb-brand" title={state.name}>
-          <span className="tb-flag" style={{ background: nation.color }} />
+          <span className="tb-flag"><Flag nation={nation.id} height={26} title={nation.name} /></span>
           <div>
             <div className="tb-nation">{nation.name}</div>
             <div className="tb-game">{state.name}</div>
@@ -238,11 +289,11 @@ export function GameView({ start, onExit }: { start: SessionStart; onExit(): voi
           ))}
         </nav>
 
-        <main className={'map-area' + (ownArmy ? ' targeting' : '')}>
+        <main className={'map-area' + (own.length ? ' targeting' : '')}>
           <MapCanvas map={map} owners={owners} morale={morale} armies={armies} time={state.time} nation={state.playerNation}
-            visible={visible} provinces={state.provinces} selected={selected} selectedArmy={selectedArmy} battles={battles} preview={preview} shots={shots}
-            mode={mode} focus={focus} onNode={onNode} onArmy={onArmy} onHoverNode={setHoverNode}
-            onContext={() => setSelectedArmy(null)} />
+            visible={visible} provinces={state.provinces} selected={selected} selectedArmies={selectedArmies} battles={battles}
+            previews={previews} shots={shots} mode={mode} focus={focus} onNode={onNode} onArmy={onArmy}
+            onHoverTarget={setHoverTarget} onTarget={onTarget} onLasso={onLasso} />
           {state.paused && <div className="paused-badge">{state.winner ? 'Spielende' : 'Pausiert – die Welt steht still'}</div>}
           {notice && <div className="notice" onClick={() => setNotice(null)}>{notice}</div>}
           <div className="map-footer">{map.name} · {fmtDay(state.time)} · Tempo {state.speed}×</div>
@@ -262,8 +313,11 @@ export function GameView({ start, onExit }: { start: SessionStart; onExit(): voi
         {state.winner && !endSeen && <GameOver map={map} state={state} onMenu={exit} onClose={() => setEndSeen(true)} />}
 
         {army ? (
-          <ArmyPanel map={map} state={state} army={army} armies={armies} act={session.act} onSelectArmy={selectArmy}
-            onClose={() => setSelectedArmy(null)} />
+          <ArmyPanel map={map} state={state} army={army} armies={armies} act={session.act} onSelectArmy={selectArmy} onSplit={setPendingSelect}
+            onClose={() => setSelectedArmies([])} />
+        ) : chosen.length > 1 ? (
+          <MultiArmyPanel map={map} state={state} armies={chosen} act={session.act} onSelectArmy={selectArmy}
+            onClose={() => setSelectedArmies([])} />
         ) : selected !== null && (
           <ProvincePanel map={map} state={state} id={selected} armies={armies} act={session.act} onSelectArmy={selectArmy}
             onClose={() => setSelected(null)} />

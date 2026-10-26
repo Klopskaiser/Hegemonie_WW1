@@ -7,13 +7,14 @@ import {
 } from './balance.ts';
 import { validShares } from './economy.ts';
 import { atWar, relation, relationRank, RELATION_NAMES, setRelation } from './diplomacy.ts';
-import { isSea } from './graph.ts';
+import { isSea, nodeNeighbors } from './graph.ts';
 import type { MapData, Resource } from './mapdata.ts';
 import { acceptOffer, cancelOffer, postOffer } from './market.ts';
 import {
-  inMelee, isNaval, mergeArmies, nearestNode, planMove, startMove, unitCount, unitTypes, type MilitaryContext,
+  armyPower, halt, inMelee, isNaval, mergeArmies, nearestNode, planRoute, rejoinSplits, samePlace, startMove, unitCount, unitTypes,
+  type MilitaryContext, type MoveTarget,
 } from './military.ts';
-import type { GameState, ProvinceState, Relation, Stock } from './types.ts';
+import type { Army, GameState, ProvinceState, Relation, Stock } from './types.ts';
 
 export type ProvinceAction =
   | { type: 'build'; province: number; building: Building }
@@ -26,14 +27,22 @@ export type ProvinceAction =
   | { type: 'setRepeat'; province: number; repeat: boolean };
 
 export type ArmyAction =
-  /** Marsch zu einem Knoten (Provinz oder Seegebiet P + Index) */
-  | { type: 'move'; army: number; to: number }
+  /**
+   * Marsch zu einem Knoten (Provinz oder Seegebiet P + Index). Mit `toward` und `frac` ist das Ziel
+   * ein Punkt auf dem Weg von `to` nach `toward` (Anteil 0..1 ab `to`); dort bleibt die Armee stehen.
+   */
+  | { type: 'move'; army: number; to: number; toward?: number; frac?: number }
   | { type: 'stop'; army: number }
   /** Fernkampfziel setzen (null = aufheben) */
   | { type: 'attack'; army: number; target: number | null }
-  /** Einheiten in eine neue Armee am selben Ort abspalten */
-  | { type: 'split'; army: number; units: Partial<Record<UnitType, number>> }
-  | { type: 'merge'; army: number; into: number };
+  /**
+   * Einheiten in eine neue Armee am selben Ort abspalten. Bleibt sie ohne Befehl am selben Ort,
+   * wird sie wieder eingegliedert – außer mit `rejoin: false` (z. B. Schiffe abtrennen).
+   */
+  | { type: 'split'; army: number; units: Partial<Record<UnitType, number>>; rejoin?: boolean }
+  | { type: 'merge'; army: number; into: number }
+  /** abgetrennte Armee ohne Befehl sofort wieder eingliedern (sofern noch am selben Ort) */
+  | { type: 'rejoin'; army: number };
 
 export type DiplomacyAction =
   | { type: 'declareWar'; nation: string }
@@ -54,7 +63,8 @@ export type EconomyAction =
 
 export type Action = ProvinceAction | ArmyAction | DiplomacyAction | MarketAction | EconomyAction;
 
-export type ActionResult = { ok: true } | { ok: false; error: string };
+/** Ergebnis einer Aktion; beim Teilen mit der ID der neuen Armee */
+export type ActionResult = { ok: true; army?: number } | { ok: false; error: string };
 
 export type ActionContext = MilitaryContext;
 
@@ -239,6 +249,29 @@ export function applyAction(ctx: ActionContext, nation: string, action: Action):
   }
 }
 
+function without(units: Army['units'], u: UnitType): Army['units'] {
+  const out = { ...units };
+  out[u] = (out[u] ?? 0) - 1;
+  if (!out[u]) delete out[u];
+  return out;
+}
+
+/**
+ * Besatzungsregel: Steht eine Armee in einer eigenen Stadt (am Provinzknoten) und ist sie die
+ * letzte dort, bleibt beim Abmarsch eine Einheit zurück – bevorzugt Infanterie, sonst die
+ * schwächste. Besteht sie nur aus einer Einheit, darf sie nicht abziehen ('last').
+ */
+export function garrisonKeep(state: GameState, map: MapData, a: Army): UnitType | 'last' | null {
+  if (a.move || a.pos || isNaval(a) || isSea(map, a.node)) return null;
+  if (state.provinces[a.node].owner !== a.owner) return null;
+  const others = state.armies.some((b) => b !== a && b.owner === a.owner && b.node === a.node && !b.move && !b.pos
+    && !isNaval(b) && unitCount(b) > 0);
+  if (others) return null;
+  if (unitCount(a) <= 1) return 'last';
+  if ((a.units.infantry ?? 0) > 0) return 'infantry';
+  return unitTypes(a).sort((x, y) => armyPower({ ...a, units: { [x]: 1 } }) - armyPower({ ...a, units: { [y]: 1 } }))[0];
+}
+
 function applyArmyAction(ctx: ActionContext, nation: string, action: ArmyAction): ActionResult {
   const { state, map } = ctx;
   const a = state.armies.find((x) => x.id === action.army);
@@ -246,21 +279,34 @@ function applyArmyAction(ctx: ActionContext, nation: string, action: ArmyAction)
   switch (action.type) {
     case 'move': {
       if (inMelee(state, a)) return { ok: false, error: 'Im Nahkampf gebunden – erst nach Kampfende beweglich' };
-      const from = nearestNode(map, a, state.time);
-      const plan = planMove(state, map, a, from, action.to);
+      const N = map.provinces.length + map.seas.length;
+      if (!Number.isInteger(action.to) || action.to < 0 || action.to >= N) return { ok: false, error: 'Unbekanntes Ziel' };
+      let target: MoveTarget = { node: action.to };
+      if (action.toward !== undefined) {
+        const f = Number(action.frac);
+        if (!nodeNeighbors(map, action.to).includes(action.toward) || !(f >= 0 && f <= 1)) return { ok: false, error: 'Ungültiger Wegpunkt' };
+        target = { road: { a: action.to, b: action.toward, f } };
+      }
+      // Besatzung: verlässt die letzte Armee eine eigene Stadt, bleibt eine Einheit zurück
+      const keep = garrisonKeep(state, map, a);
+      if (keep === 'last') return { ok: false, error: 'Die letzte Einheit bleibt als Besatzung in der Stadt' };
+      const mover = keep ? { ...a, units: without(a.units, keep) } : a;
+      const plan = planRoute(state, map, mover, state.time, target);
       if (!plan) return { ok: false, error: 'Kein Weg dorthin' };
-      a.node = from;
+      if (keep) {
+        a.units = without(a.units, keep);
+        state.armies.push({ id: ctx.newArmyId(), owner: nation, node: a.node, units: { [keep]: 1 }, morale: a.morale });
+      }
+      a.node = nearestNode(map, a, state.time);
       a.target = null;
       a.autoTarget = false;
-      startMove(ctx, a, plan.path, plan.then);
+      a.split = null;
+      startMove(ctx, a, plan.path, plan.then, plan);
       ctx.invalidate();
       return { ok: true };
     }
     case 'stop': {
-      if (a.move) {
-        a.node = nearestNode(map, a, state.time);
-        a.move = null;
-      }
+      halt(map, a, state.time);
       a.target = null;
       ctx.invalidate();
       return { ok: true };
@@ -276,11 +322,13 @@ function applyArmyAction(ctx: ActionContext, nation: string, action: ArmyAction)
       if (!unitTypes(a).some((u) => UNITS[u].range > 0)) return { ok: false, error: 'Keine Fernkampfeinheiten' };
       a.target = t.id;
       a.autoTarget = false;
+      a.split = null;
       ctx.invalidate();
       return { ok: true };
     }
     case 'split': {
       if (a.move) return { ok: false, error: 'Nur im Stand möglich' };
+      if (inMelee(state, a)) return { ok: false, error: 'Im Nahkampf gebunden – Teilen erst nach Kampfende' };
       const units: Partial<Record<UnitType, number>> = {};
       let n = 0;
       for (const u of Object.keys(action.units) as UnitType[]) {
@@ -295,14 +343,23 @@ function applyArmyAction(ctx: ActionContext, nation: string, action: ArmyAction)
         a.units[u] = a.units[u]! - units[u]!;
         if (!a.units[u]) delete a.units[u];
       }
-      state.armies.push({ id: ctx.newArmyId(), owner: nation, node: a.node, units });
+      const id = ctx.newArmyId();
+      state.armies.push({
+        id, owner: nation, node: a.node, pos: a.pos ?? null, units, morale: a.morale,
+        split: action.rejoin === false ? null : { from: a.id, at: state.time },
+      });
       ctx.invalidate();
+      return { ok: true, army: id };
+    }
+    case 'rejoin': {
+      if (!a.split) return { ok: false, error: 'Nicht abgetrennt' };
+      rejoinSplits(ctx, true, a.id);
       return { ok: true };
     }
     case 'merge': {
       const into = state.armies.find((x) => x.id === action.into);
       if (!into || into.owner !== nation || into === a) return { ok: false, error: 'Zielarmee nicht gefunden' };
-      if (a.move || into.move || a.node !== into.node) return { ok: false, error: 'Beide Armeen müssen am selben Ort stehen' };
+      if (a.move || into.move || !samePlace(a, into)) return { ok: false, error: 'Beide Armeen müssen am selben Ort stehen' };
       // Truppen gehen nur auf See an Bord einer Flotte
       if (isNaval(a) !== isNaval(into) && !isSea(map, a.node)) return { ok: false, error: 'Truppen steigen nur auf See zu einer Flotte' };
       mergeArmies(state, into, a);

@@ -7,19 +7,22 @@ import {
 } from './actions.ts';
 import { BasicAI } from './ai.ts';
 import {
-  ALL_RES, BUILDINGS, CATEGORIES, CATEGORY_OF, CATEGORY_RES, DAY, DIFFICULTY, HOUR, MINUTE, MORALE, TICKS_PER_DAY, UNITS, VICTORY_SHARE,
+  ALL_RES, BUILDINGS, CATEGORIES, CATEGORY_OF, CATEGORY_RES, DAY, DEFECTION, DIFFICULTY, HOUR, MINUTE, TICKS_PER_DAY, TROOP_MORALE, UNITS, VICTORY_SHARE,
   type Category, type UnitType,
 } from './balance.ts';
 import { observe, type Controller, type NationView, type Observation } from './controller.ts';
 import { allRates, defaultConsumption, moraleTarget, provincePoints, recruitHours, stepMorale, type NationRates } from './economy.ts';
 import type { MapData } from './mapdata.ts';
-import { combatRound, engageRanged, isNaval, processArrivals, rangedRound, revolts, updateRevoltFlags } from './military.ts';
+import {
+  combatRound, defections, engageRanged, isNaval, mixMorale, processArrivals, rangedRound, rejoinSplits, updateRevoltFlags,
+} from './military.ts';
 import { harborSea, isSea } from './graph.ts';
 import { expireOffers } from './market.ts';
 import { publishNewspaper } from './newspaper.ts';
+import { numberArmies } from './names.ts';
 import { nextRandom } from './rng.ts';
 import { migrate } from './state.ts';
-import type { GameState } from './types.ts';
+import { REBELS, type GameState, type NewsInfo } from './types.ts';
 
 const EVENT_LIMIT = 300;
 
@@ -54,8 +57,10 @@ export class Simulation {
     this.dirty = true;
   };
 
-  log = (text: string, nation?: string, province?: number): void => {
+  log = (text: string, nation?: string, province?: number, news?: NewsInfo): void => {
     this.state.events.push({ time: this.state.time, nation, province, text });
+    // öffentliche Meldungen sammeln sich bis zur nächsten Zeitungsausgabe
+    if (!nation) (this.state.newsFeed ??= []).push({ time: this.state.time, text, ...news });
     if (this.state.events.length > EVENT_LIMIT) this.state.events.splice(0, this.state.events.length - EVENT_LIMIT);
   };
 
@@ -67,7 +72,7 @@ export class Simulation {
       get state() { return sim.state; },
       get map() { return sim.map; },
       invalidate: () => sim.invalidate(),
-      log: (t: string, n?: string, p?: number) => sim.log(t, n, p),
+      log: (t: string, n?: string, p?: number, news?: NewsInfo) => sim.log(t, n, p, news),
       random: () => nextRandom(sim.state),
       newArmyId: () => sim.state.nextArmyId++,
     };
@@ -98,6 +103,7 @@ export class Simulation {
 
   private refresh(): void {
     if (!this.dirty) return;
+    numberArmies(this.state);
     this.rates = allRates(this.state, this.map);
     for (const id of this.nationIds) {
       const r = this.rates[id];
@@ -133,6 +139,7 @@ export class Simulation {
     if (s.time % HOUR === 0) {
       combatRound(this.ctx);
       rangedRound(this.ctx);
+      rejoinSplits(this.ctx);
       if (updateRevoltFlags(s)) this.dirty = true;
       expireOffers(s);
       this.recruitInfantry();
@@ -259,11 +266,13 @@ export class Simulation {
     const naval = !!UNITS[unit].naval;
     // Schiffe entstehen im Wasser vor dem Hafen
     const node = naval ? harborSea(this.map, province) ?? province : province;
-    let army = s.armies.find((a) => a.owner === owner && a.node === node && !a.move && !a.target && isNaval(a) === naval);
+    let army = s.armies.find((a) => a.owner === owner && a.node === node && !a.move && !a.pos && !a.target && isNaval(a) === naval);
     if (!army) {
       army = { id: s.nextArmyId++, owner, node, units: {} };
       s.armies.push(army);
     }
+    // neue Infanterie bringt die Moral ihrer Provinz mit
+    if (unit === 'infantry') army.morale = mixMorale(army, count, s.provinces[province]?.morale ?? TROOP_MORALE.start);
     army.units[unit] = (army.units[unit] ?? 0) + count;
     this.dirty = true;
   }
@@ -318,14 +327,36 @@ export class Simulation {
     });
   }
 
+  /**
+   * Tageswechsel: Moral der Infanterie nähert sich ihrem Ziel – in eigener Provinz deren Moral,
+   * auf See, auf Wegen oder in fremdem Gebiet 50 %, ohne Getreide deutlich weniger.
+   */
+  private troopMorale(): void {
+    const s = this.state;
+    for (const a of s.armies) {
+      if (a.owner === REBELS || !(a.units.infantry ?? 0)) continue;
+      const n = s.nations[a.owner];
+      const hungry = !n || n.stock.grain < 1 || n.shortage.food;
+      let target: number = TROOP_MORALE.neutral;
+      if (hungry) target = TROOP_MORALE.hungry;
+      else if (!a.move && !a.pos && !isSea(this.map, a.node) && s.provinces[a.node].owner === a.owner) target = s.provinces[a.node].morale;
+      const m = a.morale ?? TROOP_MORALE.start;
+      const gap = target - m;
+      const r = gap >= 0 ? TROOP_MORALE.rise : TROOP_MORALE.fall;
+      const step = Math.min(Math.abs(gap), Math.min(r.max, Math.max(r.min, Math.abs(gap) * r.share)));
+      a.morale = Math.max(TROOP_MORALE.min, Math.min(1, m + Math.sign(gap) * step));
+    }
+  }
+
   private dayChange(): void {
     const s = this.state;
     const targets = s.provinces.map((_, i) => moraleTarget(s, this.map, i).target);
     s.provinces.forEach((ps, i) => {
       ps.morale = stepMorale(ps.morale, targets[i]);
-      if (ps.morale < MORALE.revolt) this.log(`Unruhen in ${this.map.provinces[i].name} (Moral ${Math.round(ps.morale * 100)} %).`, ps.owner, i);
+      if (ps.morale < DEFECTION.threshold) this.log(`Unruhen in ${this.map.provinces[i].name} (Moral ${Math.round(ps.morale * 100)} %): Die Provinz droht überzulaufen.`, ps.owner, i);
     });
-    revolts(this.ctx, () => s.nextArmyId++);
+    this.troopMorale();
+    defections(this.ctx);
     for (const id of this.nationIds) {
       const n = s.nations[id];
       for (const c of Object.keys(n.shortage) as Category[]) {

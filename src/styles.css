@@ -500,3 +500,32 @@ input.num { width: 76px; padding: 2px 4px; }
 
 /* Bauschleife */
 .build-item.excluded { opacity: 0.55; }
+
+/* Diplomatie: breiter, Auswahl nicht abschneiden */
+.side-panel.diplomacy-panel { width: min(640px, calc(100% - 86px)); }
+.diplomacy-panel .btn-cell { white-space: nowrap; }
+.diplomacy-panel .btn-cell select { max-width: none; }
+
+/* ------------------------------------------------ Flaggen und Bilder */
+svg.flag { vertical-align: -2px; border-radius: 1px; box-shadow: 0 1px 1px rgba(0, 0, 0, 0.25); flex: none; }
+.tb-flag { display: inline-flex; background: none !important; width: auto !important; height: auto !important; border: none !important; }
+.picture { display: block; object-fit: cover; border: 1px solid #8c6a43; border-radius: 3px; background: #e6d7b2; flex: none; }
+.picture.placeholder {
+  display: flex; align-items: center; justify-content: center; text-align: center; overflow: hidden;
+  background: repeating-linear-gradient(45deg, #e9dcbc, #e9dcbc 6px, #e1d2ae 6px, #e1d2ae 12px);
+  color: rgba(70, 50, 30, 0.75); font-size: 9px; line-height: 1.1; padding: 2px; box-sizing: border-box;
+}
+.np-lead-row { display: flex; gap: 10px; align-items: flex-start; margin-bottom: 8px; }
+.np-lead-row .np-lead { text-align: left; margin: 0; }
+.np-item .np-pic { float: left; margin: 2px 6px 2px 0; filter: sepia(0.5); }
+.np-lead-row .np-pic { filter: sepia(0.5); }
+.build-item .build-pic { float: left; margin: 0 8px 4px 0; }
+.build-item::after { content: ""; display: block; clear: both; }
+.unit-btn .picture { margin: 0 auto 2px; }
+.trade-log td { white-space: nowrap; font-size: 12px; }
+
+/* Teilen */
+.split-box { border: 1px solid #b9a57c; border-radius: 4px; padding: 6px 8px; margin: 4px 0 8px; background: rgba(255, 250, 235, 0.5); }
+.split-row { display: grid; grid-template-columns: 110px 1fr 56px; gap: 6px; align-items: center; font-size: 13px; }
+.split-row input[type="range"] { width: 100%; accent-color: #7a5a2e; }
+.split-n { text-align: right; font-variant-numeric: tabular-nums; }

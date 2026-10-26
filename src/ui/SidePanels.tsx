@@ -3,10 +3,11 @@ import { ALL_RES, BUILDINGS, CATEGORY_NAMES, PROVINCE, RES_NAMES, VICTORY_SHARE,
 import { netRate, totalUse, type NationRates } from '../game/economy.ts';
 import type { MapData } from '../game/mapdata.ts';
 import type { GameState } from '../game/types.ts';
-import { Swatch, Window } from './common.tsx';
+import { Window } from './common.tsx';
 import { ConsumptionControl } from './ConsumptionControl.tsx';
 import { fmtGameTime, fmtNum, fmtPercent, fmtSigned } from './format.ts';
 import { ResIcon } from './icons.tsx';
+import { Flag } from './Flag.tsx';
 
 export type SidePanel = 'provinces' | 'economy' | 'ranking' | 'events' | 'diplomacy' | 'newspaper' | 'market' | 'control';
 
@@ -77,7 +78,7 @@ export function RankingPanel({ map, state, onClose }: Props) {
           {rows.map((r, i) => (
             <tr key={r.n.id} className={r.n.id === state.playerNation ? 'me' : ''}>
               <td>{i + 1}</td>
-              <td><Swatch color={r.n.color} /> {r.n.name}</td>
+              <td><Flag nation={r.n.id} /> {r.n.name}</td>
               <td>{Math.round(r.points)}</td>
               <td>{r.provinces}</td>
             </tr>

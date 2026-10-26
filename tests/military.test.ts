@@ -129,10 +129,10 @@ describe('See', () => {
   it('Landtruppen kämpfen auf See mit halber Stärke, Schlachtschiffe voll', () => {
     const sim = newSim();
     const sea = map.provinces.length;
-    const troops: Army = { id: 999, owner: 'DE', node: sea, units: { infantry: 10 } };
+    const troops: Army = { id: 999, owner: 'DE', node: sea, units: { infantry: 10 }, morale: 0.5 };
     const fleet: Army = { id: 998, owner: 'DE', node: sea, units: { battleship: 1 } };
-    // Infanterie auf See: Angriffswert × halbe Stärke × Moralfaktor See 0,85
-    expect(meleeOutput(sim.state, map, troops)).toBeCloseTo(10 * 1 * 0.5 * 0.85);
+    // Infanterie auf See: Angriffswert × halbe Stärke × Moralfaktor (50 % Moral = 1,0)
+    expect(meleeOutput(sim.state, map, troops)).toBeCloseTo(10 * 1 * 0.5 * 1);
     // Schlachtschiff: keine Moral, im Nahkampf als Fernkampfeinheit halbe Wirkung
     expect(meleeOutput(sim.state, map, fleet)).toBeCloseTo(1 * 5 * 0.5);
   });
@@ -178,16 +178,19 @@ describe('Nahkampf und Fernkampf', () => {
     expect(gun.autoTarget).toBe(true);
   });
 
-  it('Maschinen kämpfen unabhängig von der Moral, Infanterie nicht', () => {
+  it('Maschinen kämpfen unabhängig von Moral und Zustand, Infanterie nach ihrer Moral', () => {
     const sim = newSim();
     const berlin = prov('Berlin');
-    const tanks: Army = { id: 901, owner: 'DE', node: berlin, units: { tank: 2 } };
-    const inf: Army = { id: 902, owner: 'DE', node: berlin, units: { infantry: 2 } };
-    sim.state.provinces[berlin].morale = 1;
+    const tanks: Army = { id: 901, owner: 'DE', node: berlin, units: { tank: 2 }, morale: 1 };
+    const inf: Army = { id: 902, owner: 'DE', node: berlin, units: { infantry: 2 }, morale: 1 };
     const t1 = meleeOutput(sim.state, map, tanks), i1 = meleeOutput(sim.state, map, inf);
-    sim.state.provinces[berlin].morale = 0.2;
+    // 100 % Moral: Infanterie mit 1,2-facher Stärke (Verteidigung 1,5)
+    expect(i1).toBeCloseTo(2 * 1.5 * 1.2);
+    tanks.morale = 0.1;
+    tanks.wounds = { tank: 40 };
+    inf.morale = 0.5;
     expect(meleeOutput(sim.state, map, tanks)).toBeCloseTo(t1);
-    expect(meleeOutput(sim.state, map, inf)).toBeLessThan(i1);
+    expect(meleeOutput(sim.state, map, inf)).toBeCloseTo(2 * 1.5 * 1.0);
   });
 
   it('Truppen steigen nur auf See zu einer Flotte', () => {

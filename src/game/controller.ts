@@ -89,8 +89,8 @@ export interface Observation {
   /** sichtbare Armeen; node = Provinz (0..P-1) oder Seegebiet (P + Index) */
   armies: {
     id: number; owner: string; node: number; moving: boolean; units: Record<string, number>;
-    /** nur eigene: Zielknoten des Marsches, Fernkampfziel */
-    to?: number; target?: number | null;
+    /** nur eigene: Zielknoten des Marsches, Fernkampfziel, Moral der Infanterie */
+    to?: number; target?: number | null; morale?: number;
   }[];
 }
 
@@ -134,7 +134,7 @@ export function observe(view: NationView): Observation {
     armies: state.armies.filter((a) => armyVisible(state as GameState, map, nation, a, vis))
       .map((a) => ({
         id: a.id, owner: a.owner, node: a.node, moving: !!a.move, units: { ...a.units } as Record<string, number>,
-        ...(a.owner === nation ? { to: a.move ? a.move.path[a.move.path.length - 1] : a.node, target: a.target ?? null } : {}),
+        ...(a.owner === nation ? { to: a.move ? a.move.path[a.move.path.length - 1] : a.node, target: a.target ?? null, morale: a.morale ?? 0.7 } : {}),
       })),
   };
 }

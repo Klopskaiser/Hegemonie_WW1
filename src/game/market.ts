@@ -32,6 +32,9 @@ function round2(v: number): number {
 
 const nameOf = (map: MapData, id: string) => map.nations.find((n) => n.id === id)?.name ?? id;
 
+/** Länge des Handelsprotokolls */
+const TRADE_LOG = 300;
+
 export function postOffer(
   ctx: MarketContext, nation: string, side: 'sell' | 'buy', res: Resource, amount: number, price: number,
 ): MarketResult {
@@ -107,6 +110,9 @@ export function acceptOffer(ctx: MarketContext, nation: string, id: number, amou
   o.amount -= take;
   if (o.amount <= 0) state.market.offers = state.market.offers.filter((x) => x !== o);
   state.market.lastPrice[o.res] = o.price;
+  const [seller, buyer] = o.side === 'sell' ? [o.nation, nation] : [nation, o.nation];
+  state.market.trades.push({ time: state.time, seller, buyer, res: o.res, amount: take, price: o.price });
+  if (state.market.trades.length > TRADE_LOG) state.market.trades.splice(0, state.market.trades.length - TRADE_LOG);
   ctx.invalidate();
   return { ok: true };
 }

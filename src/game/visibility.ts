@@ -25,19 +25,49 @@ function addOwnSight(state: GameState, map: MapData, nation: string, vis: Set<nu
     for (const n of nodeNeighbors(map, i)) vis.add(n);
   });
   const n = nodeCount(map);
+  const done = new Set<number>();
   for (const a of state.armies) {
     if (a.owner !== nation) continue;
-    const pos = armyPosition(map, a, state.time);
     const here = a.move ? [a.move.path[a.move.seg], a.move.path[a.move.seg + 1]] : [a.node];
     for (const h of here) {
       vis.add(h);
       for (const nb of nodeNeighbors(map, h)) vis.add(nb);
     }
+    // stehende Armeen am Knoten: vorberechnete Sichtweite, je Knoten nur einmal
+    if (!a.move && !a.pos) {
+      if (done.has(a.node)) continue;
+      done.add(a.node);
+      for (const i of inSight(map)[a.node]) vis.add(i);
+      continue;
+    }
+    const pos = armyPosition(map, a, state.time);
     for (let i = 0; i < n; i++) {
       const p = nodePos(map, i);
       if (Math.hypot(p[0] - pos[0], p[1] - pos[1]) <= MILITARY.viewRange) vis.add(i);
     }
   }
+}
+
+const sightCache = new WeakMap<MapData, number[][]>();
+
+/** Je Knoten alle Knoten in Sichtweite (Abstand der Mittelpunkte) */
+function inSight(map: MapData): number[][] {
+  let s = sightCache.get(map);
+  if (!s) {
+    const n = nodeCount(map);
+    s = [];
+    for (let k = 0; k < n; k++) {
+      const q = nodePos(map, k);
+      const list: number[] = [];
+      for (let i = 0; i < n; i++) {
+        const p = nodePos(map, i);
+        if (Math.hypot(p[0] - q[0], p[1] - q[1]) <= MILITARY.viewRange) list.push(i);
+      }
+      s.push(list);
+    }
+    sightCache.set(map, s);
+  }
+  return s;
 }
 
 /** Ist eine Armee für `nation` sichtbar? Festungen ab Stufe 2 verbergen die Truppen ihres Besitzers. */

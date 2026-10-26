@@ -3,7 +3,8 @@ import { DIFFICULTY } from '../game/balance.ts';
 import type { MapData } from '../game/mapdata.ts';
 import type { ControllerKind, Difficulty, GameState } from '../game/types.ts';
 import type { BridgeInfo } from '../worker/protocol.ts';
-import { Swatch, Window } from './common.tsx';
+import { Window } from './common.tsx';
+import { Flag } from './Flag.tsx';
 
 const DEFAULT_URL = 'ws://127.0.0.1:8765';
 
@@ -67,7 +68,7 @@ export function ControlPanel({ map, state, bridge, setController, setDifficulty,
             const p = profile(n.id);
             return (
               <tr key={n.id} className={me ? 'me' : ''}>
-                <td><Swatch color={n.color} /> {n.name}{ns.alive ? '' : ' (vernichtet)'}</td>
+                <td><Flag nation={n.id} /> {n.name}{ns.alive ? '' : ' (vernichtet)'}</td>
                 <td>
                   <select value={ns.controller} disabled={!ns.alive} onChange={(e) => setController(n.id, e.target.value as ControllerKind)}>
                     {kinds.map((k) => <option key={k} value={k}>{KIND_NAMES[k]}</option>)}

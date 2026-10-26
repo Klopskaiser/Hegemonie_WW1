@@ -4,11 +4,12 @@ import type { MapData } from '../game/mapdata.ts';
 import type { Difficulty, GameMeta } from '../game/types.ts';
 import { SCENARIOS, type Scenario } from '../game/state.ts';
 import { deleteGame, listGames } from '../persist/db.ts';
-import { Swatch, Window } from './common.tsx';
+import { Window } from './common.tsx';
 import { fmtDay, fmtDuration, fmtSpeed } from './format.ts';
 import { MapCanvas } from './MapCanvas.tsx';
 import { loadMap, MAPS } from './maps.ts';
 import type { SessionStart } from './useSession.ts';
+import { Flag } from './Flag.tsx';
 
 export function MainMenu({ onOpen }: { onOpen(start: SessionStart): void }) {
   const [games, setGames] = useState<GameMeta[]>([]);
@@ -73,7 +74,7 @@ export function MainMenu({ onOpen }: { onOpen(start: SessionStart): void }) {
             <div className="nation-list">
               {map?.nations.map((n) => (
                 <button key={n.id} className={'nation-item' + (nation === n.id ? ' active' : '')} onClick={() => setNation(n.id)}>
-                  <Swatch color={n.color} />
+                  <Flag nation={n.id} />
                   <span>{n.name}</span>
                   <span className="muted small">{n.major ? 'Großmacht' : 'Kleinstaat'}</span>
                 </button>

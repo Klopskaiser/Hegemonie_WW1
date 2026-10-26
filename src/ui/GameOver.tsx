@@ -1,6 +1,6 @@
 import type { MapData } from '../game/mapdata.ts';
 import type { GameState } from '../game/types.ts';
-import { Swatch } from './common.tsx';
+import { Flag } from './Flag.tsx';
 
 /** Spielende: Sieg oder Niederlage mit Schlussrangliste. */
 export function GameOver({ map, state, onMenu, onClose }: { map: MapData; state: GameState; onMenu(): void; onClose(): void }) {
@@ -28,7 +28,7 @@ export function GameOver({ map, state, onMenu, onClose }: { map: MapData; state:
               {ranking.map((r, i) => (
                 <tr key={r.n.id} className={r.n.id === state.playerNation ? 'me' : ''}>
                   <td>{i + 1}</td>
-                  <td><Swatch color={r.n.color} /> {r.n.name}{r.alive ? '' : ' (vernichtet)'}</td>
+                  <td><Flag nation={r.n.id} /> {r.n.name}{r.alive ? '' : ' (vernichtet)'}</td>
                   <td>{r.points}</td>
                 </tr>
               ))}

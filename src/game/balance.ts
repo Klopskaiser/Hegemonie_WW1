@@ -234,6 +234,8 @@ export const MILITARY = {
   rebelUnits: [2, 4] as [number, number],
 };
 export const QUEUE_LIMIT = 10;
+/** Abgetrennte Armeen ohne Befehl am selben Ort werden nach dieser Zeit wieder eingegliedert */
+export const SPLIT_REJOIN = 6 * 3600_000;
 /** Jede Fabrikstufe über der Mindeststufe verkürzt die Bauzeit um diesen Anteil des Startwerts */
 export const FACTORY_SPEEDUP = 0.25;
 
@@ -255,6 +257,46 @@ export const MORALE = {
   adapt: 0.35,
   maxStep: 0.08,
   revolt: 0.25,
+};
+
+// ---------------------------------------------------------------- Truppenmoral (nur Infanterie)
+
+export const TROOP_MORALE = {
+  /** Startwert neu aufgestellter Armeen ohne Provinzbezug */
+  start: 0.7,
+  /** Ziel auf See, auf Wegen oder in fremdem Gebiet, wenn Getreide da ist */
+  neutral: 0.5,
+  /** Ziel ohne Getreide */
+  hungry: 0.1,
+  /** Annäherung an das Ziel je Tageswechsel: Anteil der Lücke, mindestens/höchstens (Steigen etwas schneller) */
+  rise: { share: 0.3, min: 0.02, max: 0.1 },
+  fall: { share: 0.25, min: 0.02, max: 0.08 },
+  /** Abzug je Nahkampfrunde bzw. je Fernkampfrunde als Ziel */
+  melee: 0.03,
+  shelled: 0.015,
+  /** Zuwachs je vernichteter feindlicher Einheit, höchstens je Runde */
+  perKill: 0.01,
+  killMax: 0.05,
+  /** Kampfkraft der Infanterie bei 0 % und 100 % Moral (50 % = 1,0) */
+  strengthMin: 0.8,
+  strengthMax: 1.2,
+  min: 0.05,
+};
+
+// ---------------------------------------------------------------- Überlaufen von Provinzen
+
+export const DEFECTION = {
+  /** unter dieser Provinzmoral droht das Überlaufen (Rebellionsfaust auf der Karte) */
+  threshold: 0.33,
+  /** Wahrscheinlichkeit je Tageswechsel: 1 % knapp unter der Schwelle, 33 % bei 0 % Moral (linear) */
+  minChance: 0.01,
+  maxChance: 0.33,
+  /** je angefangene 5 Kampfstärke eigener Truppen in der Stadt 1 Prozentpunkt weniger */
+  strengthPerPoint: 5,
+  /** Moral der Provinz beim neuen Herrn */
+  morale: 0.4,
+  /** Anteil der Einheiten in der Stadt, die mit überlaufen (der Rest fällt; mindestens eine wechselt) */
+  unitShare: 0.25,
 };
 
 // ---------------------------------------------------------------- KI

@@ -81,9 +81,10 @@ export function createGame(map: MapData, opt: NewGameOptions): GameState {
     warSince: {},
     proposals: [],
     truceUntil: {},
-    market: { offers: [], nextId: 1, lastPrice: {} },
+    market: { offers: [], nextId: 1, lastPrice: {}, trades: [] },
     newspapers: [],
     winner: null,
+    newsFeed: [],
     difficulty: opt.difficulty ?? 'normal',
     aiProfiles: Object.fromEntries(map.nations.map((n) => [n.id, {
       aggression: Math.round((0.7 + rnd() * 0.6) * 100) / 100,
@@ -93,7 +94,7 @@ export function createGame(map: MapData, opt: NewGameOptions): GameState {
   provinces.forEach((ps, i) => (ps.morale = moraleTarget(state, map, i).target));
 
   const addArmy = (province: number, units: GameState['armies'][number]['units']) => {
-    state.armies.push({ id: state.nextArmyId++, owner: map.provinces[province].nation, node: province, units });
+    state.armies.push({ id: state.nextArmyId++, owner: map.provinces[province].nation, node: province, units, morale: provinces[province].morale });
   };
   // Startaufstellung: in jeder Provinz eine Armee aus 10 Infanterie an der Stadt
   for (const mp of map.provinces) addArmy(mp.id, { infantry: START_INFANTRY });
@@ -108,11 +109,14 @@ export function migrate(state: GameState): GameState {
   state.warSince ??= {};
   state.proposals ??= [];
   state.truceUntil ??= {};
-  state.market ??= { offers: [], nextId: 1, lastPrice: {} };
+  state.market ??= { offers: [], nextId: 1, lastPrice: {}, trades: [] };
+  state.market.trades ??= [];
   state.newspapers ??= [];
   state.winner ??= null;
+  state.newsFeed ??= [];
   state.difficulty ??= 'normal';
   state.aiProfiles ??= {};
+  for (const a of state.armies) if (a.morale === undefined && a.owner !== 'REB') a.morale = 0.6;
   for (const ps of state.provinces) {
     ps.buildQueue ??= [];
     ps.buildings = { ...noBuildings(), ...ps.buildings };

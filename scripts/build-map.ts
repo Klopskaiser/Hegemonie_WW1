@@ -249,19 +249,156 @@ function kmeansSeeds(capital: Pt, pts: Pt[], count: number, rnd: () => number): 
   return centers.map((pos, i) => ({ pos, capital: i === 0 }));
 }
 
-function voronoiCells(seeds: Seed[], shape: MultiPoly): MultiPoly[] {
+/** Wertrauschen in [-1, 1] mit glatter Interpolation (deterministisch über `seed`) */
+function valueNoise(x: number, y: number, seed: number): number {
+  const xi = Math.floor(x), yi = Math.floor(y);
+  const xf = x - xi, yf = y - yi;
+  const r = (i: number, j: number) => {
+    let h = Math.imul(i, 374761393) ^ Math.imul(j, 668265263) ^ Math.imul(seed, 1274126177);
+    h = Math.imul(h ^ (h >>> 13), 1274126177);
+    return (((h ^ (h >>> 16)) >>> 0) / 4294967296) * 2 - 1;
+  };
+  const u = xf * xf * (3 - 2 * xf), v = yf * yf * (3 - 2 * yf);
+  const a = r(xi, yi) + (r(xi + 1, yi) - r(xi, yi)) * u;
+  const b = r(xi, yi + 1) + (r(xi + 1, yi + 1) - r(xi, yi + 1)) * u;
+  return a + (b - a) * v;
+}
+
+/** Zwei Oktaven Rauschen */
+const fbm = (x: number, y: number, seed: number) => (valueNoise(x, y, seed) + 0.5 * valueNoise(2 * x + 17.3, 2 * y - 9.1, seed + 1)) / 1.5;
+
+/**
+ * Provinzzellen mit natürlich geschwungenen Grenzen: Das Gebiet wird in viele kleine Zellen
+ * (Voronoi eines verwackelten Gitters) zerlegt; jede Zelle fällt an den nächsten Saatpunkt,
+ * gemessen von einem durch Rauschen verschobenen Punkt aus (Stärke abhängig vom örtlichen
+ * Abstand der Saatpunkte). Die Zellen je Provinz werden vereinigt und auf das Gebiet zugeschnitten.
+ */
+function voronoiCells(seeds: Seed[], shape: MultiPoly, rnd: () => number, places: { pos: Pt; pop: number }[] = []): MultiPoly[] {
   if (seeds.length === 1) return [shape];
   const box = bboxOf(shape);
-  const pad = 50;
-  const vor = Delaunay.from(seeds.map((s) => s.pos)).voronoi([box[0] - pad, box[1] - pad, box[2] + pad, box[3] + pad]);
+  const area = multiArea(shape);
+  const spacing = Math.sqrt(area / seeds.length);
+  const h = Math.max(5, spacing / 9);
+  const pts: Pt[] = [];
+  for (let y = box[1] - h; y <= box[3] + h; y += h) {
+    for (let x = box[0] - h; x <= box[2] + h; x += h) pts.push([x + (rnd() - 0.5) * h * 0.8, y + (rnd() - 0.5) * h * 0.8]);
+  }
+  const pad = 3 * h;
+  const vor = Delaunay.from(pts).voronoi([box[0] - pad, box[1] - pad, box[2] + pad, box[3] + pad]);
+  const lambda = spacing * 0.9;
+  const seedNoise = Math.floor(rnd() * 1e9);
+  const owner = pts.map((c) => {
+    let d1 = Infinity, d2 = Infinity;
+    for (const s of seeds) {
+      const d = dist(s.pos, c);
+      if (d < d1) { d2 = d1; d1 = d; } else if (d < d2) d2 = d;
+    }
+    const amp = 0.25 * d2;
+    const w: Pt = [c[0] + amp * fbm(c[0] / lambda, c[1] / lambda, seedNoise), c[1] + amp * fbm(c[0] / lambda + 41.7, c[1] / lambda - 13.2, seedNoise)];
+    let best = 0, bd = Infinity;
+    seeds.forEach((s, i) => {
+      const d = dist(s.pos, w);
+      if (d < bd) { bd = d; best = i; }
+    });
+    return best;
+  });
+  // Orte bleiben in der Provinz, in der sie ohne Verwacklung lägen (stabile Namen und Städte)
+  const nearestSeed = (p: Pt) => {
+    let best = 0, bd = Infinity;
+    seeds.forEach((s, i) => {
+      const d = dist(s.pos, p);
+      if (d < bd) { bd = d; best = i; }
+    });
+    return best;
+  };
+  // die größte Stadt jeder Provinz (namensgebend) bleibt fest; kleinere Orte folgen den Grenzen
+  const pinned = new Uint8Array(pts.length);
+  const top = new Map<number, { pos: Pt; pop: number }>();
+  for (const pl of places) {
+    const i = nearestSeed(pl.pos);
+    if (!top.has(i) || top.get(i)!.pop < pl.pop) top.set(i, pl);
+  }
+  for (const [i, pl] of top) {
+    const k = vor.delaunay.find(pl.pos[0], pl.pos[1]);
+    if (k >= 0) { owner[k] = i; pinned[k] = 1; }
+  }
+  // größter Ort je Zelle: ein Landstück darf nur wechseln, wenn es der neuen Provinz nicht den Namen nimmt
+  const cellPop = new Float64Array(pts.length);
+  for (const pl of places) {
+    const k = vor.delaunay.find(pl.pos[0], pl.pos[1]);
+    if (k >= 0) cellPop[k] = Math.max(cellPop[k], pl.pop);
+  }
+  // die Zelle um den Saatpunkt gehört immer zur eigenen Provinz
+  const seedCell = seeds.map((s, i) => {
+    const k = vor.delaunay.find(s.pos[0], s.pos[1]);
+    owner[k] = i;
+    pinned[k] = 1;
+    return k;
+  });
+  // Abgesprengte Landstücke (nicht über eigenes Land mit dem Saatpunkt verbunden) an die
+  // angrenzende Provinz geben; reine Inseln ohne fremde Landnachbarn bleiben, wie sie sind
+  const land = pts.map((c) => pointInMulti(c[0], c[1], shape));
+  // Nachbarzellen nur über Land (Mitte der Verbindung an Land), nicht über Meerengen hinweg
+  const nearCache = new Map<number, number[]>();
+  const near = (k: number) => {
+    let r = nearCache.get(k);
+    if (!r) {
+      r = [...vor.delaunay.neighbors(k)].filter((n) => land[n]
+        && pointInMulti((pts[k][0] + pts[n][0]) / 2, (pts[k][1] + pts[n][1]) / 2, shape));
+      nearCache.set(k, r);
+    }
+    return r;
+  };
+  for (let iter = 0; iter < 6; iter++) {
+    const linked = new Uint8Array(pts.length);
+    seedCell.forEach((start, i) => {
+      const stack = [start];
+      linked[start] = 1;
+      while (stack.length) {
+        const k = stack.pop()!;
+        for (const n of near(k)) if (!linked[n] && owner[n] === i && land[n]) { linked[n] = 1; stack.push(n); }
+      }
+    });
+    let changed = false;
+    const seen = new Uint8Array(pts.length);
+    for (let k = 0; k < pts.length; k++) {
+      if (!land[k] || linked[k] || seen[k]) continue;
+      const comp: number[] = [];
+      const votes = new Map<number, number>();
+      const stack = [k];
+      seen[k] = 1;
+      while (stack.length) {
+        const c = stack.pop()!;
+        comp.push(c);
+        for (const n of near(c)) {
+          if (!land[n]) continue;
+          if (owner[n] === owner[k] && !linked[n]) {
+            if (!seen[n]) { seen[n] = 1; stack.push(n); }
+          } else if (owner[n] !== owner[k]) votes.set(owner[n], (votes.get(owner[n]) ?? 0) + 1);
+        }
+      }
+      if (!votes.size || comp.some((c) => pinned[c])) continue;
+      const to = [...votes].sort((a, b) => b[1] - a[1])[0][0];
+      if (Math.max(...comp.map((c) => cellPop[c])) > (top.get(to)?.pop ?? 0)) continue;
+      for (const c of comp) owner[c] = to;
+      changed = true;
+    }
+    if (!changed) break;
+  }
   return seeds.map((_, i) => {
-    const cell = vor.cellPolygon(i) as Pt[] | null;
-    if (!cell) return [];
-    return polygonClipping.intersection(shape as never, [[cell]] as never) as MultiPoly;
+    const cells: Pt[][][] = [];
+    pts.forEach((_, k) => {
+      if (owner[k] !== i) return;
+      const cell = vor.cellPolygon(k) as Pt[] | null;
+      if (cell) cells.push([cell]);
+    });
+    if (!cells.length) return [];
+    const merged = polygonClipping.union(cells[0] as never, ...(cells.slice(1) as never[])) as MultiPoly;
+    return polygonClipping.intersection(shape as never, merged as never) as MultiPoly;
   });
 }
 
-interface Prov { nation: string; seed: Seed; shape: MultiPoly }
+interface Prov { nation: string; seed: Seed; shape: MultiPoly; /** namensgebender Ort (größter im unverwackelten Zuschnitt) */ place?: Place }
 const provs: Prov[] = [];
 
 for (const cfg of config.nations) {
@@ -296,8 +433,17 @@ for (const cfg of config.nations) {
       islandProvs.push({ nation: cfg.id, seed: { pos, capital: false }, shape: [part] });
     }
   }
-  const cells = voronoiCells(seeds, mainShape);
+  const cells = voronoiCells(seeds, mainShape, rnd, own);
   const local: Prov[] = [...seeds.map((s, i) => ({ nation: cfg.id, seed: s, shape: cells[i] })), ...islandProvs];
+  // Namen wie beim geraden Zuschnitt: größter Ort, dessen nächster Saatpunkt der eigene ist
+  for (const pl of own) {
+    let best: Prov | null = null, bd = Infinity;
+    for (const pr of local) {
+      const d = dist(pr.seed.pos, pl.pos);
+      if (d < bd) { bd = d; best = pr; }
+    }
+    if (best && (!best.place || best.place.pop < pl.pop)) best.place = pl;
+  }
 
   // Abgetrennte Teile einer Zelle an die Provinz mit dem nächsten anderen Saatpunkt hängen
   const nearestOther = (p: Pt, self: Prov): Prov | null => {
@@ -383,7 +529,7 @@ const neighbors: Set<number>[] = provs.map(() => new Set());
 const coastLen = provs.map(() => 0);
 for (const b of borderMap.values()) {
   if (b.b === -1) coastLen[b.a] += b.len;
-  else if (b.len > 2) { neighbors[b.a].add(b.b); neighbors[b.b].add(b.a); }
+  else if (b.len > 10) { neighbors[b.a].add(b.b); neighbors[b.b].add(b.a); }
 }
 
 // ---------------------------------------------------------------- Seegebiete
@@ -416,8 +562,8 @@ const biggestPop: number[] = [];
 const provinces: MapProvince[] = provs.map((pr, i) => {
   const shape = pr.shape;
   // Name und Lage: größte Stadt der Provinz (bei der Hauptstadt die Hauptstadt selbst)
-  let place: Place | undefined;
-  for (const pl of allPlaces) {
+  let place: Place | undefined = pr.place && pointInMulti(pr.place.pos[0], pr.place.pos[1], shape) ? pr.place : undefined;
+  if (!place) for (const pl of allPlaces) {
     if (pl.nation !== pr.nation || (place && pl.pop <= place.pop)) continue;
     if (pointInMulti(pl.pos[0], pl.pos[1], shape)) place = pl;
   }
@@ -489,12 +635,27 @@ assignResources(
 // Feste Vorgaben aus der Kartenkonfiguration
 const byName = (name: string) => {
   const p = provinces.find((x) => x.name === name);
-  if (!p) throw new Error(`Vorgabe: Provinz ${name} nicht gefunden`);
+  if (!p) { if (process.env.MAP_DEBUG) { console.warn(`Vorgabe: Provinz ${name} nicht gefunden`); return { resource: "", double: false } as unknown as MapProvince; } throw new Error(`Vorgabe: Provinz ${name} nicht gefunden`); }
   return p;
 };
 for (const [name, r] of Object.entries(config.adjust?.resources ?? {})) byName(name).resource = r;
 for (const name of config.adjust?.doubles?.remove ?? []) byName(name).double = false;
 for (const name of config.adjust?.doubles?.add ?? []) byName(name).double = true;
+// Rohstoffe und Doppelprovinzen der bisherigen Karte übernehmen, wenn dieselben Provinzen (Namen)
+// vorliegen – Grenzkorrekturen ändern so die abgestimmte Verteilung nicht. Neu verteilen: --new-resources
+{
+  const prev = path.join(ROOT, 'public', 'maps', `${config.id}.json`);
+  if (!process.argv.includes('--new-resources') && fs.existsSync(prev)) {
+    const old = JSON.parse(fs.readFileSync(prev, 'utf8')) as MapData;
+    if (old.provinces.length === provinces.length && old.provinces.every((p, i) => p.name === provinces[i].name)) {
+      old.provinces.forEach((p, i) => {
+        provinces[i].resource = p.resource;
+        provinces[i].double = p.double;
+      });
+      console.log('Rohstoffe und Doppelprovinzen aus der bisherigen Karte übernommen');
+    }
+  }
+}
 for (const n of config.nations.filter((x) => x.major)) {
   const d = provinces.filter((p) => p.nation === n.id && p.double).length;
   if (d !== 2) throw new Error(`${n.id} hat ${d} Doppelprovinzen statt 2`);

@@ -1,14 +1,17 @@
 import { useState } from 'react';
 import { checkBuild, checkProduce, missing, plannedBuildings, requirementsMet, type Action, type ActionResult } from '../game/actions.ts';
 import {
-  BUILDING_ORDER, BUILDINGS, RES_NAMES, UNIT_ORDER, UNITS, type UnitType,
+  BUILDING_ORDER, BUILDINGS, DEFECTION, RES_NAMES, UNIT_ORDER, UNITS, type UnitType,
 } from '../game/balance.ts';
 import { moraleTarget, provinceOutput, provincePoints, recruitHours } from '../game/economy.ts';
 import type { MapData } from '../game/mapdata.ts';
-import { REBELS, type Army, type GameState } from '../game/types.ts';
+import { defectionChance, garrisonStrength } from '../game/military.ts';
+import { armyName } from '../game/names.ts';
+import type { Army, GameState } from '../game/types.ts';
 import { Bar, CostList, Swatch, Window } from './common.tsx';
 import { fmtDuration, fmtNum, fmtPercent } from './format.ts';
 import { ResIcon } from './icons.tsx';
+import { buildingImage, Picture, unitImage } from './Picture.tsx';
 
 interface Props {
   map: MapData;
@@ -62,6 +65,13 @@ export function ProvincePanel({ map, state, id, armies: visibleArmies, act, onSe
         <span>{fmtPercent(ps.morale)}</span>
       </div>
       <div className="muted small">Ziel {fmtPercent(mt.target)} – ändert sich täglich zum Tageswechsel.</div>
+      {ps.morale < DEFECTION.threshold && (
+        <div className="error small">
+          ✊ Unruhen: Die Provinz kann zum Tageswechsel zu einer anderen Macht überlaufen
+          (Wahrscheinlichkeit {Math.round(defectionChance(ps.morale, garrisonStrength(state, id)) * 100)} %;
+          je 5 Kampfstärke Besatzung 1 Prozentpunkt weniger).
+        </div>
+      )}
 
       <h4>Produktion pro Tag</h4>
       <div className="prod-row">
@@ -84,6 +94,7 @@ export function ProvincePanel({ map, state, id, armies: visibleArmies, act, onSe
               const excluded = (def.excludes ?? []).some((x) => planned[x] > 0);
               return (
                 <div key={b} className={'build-item' + (excluded ? ' excluded' : '')}>
+                  <Picture src={buildingImage(b)} label={def.name} size={40} className="build-pic" />
                   <div className="build-name">
                     <b>{def.name}</b>
                     <span className="muted">
@@ -153,6 +164,7 @@ export function ProvincePanel({ map, state, id, armies: visibleArmies, act, onSe
               return (
                 <button key={u} className="unit-btn" disabled={!chk.ok} title={chk.error ?? `${UNITS[u].name} in Auftrag geben`}
                   onClick={() => run({ type: 'enqueue', province: id, unit: u })}>
+                  <Picture src={unitImage(u)} label={UNITS[u].name} size={44} />
                   <b>{UNITS[u].name}</b>
                   <CostList cost={UNITS[u].cost} stock={stock} />
                   <span className="small muted">{fmtDuration((chk.hours * 3600_000) / state.speed)}</span>
@@ -190,7 +202,7 @@ export function ProvincePanel({ map, state, id, armies: visibleArmies, act, onSe
       {armies.length === 0 ? <div className="muted small">Keine Truppen.</div> : armies.map((a) => (
         <div key={a.id} className="army-row link" onClick={() => onSelectArmy(a.id)} title="Armee auswählen">
           <Swatch color={map.nations.find((n) => n.id === a.owner)?.color ?? '#4a4540'} />
-          {a.owner === REBELS ? 'Aufständische: ' : ''}
+          <b>{armyName(a)}</b>:{' '}
           {UNIT_ORDER.filter((u) => a.units[u]).map((u) => `${a.units[u]}× ${UNITS[u].name}`).join(', ')}
         </div>
       ))}

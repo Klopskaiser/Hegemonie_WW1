@@ -3,7 +3,7 @@
 // Persönlichkeit je Nation (state.aiProfiles) und Schwierigkeitsgrad (state.difficulty).
 
 import { checkBuild, checkProduce, canAfford, type Action } from './actions.ts';
-import { BUILDINGS, CATEGORIES, CATEGORY_RES, DAY, DIFFICULTY, UNITS, type Building, type UnitType } from './balance.ts';
+import { BUILDINGS, CATEGORIES, CATEGORY_RES, DAY, DIFFICULTY, MARKET, UNITS, type Building, type UnitType } from './balance.ts';
 import type { Controller, NationView } from './controller.ts';
 import { atWar, enemiesOf, relation, warKey } from './diplomacy.ts';
 import { netRate, provinceOutput, toShares } from './economy.ts';
@@ -295,43 +295,64 @@ export class BasicAI implements Controller {
 
   // ------------------------------------------------ Börse
 
-  /** Engpässe über die Börse decken, Überschüsse anbieten. */
+  /**
+   * Börse: Engpässe zukaufen (vorhandene Angebote, sonst eigenes Kaufgesuch), auf Kaufgesuche
+   * liefern und Überschüsse anbieten. Großzügiger, je voller die Kasse ist.
+   */
   private trade(view: NationView, actions: Action[]): void {
     const state = view.state as GameState;
     const { nation, rates } = view;
     const stock = state.nations[nation].stock;
     const mine = state.market.offers.filter((o) => o.nation === nation);
-    let budget = stock.money - 5000;
+    let slots = MARKET.maxOffersPerNation - mine.length;
+    let budget = stock.money - 15000;
+    // mit voller Kasse dürfen Käufe teurer sein
+    const rich = Math.min(2.5, 1.4 + stock.money / 200000);
+    const round = (v: number, r: Resource) => {
+      const [lo, hi] = priceBounds(r);
+      return Math.min(hi, Math.max(lo, Math.round(v * 100) / 100));
+    };
     for (const r of RESOURCES) {
       const net = netRate(rates, r);
       const price = priceOf(state, r);
-      const [lo, hi] = priceBounds(r);
       // kaufen, wenn der Vorrat bei dieser Bilanz in wenigen Tagen aufgebraucht ist
-      const short = (net < 0 && stock[r] < -net * 4) || stock[r] < 1500;
-      if (short && budget > 0) {
-        const need = Math.max(2000, -net * 3);
-        const offer = tradeableOffers(state, nation, r, 'sell').find((o) => o.price <= price * 1.6);
-        if (offer) {
+      const short = (net < 0 && stock[r] < -net * 5) || stock[r] < 3000;
+      if (short) {
+        let need = Math.max(3000, -net * 4) - Math.max(0, stock[r]);
+        for (const offer of tradeableOffers(state, nation, r, 'sell')) {
+          if (need < 100 || budget <= 0 || offer.price > price * rich) break;
           const amount = Math.min(offer.amount, need, Math.floor(budget / offer.price));
-          if (amount >= 100) {
-            actions.push({ type: 'acceptOffer', id: offer.id, amount });
-            budget -= amount * offer.price;
+          if (amount < 100) break;
+          actions.push({ type: 'acceptOffer', id: offer.id, amount });
+          budget -= amount * offer.price;
+          need -= amount;
+        }
+        // nichts Passendes: eigenes Kaufgesuch
+        if (need >= MARKET.minAmount && slots > 0 && !mine.some((o) => o.side === 'buy' && o.res === r)) {
+          const bid = round(price * (1.05 + view.random() * 0.15), r);
+          const amount = Math.min(Math.floor(need), Math.floor(Math.max(0, budget) / bid), 20000);
+          if (amount >= 500) {
+            actions.push({ type: 'postOffer', side: 'buy', res: r, amount, price: bid });
+            budget -= amount * bid;
+            slots--;
           }
         }
         continue;
       }
-      if (stock[r] <= 12000 || net < 0) continue;
+      if (net < -100 || stock[r] <= 10000) continue;
       // auf Kaufgesuche anderer liefern
-      const bid = tradeableOffers(state, nation, r, 'buy').find((o) => o.price >= price * 0.9);
-      if (bid) {
-        actions.push({ type: 'acceptOffer', id: bid.id, amount: Math.min(bid.amount, stock[r] - 10000) });
-        continue;
+      let spare = stock[r] - 8000;
+      for (const bid of tradeableOffers(state, nation, r, 'buy')) {
+        if (spare < 100 || bid.price < price * 0.85) break;
+        const amount = Math.min(bid.amount, spare);
+        actions.push({ type: 'acceptOffer', id: bid.id, amount });
+        spare -= amount;
       }
       // Überschuss anbieten
-      if (stock[r] > 15000 && mine.length < 5 && !mine.some((o) => o.side === 'sell' && o.res === r)) {
-        const amount = Math.min(10000, Math.floor((stock[r] - 10000) / 2));
-        const ask = Math.min(hi, Math.max(lo, Math.round(price * (0.9 + view.random() * 0.25) * 100) / 100));
-        if (amount >= 500) actions.push({ type: 'postOffer', side: 'sell', res: r, amount, price: ask });
+      if (spare > 5000 && slots > 0 && !mine.some((o) => o.side === 'sell' && o.res === r)) {
+        const amount = Math.min(20000, Math.floor(spare * 0.6));
+        actions.push({ type: 'postOffer', side: 'sell', res: r, amount, price: round(price * (0.9 + view.random() * 0.25), r) });
+        slots--;
       }
     }
   }

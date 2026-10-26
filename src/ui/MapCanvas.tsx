@@ -3,12 +3,12 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Res } from '../game/balance.ts';
-import { harborSea, nodePos } from '../game/graph.ts';
+import { closestOnEdge, edgePoints, edgeVia, harborSea, isSea, nodeCount, nodeNeighbors, nodePos } from '../game/graph.ts';
 import type { MapData } from '../game/mapdata.ts';
-import { armyPosition, isNaval, unitCount } from '../game/military.ts';
+import { armyPosition, isNaval, normalizeTarget, remainingRoute, unitCount, type MoveTarget } from '../game/military.ts';
 import { makeRng } from '../game/rng.ts';
 import { REBELS, type Army, type ProvinceState } from '../game/types.ts';
-import { UNITS, type UnitType } from '../game/balance.ts';
+import { DEFECTION, UNITS, type UnitType } from '../game/balance.ts';
 import { RES_ICON } from './icons.tsx';
 
 export type MapMode = 'political' | 'resources' | 'morale';
@@ -49,23 +49,28 @@ interface Props {
   /** Provinzzustände für Gebäudesymbole (Schienen, Hafen, Festung); nur in sichtbaren Provinzen gezeichnet */
   provinces?: readonly ProvinceState[];
   selected?: number | null;
-  selectedArmy?: number | null;
+  /** ausgewählte Armeen (auch mehrere, z. B. per Lasso) */
+  selectedArmies?: number[];
   /** Orte mit laufenden Kämpfen */
   battles?: number[];
   /** laufende Fernkampfgefechte (animiert) */
   shots?: Shot[];
   /** Vorschau eines Marschweges (Knoten) mit Beschriftung am Ziel */
-  preview?: { path: number[]; label: string } | null;
+  previews?: { pts: [number, number][]; label: string }[];
   highlightNation?: string | null;
   mode?: MapMode;
   /** Klick auf eine Provinz (Menü-Vorschau) */
   onSelect?: (id: number | null) => void;
   /** Klick auf einen Knoten: Provinz (0..P-1) oder Seegebiet (P + Index), null = ins Leere */
   onNode?: (node: number | null) => void;
-  onArmy?: (id: number) => void;
+  onArmy?: (id: number, add: boolean) => void;
   onHoverNode?: (node: number | null) => void;
-  /** Rechtsklick (z. B. Auswahl aufheben) */
-  onContext?: () => void;
+  /** Ziel unter dem Mauszeiger (für die Marschvorschau), nur bei ausgewählten Armeen */
+  onHoverTarget?: (t: MoveTarget | null) => void;
+  /** Rechtsklick: Marschziel (Knoten oder Wegpunkt) oder Armee */
+  onTarget?: (t: MoveTarget | { army: number }) => void;
+  /** Lassoauswahl mit gedrückter linker Maustaste: eigene Armeen im Lasso */
+  onLasso?: (ids: number[], add: boolean) => void;
   /** Karte auf eine Provinz zentrieren; seq erhöhen, um erneut zu springen */
   focus?: { province: number; seq: number } | null;
   /** Vorschau im Menü: keine Namen, keine Armeen */
@@ -73,6 +78,18 @@ interface Props {
 }
 
 interface Token { id: number; x: number; y: number; w: number; h: number }
+
+/** Nadel einer Armee in Bildschirmkoordinaten: Spitze (Standort) und Kopf */
+interface PinPoint { id: number; owner: string; tx: number; ty: number; hx: number; hy: number }
+
+function pointInPoly(x: number, y: number, pts: [number, number][]): boolean {
+  let c = false;
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+    const [xi, yi] = pts[i], [xj, yj] = pts[j];
+    if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) c = !c;
+  }
+  return c;
+}
 
 interface View { s: number; ox: number; oy: number }
 
@@ -224,27 +241,15 @@ export function MapCanvas(props: Props) {
       const len = Math.hypot(c[0] - best[0], c[1] - best[1]) || 1;
       return { x: best[0], y: best[1], dx: (c[0] - best[0]) / len, dy: (c[1] - best[1]) / len };
     });
-    // Schienenwege: von der Stadt zu dem Punkt der gemeinsamen Grenze, der der Verbindungslinie
-    // beider Städte am nächsten liegt – so bleibt die Strecke an Land und trifft die Bahn des Nachbarn
-    const shared = new Map<string, number[]>();
-    for (const b of map.borders) {
-      if (b.b < 0) continue;
-      const k = b.a < b.b ? `${b.a}|${b.b}` : `${b.b}|${b.a}`;
-      (shared.get(k) ?? shared.set(k, []).get(k)!).push(...b.segs);
-    }
-    const railEdges = map.provinces.map((mp, i) => mp.neighbors.flatMap((n) => {
-      const segs = shared.get(i < n ? `${i}|${n}` : `${n}|${i}`);
-      if (!segs) return [];
-      const q = map.provinces[n].center;
-      const mx = (mp.center[0] + q[0]) / 2, my = (mp.center[1] + q[1]) / 2;
-      let bx = mx, by = my, bd = Infinity;
-      for (let k = 0; k < segs.length; k += 2) {
-        const d = Math.hypot(segs[k] - mx, segs[k + 1] - my);
-        if (d < bd) { bd = d; bx = segs[k]; by = segs[k + 1]; }
+    // Wege des Bewegungsnetzes (jede Verbindung einmal); Landwege knicken an der Grenze
+    const edges: { u: number; v: number; land: boolean; pts: [number, number][] }[] = [];
+    for (let u = 0; u < nodeCount(map); u++) {
+      for (const v of nodeNeighbors(map, u)) {
+        if (v <= u) continue;
+        edges.push({ u, v, land: !isSea(map, u) && !isSea(map, v), pts: edgePoints(map, u, v) });
       }
-      return [{ x: bx, y: by }];
-    }));
-    return { paths, boxes, coast, colors, names, seaBorders, harborSpots, railEdges };
+    }
+    return { paths, boxes, coast, colors, names, seaBorders, harborSpots, edges };
   }, [map]);
 
   const ownerKey = owners.join(',');
@@ -308,21 +313,6 @@ export function MapCanvas(props: Props) {
         ctx.fillStyle = 'rgba(235, 225, 200, 0.55)';
         ctx.fill(prepared.paths[i]);
       }
-      if (owners[i] !== map.provinces[i].nation && p.mode !== 'morale') {
-        // besetzte Provinz: Schraffur in der Farbe des alten Besitzers
-        ctx.save();
-        ctx.clip(prepared.paths[i]);
-        ctx.strokeStyle = prepared.colors.get(map.provinces[i].nation) ?? '#999';
-        ctx.lineWidth = 3 / s;
-        const b = prepared.boxes[i];
-        ctx.beginPath();
-        for (let x = b[0] - (b[3] - b[1]); x < b[2]; x += 12 / s) {
-          ctx.moveTo(x, b[3]);
-          ctx.lineTo(x + (b[3] - b[1]), b[1]);
-        }
-        ctx.stroke();
-        ctx.restore();
-      }
     }
     // Nebel des Krieges: nicht einsehbare Provinzen abdunkeln
     if (p.visible) {
@@ -356,9 +346,9 @@ export function MapCanvas(props: Props) {
       ctx.stroke(prepared.seaBorders);
       ctx.setLineDash([]);
     }
-    ctx.strokeStyle = 'rgba(70, 50, 30, 0.45)';
-    ctx.lineWidth = 0.9 / s;
-    ctx.setLineDash([1.5 / s, 2.5 / s]);
+    ctx.strokeStyle = 'rgba(55, 36, 20, 0.72)';
+    ctx.lineWidth = 1.3 / s;
+    ctx.setLineDash([3 / s, 2 / s]);
     ctx.stroke(borderPaths.internal);
     ctx.setLineDash([]);
     ctx.strokeStyle = 'rgba(62, 70, 74, 0.75)';
@@ -398,14 +388,38 @@ export function MapCanvas(props: Props) {
     // Gebäude nur in einsehbaren Provinzen zeigen
     const shown = (i: number) => !!p.provinces && (!p.visible || p.visible.has(i));
 
-    // Eisenbahn: Schienen von der Stadt bis zur Grenze jeder Nachbarprovinz (treffen sich bei beidseitiger Bahn)
+    // Wege: Landwege als feine Linien, Seewege gestrichelt
+    if (!compact && s > 0.1) {
+      ctx.save();
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      for (const land of [false, true]) {
+        ctx.beginPath();
+        for (const e of prepared.edges) {
+          if (e.land !== land) continue;
+          const [a, b] = [e.pts[0], e.pts[e.pts.length - 1]];
+          if (!visible(X(a[0]), Y(a[1]), 600) && !visible(X(b[0]), Y(b[1]), 600)) continue;
+          e.pts.forEach(([x, y], k) => (k ? ctx.lineTo(X(x), Y(y)) : ctx.moveTo(X(x), Y(y))));
+        }
+        ctx.strokeStyle = land ? 'rgba(105, 75, 45, 0.6)' : 'rgba(45, 80, 100, 0.32)';
+        ctx.lineWidth = land ? 1.3 : 1;
+        ctx.setLineDash(land ? [] : [4, 4]);
+        ctx.stroke();
+      }
+      ctx.setLineDash([]);
+      ctx.restore();
+    }
+
+    // Eisenbahn: Schienen auf den Wegen von der Stadt bis zur Grenze (treffen sich bei beidseitiger Bahn)
     if (p.provinces && !compact) {
       const rails: [number, number, number, number][] = [];
       map.provinces.forEach((mp, i) => {
         if (!shown(i) || p.provinces![i].buildings.railroad <= 0) return;
-        for (const e of prepared.railEdges[i]) {
+        for (const n of mp.neighbors) {
+          const via = edgeVia(map, i, n);
+          if (!via) continue;
           const x0 = X(mp.center[0]), y0 = Y(mp.center[1]);
-          const x1 = X(e.x), y1 = Y(e.y);
+          const x1 = X(via[0]), y1 = Y(via[1]);
           if (visible(x0, y0, 400) || visible(x1, y1, 400)) rails.push([x0, y0, x1, y1]);
         }
       });
@@ -435,6 +449,15 @@ export function MapCanvas(props: Props) {
         }
         for (let k = 0; k < n; k++) ctx.drawImage(img, x + k * size, y, size, size);
       }
+    }
+
+    // Rebellionsfaust: Provinzen, die überlaufen könnten
+    if (p.morale && !compact && s > 0.12) {
+      map.provinces.forEach((mp, i) => {
+        if (p.morale![i] >= DEFECTION.threshold || (p.visible && !p.visible.has(i))) return;
+        const x = X(mp.center[0]) + 14, y = Y(mp.center[1]) - 14;
+        if (visible(x, y)) drawFist(ctx, x, y);
+      });
     }
 
     // Häfen: Anker am Liegeplatz an der Küste
@@ -545,11 +568,11 @@ export function MapCanvas(props: Props) {
       };
 
       // Marschwege eigener Armeen
+      const chosenSet = new Set(p.selectedArmies ?? []);
       for (const a of p.armies ?? []) {
         if (!a.move || a.owner !== p.nation) continue;
-        const pts: [number, number][] = [armyPosition(map, a, time)];
-        for (let k = a.move.seg + 1; k < a.move.path.length; k++) pts.push(nodePos(map, a.move.path[k]));
-        linePath(pts, a.id === p.selectedArmy ? '#8a1f10' : 'rgba(60, 35, 20, 0.85)', [6, 4]);
+        const pts = remainingRoute(map, a, time);
+        linePath(pts, chosenSet.has(a.id) ? '#8a1f10' : 'rgba(60, 35, 20, 0.85)', [6, 4]);
         const end = pts[pts.length - 1];
         ctx.fillStyle = '#8a1f10';
         ctx.beginPath();
@@ -558,25 +581,27 @@ export function MapCanvas(props: Props) {
       }
 
       // Vorschau des Marschweges
-      if (p.preview && p.preview.path.length > 1) {
-        const pts = p.preview.path.map((n) => nodePos(map, n));
-        const sel = p.armies?.find((a) => a.id === p.selectedArmy);
-        if (sel) pts[0] = armyPosition(map, sel, time);
-        linePath(pts, '#b8860b', [3, 4]);
-        const [ex, ey] = pts[pts.length - 1];
+      for (const pv of p.previews ?? []) {
+        if (pv.pts.length < 2) continue;
+        linePath(pv.pts, '#b8860b', [3, 4]);
+        const [ex, ey] = pv.pts[pv.pts.length - 1];
+        ctx.fillStyle = '#b8860b';
+        ctx.beginPath();
+        ctx.arc(X(ex), Y(ey), 3.5, 0, Math.PI * 2);
+        ctx.fill();
+        if (!pv.label) continue;
         ctx.font = 'bold 12px Georgia, serif';
-        const tw = ctx.measureText(p.preview.label).width;
+        const tw = ctx.measureText(pv.label).width;
         ctx.fillStyle = 'rgba(42, 26, 13, 0.88)';
         ctx.fillRect(X(ex) + 8, Y(ey) - 20, tw + 10, 18);
         ctx.fillStyle = '#ecd08f';
         ctx.textAlign = 'left';
         ctx.textBaseline = 'middle';
-        ctx.fillText(p.preview.label, X(ex) + 13, Y(ey) - 11);
+        ctx.fillText(pv.label, X(ex) + 13, Y(ey) - 11);
       }
 
       // Reichweitenkreise der ausgewählten Armee (je Fernkampfeinheit)
-      const chosen = p.armies?.find((a) => a.id === p.selectedArmy);
-      if (chosen) {
+      for (const chosen of (p.armies ?? []).filter((a) => chosenSet.has(a.id)).slice(0, 12)) {
         const [px, py] = armyPosition(map, chosen, time);
         const ranges = new Map<number, string>();
         for (const u of Object.keys(chosen.units) as UnitType[]) {
@@ -614,6 +639,8 @@ export function MapCanvas(props: Props) {
       // Liegen Armeen dicht beieinander, werden die Nadeln aufgefächert.
       const hits: Token[] = [];
       const heads = new Map<number, [number, number]>();
+      const lassoSel = lasso.current?.sel ?? new Set<number>();
+      const pinList: PinPoint[] = [];
       if (p.armies) {
         const small = s < 0.35;
         const pins = p.armies.filter((a) => unitCount(a) > 0).map((a) => {
@@ -645,11 +672,32 @@ export function MapCanvas(props: Props) {
           const rad = (q.angle * Math.PI) / 180;
           const hx = q.x + Math.cos(rad) * q.len, hy = q.y + Math.sin(rad) * q.len;
           heads.set(q.a.id, [hx, hy]);
-          const t = drawPinHead(ctx, hx, hy, pinShapes(q.a), prepared.colors.get(q.a.owner) ?? '#888', unitCount(q.a), small, q.a.id === p.selectedArmy);
+          pinList.push({ id: q.a.id, owner: q.a.owner, tx: q.x, ty: q.y, hx, hy });
+          const t = drawPinHead(ctx, hx, hy, pinShapes(q.a), prepared.colors.get(q.a.owner) ?? '#888', unitCount(q.a), small,
+            chosenSet.has(q.a.id) || lassoSel.has(q.a.id));
           hits.push({ id: q.a.id, ...t });
         }
       }
       tokens.current = hits;
+      pins.current = pinList;
+
+      // Lasso: geschlossene Freihandlinie
+      const lp = lasso.current?.pts;
+      if (lp && lp.length > 2) {
+        ctx.beginPath();
+        lp.forEach(([x, y], k) => (k ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+        ctx.closePath();
+        ctx.fillStyle = 'rgba(246, 211, 107, 0.14)';
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(40, 25, 10, 0.75)';
+        ctx.lineWidth = 3;
+        ctx.stroke();
+        ctx.strokeStyle = '#f6d36b';
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([6, 4]);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
 
       // Geschosse: laufen, solange das Gefecht besteht – unabhängig von den Schadensrunden
       if (p.shots?.length) {
@@ -752,6 +800,28 @@ export function MapCanvas(props: Props) {
 
   useEffect(schedule);
 
+  // Karte mit Pfeiltasten/WASD verschieben (Ziehen mit links ist das Lasso; rechts oder Mitte ziehen verschiebt)
+  useEffect(() => {
+    if (compact) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement || e.target instanceof HTMLTextAreaElement) return;
+      const step = 90;
+      const d: Record<string, [number, number]> = {
+        ArrowLeft: [step, 0], a: [step, 0], ArrowRight: [-step, 0], d: [-step, 0],
+        ArrowUp: [0, step], w: [0, step], ArrowDown: [0, -step], s: [0, -step],
+      };
+      const m = d[e.key];
+      if (!m) return;
+      e.preventDefault();
+      view.current.ox += m[0];
+      view.current.oy += m[1];
+      schedule();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [compact]);
+
   useEffect(() => {
     const f = props.focus;
     const el = wrapRef.current;
@@ -765,7 +835,33 @@ export function MapCanvas(props: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.focus?.seq]);
 
-  const drag = useRef<{ x: number; y: number; ox: number; oy: number; moved: boolean } | null>(null);
+  const drag = useRef<{ button: number; x: number; y: number; ox: number; oy: number; moved: boolean } | null>(null);
+  const lasso = useRef<{ pts: [number, number][]; sel: Set<number> } | null>(null);
+  const pins = useRef<PinPoint[]>([]);
+  const hoverTarget = useRef('');
+
+  /** Ziel unter dem Zeiger: Knoten nahe der Mitte, sonst Wegpunkt, sonst Provinz/Seegebiet */
+  const targetAt = (x: number, y: number): MoveTarget | null => {
+    const s = view.current.s;
+    let best = -1, bd = Infinity;
+    for (let i = 0; i < nodeCount(map); i++) {
+      const q = nodePos(map, i);
+      const d = Math.hypot(q[0] - x, q[1] - y) * s;
+      if (d < bd) { bd = d; best = i; }
+    }
+    if (bd <= 12) return { node: best };
+    let road: { u: number; v: number; f: number; d: number } | null = null;
+    for (const e of prepared.edges) {
+      const r = closestOnEdge(map, e.u, e.v, x, y);
+      const d = r.d * s;
+      if (d <= 9 && (!road || d < road.d)) road = { u: e.u, v: e.v, f: r.f, d };
+    }
+    if (road) return normalizeTarget({ road: { a: road.u, b: road.v, f: road.f } });
+    const n = hitNode(x, y);
+    return n === null ? null : { node: n };
+  };
+  const pinAt = (mx: number, my: number) =>
+    [...tokens.current].reverse().find((t) => mx >= t.x && mx <= t.x + t.w && my >= t.y && my <= t.y + t.h);
 
   const toMap = (e: React.PointerEvent) => {
     const rect = wrapRef.current!.getBoundingClientRect();
@@ -780,12 +876,28 @@ export function MapCanvas(props: Props) {
         onPointerDown={(e) => {
           if (compact) return;
           (e.target as HTMLElement).setPointerCapture(e.pointerId);
-          drag.current = { x: e.clientX, y: e.clientY, ox: view.current.ox, oy: view.current.oy, moved: false };
+          drag.current = { button: e.button, x: e.clientX, y: e.clientY, ox: view.current.ox, oy: view.current.oy, moved: false };
+          if (e.button === 0 && props.onLasso) {
+            const { mx, my } = toMap(e);
+            lasso.current = { pts: [[mx, my]], sel: new Set() };
+          }
         }}
         onPointerMove={(e) => {
           const d = drag.current;
           if (d) {
             if (Math.abs(e.clientX - d.x) + Math.abs(e.clientY - d.y) > 4) d.moved = true;
+            if (d.moved && d.button === 0 && lasso.current) {
+              // Lasso ziehen; Vorschau: eigene Armeen, deren Nadel oder Kopf im Lasso liegt
+              const { mx, my } = toMap(e);
+              const lp = lasso.current.pts;
+              const [lx, ly] = lp[lp.length - 1];
+              if (Math.hypot(mx - lx, my - ly) > 3) lp.push([mx, my]);
+              lasso.current.sel = new Set(pins.current
+                .filter((q) => q.owner === props.nation && (pointInPoly(q.tx, q.ty, lp) || pointInPoly(q.hx, q.hy, lp)))
+                .map((q) => q.id));
+              schedule();
+              return;
+            }
             if (d.moved) {
               view.current.ox = d.ox + e.clientX - d.x;
               view.current.oy = d.oy + e.clientY - d.y;
@@ -801,9 +913,19 @@ export function MapCanvas(props: Props) {
             schedule();
           }
           setHover(node === null ? null : { node, x: mx, y: my });
+          if (props.onHoverTarget && props.selectedArmies?.length) {
+            const t = targetAt(x, y);
+            const key = JSON.stringify(t);
+            if (key !== hoverTarget.current) {
+              hoverTarget.current = key;
+              props.onHoverTarget(t);
+            }
+          }
         }}
         onPointerLeave={() => {
           hoverRef.current = null;
+          hoverTarget.current = '';
+          props.onHoverTarget?.(null);
           props.onHoverNode?.(null);
           setHover(null);
           schedule();
@@ -811,23 +933,38 @@ export function MapCanvas(props: Props) {
         onPointerUp={(e) => {
           const d = drag.current;
           drag.current = null;
-          if (e.button !== 0 || (d?.moved && !compact)) return;
+          const l = lasso.current;
+          lasso.current = null;
+          if (l && d?.moved && d.button === 0) {
+            props.onLasso?.([...l.sel], e.shiftKey);
+            schedule();
+            return;
+          }
+          if (d?.moved && !compact) return;
           const { mx, my, x, y } = toMap(e);
-          const hit = [...tokens.current].reverse().find((t) => mx >= t.x && mx <= t.x + t.w && my >= t.y && my <= t.y + t.h);
+          if (e.button === 2) {
+            // Rechtsklick: Marschbefehl für die ausgewählten Armeen
+            const hit = pinAt(mx, my);
+            if (hit) props.onTarget?.({ army: hit.id });
+            else {
+              const t = targetAt(x, y);
+              if (t) props.onTarget?.(t);
+            }
+            return;
+          }
+          if (e.button !== 0) return;
+          const hit = pinAt(mx, my);
           if (hit && props.onArmy) {
-            props.onArmy(hit.id);
+            props.onArmy(hit.id, e.shiftKey);
             return;
           }
           const node = hitNode(x, y);
           props.onNode?.(node);
           props.onSelect?.(node !== null && node < map.provinces.length ? node : null);
         }}
-        onContextMenu={(e) => {
-          e.preventDefault();
-          props.onContext?.();
-        }}
+        onContextMenu={(e) => e.preventDefault()}
       />
-      {hover && !props.preview && (
+      {hover && !props.previews?.length && (
         <div className="map-tooltip" style={{ left: hover.x + 14, top: hover.y + 10 }}>
           {hover.node < map.provinces.length ? (
             <>
@@ -919,6 +1056,33 @@ function drawRails(ctx: CanvasRenderingContext2D, segs: [number, number, number,
       ctx.lineTo(x1 + nx * gauge * side, y1 + ny * gauge * side);
     }
   }
+  ctx.stroke();
+  ctx.restore();
+}
+
+/** Rebellionsfaust: erhobene Faust auf rotem Grund */
+function drawFist(ctx: CanvasRenderingContext2D, x: number, y: number) {
+  ctx.save();
+  ctx.fillStyle = '#8f1d14';
+  ctx.strokeStyle = '#f3e5bf';
+  ctx.lineWidth = 1.2;
+  ctx.beginPath();
+  ctx.arc(x, y, 8, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = '#f3e5bf';
+  // Unterarm
+  ctx.fillRect(x - 2.2, y + 1, 4.4, 5.5);
+  // Finger als vier Glieder und Daumen
+  ctx.beginPath();
+  ctx.roundRect(x - 4.6, y - 5, 9.2, 6.4, 1.6);
+  ctx.fill();
+  ctx.strokeStyle = '#8f1d14';
+  ctx.lineWidth = 0.8;
+  ctx.beginPath();
+  for (const dx of [-2.3, 0, 2.3]) { ctx.moveTo(x + dx, y - 5); ctx.lineTo(x + dx, y - 2); }
+  ctx.moveTo(x - 4.6, y - 1.4);
+  ctx.lineTo(x + 1.5, y - 1.4);
   ctx.stroke();
   ctx.restore();
 }

@@ -32,6 +32,14 @@ export function ConsumptionControl({ state, rates, act }: { state: GameState; ra
   const [draft, setDraft] = useState<Record<Category, Shares> | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
+  // Entwurf erst verwerfen, wenn der gespeicherte Stand ihn übernommen hat (sonst springt der Regler kurz zurück)
+  useEffect(() => {
+    if (!draft) return;
+    const open = (Object.keys(draft) as Category[]).filter((c) => CATEGORY_RES[c].some((r) => (draft[c][r] ?? 0) !== (saved[r] ?? 0)));
+    if (open.length !== Object.keys(draft).length) {
+      setDraft(open.length ? (Object.fromEntries(open.map((c) => [c, draft[c]])) as Record<Category, Shares>) : null);
+    }
+  }, [saved, draft]);
 
   const value = (cat: Category, r: Resource) => draft?.[cat]?.[r] ?? saved[r] ?? 0;
   const change = (cat: Category, r: Resource, v: number) => {
@@ -41,13 +49,16 @@ export function ConsumptionControl({ state, rates, act }: { state: GameState; ra
     // erst nach kurzer Pause senden, damit beim Ziehen nicht jede Stufe gespeichert wird
     if (timer.current) clearTimeout(timer.current);
     timer.current = setTimeout(async () => {
-      await act({ type: 'setConsumption', category: cat, shares });
-      setDraft((d) => {
-        if (!d) return d;
-        const next = { ...d };
-        delete next[cat];
-        return Object.keys(next).length ? next : null;
-      });
+      const r = await act({ type: 'setConsumption', category: cat, shares });
+      // abgelehnt: Entwurf verwerfen, damit der gespeicherte Stand wieder gilt
+      if (!r.ok) {
+        setDraft((d) => {
+          if (!d) return d;
+          const next = { ...d };
+          delete next[cat];
+          return Object.keys(next).length ? next : null;
+        });
+      }
     }, 350);
   };
 

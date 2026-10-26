@@ -3,8 +3,9 @@ import type { Action, ActionResult } from '../game/actions.ts';
 import { relation, RELATION_NAMES, relationLabel, warKey } from '../game/diplomacy.ts';
 import type { MapData } from '../game/mapdata.ts';
 import type { GameState, Relation } from '../game/types.ts';
-import { Swatch, Window } from './common.tsx';
+import { Window } from './common.tsx';
 import { fmtDay } from './format.ts';
+import { Flag } from './Flag.tsx';
 
 interface Option {
   id: string;
@@ -54,7 +55,7 @@ export function DiplomacyPanel({ map, state, act, onClose }: {
   const outgoing = state.proposals.filter((p) => p.from === me);
   const count = (id: string) => state.provinces.filter((p) => p.owner === id).length;
   return (
-    <Window title="Diplomatie" onClose={onClose} className="side-panel">
+    <Window title="Diplomatie" onClose={onClose} className="side-panel diplomacy-panel">
       {incoming.length > 0 && (
         <>
           <h4>Angebote an uns</h4>
@@ -83,7 +84,7 @@ export function DiplomacyPanel({ map, state, act, onClose }: {
             const selected = opts.find((o) => o.id === choice[n.id]) ?? opts[0];
             return (
               <tr key={n.id} className={rel === 'war' ? 'war' : ''}>
-                <td><Swatch color={n.color} /> {n.name}</td>
+                <td><Flag nation={n.id} /> {n.name}</td>
                 <td className="small">
                   {!alive ? 'vernichtet' : rel === 'war' ? `Krieg seit ${fmtDay(since ?? 0)}` : relationLabel(state, me, n.id)}
                 </td>

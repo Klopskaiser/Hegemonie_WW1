@@ -7,8 +7,9 @@ import { netRate } from '../game/economy.ts';
 import { RESOURCES, type MapData, type Resource } from '../game/mapdata.ts';
 import { priceBounds, priceOf } from '../game/market.ts';
 import type { GameState, MarketOffer } from '../game/types.ts';
-import { Swatch, Window } from './common.tsx';
-import { fmtDuration, fmtNum, fmtSigned } from './format.ts';
+import { Window } from './common.tsx';
+import { fmtDuration, fmtNum, fmtSigned, fmtGameTime } from './format.ts';
+import { Flag } from './Flag.tsx';
 import { ResIcon } from './icons.tsx';
 
 export function MarketPanel({ map, state, rates, act, onClose }: {
@@ -26,6 +27,7 @@ export function MarketPanel({ map, state, rates, act, onClose }: {
   const [price, setPrice] = useState<number | null>(null);
   const [take, setTake] = useState<Record<number, number>>({});
   const [msg, setMsg] = useState<string | null>(null);
+  const [allTrades, setAllTrades] = useState(false);
   const run = async (a: Action) => {
     const r = await act(a);
     setMsg(r.ok ? null : r.error);
@@ -48,7 +50,7 @@ export function MarketPanel({ map, state, rates, act, onClose }: {
     const value = Math.min(take[o.id] ?? o.amount, o.amount);
     return (
       <tr key={o.id} className={ok ? '' : 'blocked'} title={ok ? '' : 'Kein Handel: Krieg oder Embargo'}>
-        <td><Swatch color={n?.color ?? '#999'} /> {n?.name ?? o.nation}</td>
+        <td><Flag nation={o.nation} height={11} /> {n?.name ?? o.nation}</td>
         <td>{fmtNum(o.amount)}</td>
         <td>{o.price.toFixed(2)}</td>
         <td className="btn-cell">
@@ -121,6 +123,31 @@ export function MarketPanel({ map, state, rates, act, onClose }: {
         </>
       )}
       {msg && <div className="error">{msg}</div>}
+
+      <h4>Handelsprotokoll</h4>
+      <label className="small">
+        <input type="checkbox" checked={allTrades} onChange={(e) => setAllTrades(e.target.checked)} /> alle Rohstoffe
+      </label>
+      {(() => {
+        const trades = state.market.trades.filter((t) => allTrades || t.res === res).slice(-40).reverse();
+        if (!trades.length) return <div className="muted small">Noch keine Abschlüsse.</div>;
+        return (
+          <table className="table trade-log">
+            <thead><tr><th>Zeit</th><th>Verkäufer</th><th>Käufer</th><th>Menge</th><th>Preis</th></tr></thead>
+            <tbody>
+              {trades.map((t, k) => (
+                <tr key={k} className={t.seller === me || t.buyer === me ? 'me' : ''}>
+                  <td className="small">{fmtGameTime(t.time)}</td>
+                  <td><Flag nation={t.seller} height={11} /> {nation(t.seller)?.name ?? t.seller}</td>
+                  <td><Flag nation={t.buyer} height={11} /> {nation(t.buyer)?.name ?? t.buyer}</td>
+                  <td><ResIcon res={t.res} size={13} /> {fmtNum(t.amount)}</td>
+                  <td>{t.price.toFixed(2)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        );
+      })()}
     </Window>
   );
 }

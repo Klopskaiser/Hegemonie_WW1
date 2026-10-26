@@ -163,3 +163,42 @@
   Festung 4000 Geld, 2000 Eisen je Stufe, 8·L h; Eisenbahn 10000 Geld, 5000 Holz, 3000 Eisen,
   1000 Kohle, 72 h; Hafen 10000 Geld, 10000 Holz, 72 h; Kaserne beide Stufen 4000 Geld,
   1500 Getreide, 1500 Holz, 24 h.
+- Bedienung: Linke Maustaste ziehen = Lasso (eigene Armeen, deren Nadel oder Kopf im Lasso liegt;
+  Umschalt fügt hinzu), Rechtsklick = Marschbefehl für alle ausgewählten Armeen (auf eine fremde
+  Armee: reine Fernkampfverbände beschießen, sonst hinmarschieren). Karte verschieben mit rechter
+  oder mittlerer Maustaste ziehen oder Pfeiltasten/WASD; Esc oder Linksklick ins Leere hebt die Auswahl auf.
+- Wege: Landwege knicken am nächstgelegenen Punkt der gemeinsamen Grenze (Tempo bis zur Grenze nach
+  dem Gebiet von u, danach nach v); sie sind auf der Karte als Linien gezeichnet, Seewege gestrichelt,
+  Schienen liegen auf den Wegen. Marschziele dürfen auch Punkte auf einem Weg sein; dort bleibt die
+  Armee stehen (keine Eroberung, die Stadt ist nicht erreicht) und kann in beide Richtungen weiter.
+- Besatzung: Verlässt die letzte Armee eine eigene Stadt, bleibt eine Einheit zurück (Infanterie,
+  sonst die schwächste); eine einzelne letzte Einheit nimmt keine Marschbefehle an.
+- Armeenamen: „<Nr>. <Art><Größe>“, Größe nach Kampfstärke (< 10 Brigade, < 30 Division,
+  < 70 Heeresgruppe, < 120 Korps (Annahme für die Lücke 70–120), sonst Armee), Art nach der Einheit
+  mit dem größten Stärkeanteil; Flotten: Geschwader (< 30) bzw. Flotte. Nummer je Nation eindeutig.
+- Truppenmoral (nur Infanterie, je Armee): Stärke 0,8 + 0,4 × Moral (50 % = 1,0, 100 % = 1,2).
+  Tageswechsel: Annäherung an das Ziel (eigene Provinz: deren Moral; See, Weg, fremdes Gebiet: 50 %;
+  ohne Getreide: 10 %), steigen 30 % der Lücke (2–10 Punkte), sinken 25 % (2–8 Punkte). Je
+  Nahkampfrunde −3 Punkte, je Beschuss −1,5, je vernichteter feindlicher Einheit +1 (höchstens +5
+  je Runde). Neue Rekruten bringen die Provinzmoral mit (gewichtetes Mittel). Maschinen: keine Moral,
+  Zustand ohne Einfluss auf die Kampfkraft; Infanterie zeigt keinen Zustand.
+- Überlaufen statt Aufständischer: Provinzen unter 33 % Moral zeigen eine Rebellionsfaust und laufen
+  zum Tageswechsel über: Chance linear von 1 % (knapp unter 33 %) bis 33 % (0 % Moral), je angefangene
+  5 Kampfstärke eigener Truppen in der Stadt 1 Prozentpunkt weniger (Vorgabe). Übergang bevorzugt zum früheren
+  Besitzer, sonst zu einem Nachbarn (Kriegsgegner eher). Je Einheit in der Stadt 25 % Überläufer,
+  der Rest fällt, mindestens eine Einheit wechselt. Meldung „Revolution“ in der Zeitung.
+- Provinzgrenzen: feines verwackeltes Zellgitter je Nation, Zuordnung zum nächsten Saatpunkt von
+  einem durch Rauschen verschobenen Punkt aus; Namen/Städte aus dem geraden Zuschnitt, abgesprengte
+  Landstücke gehen an den Landnachbarn, Nachbarschaft erst ab 10 km gemeinsamer Grenze. Rohstoffe und
+  Doppelprovinzen werden beim Neubau aus der bisherigen Karte übernommen (`--new-resources` würfelt neu).
+- Börse: Handelsprotokoll (letzte 300 Abschlüsse) im Börsenfenster; die KI kauft Engpässe aktiv
+  (auch per Kaufgesuch), liefert auf Gesuche und bietet Überschüsse an.
+- Flaggen (SVG, vereinfacht um 1914) für alle Nationen; Bildplätze für Einheiten, Gebäude und je drei
+  Varianten je Zeitungsmeldung (public/images/README.md).
+- Teilen: Regler je Einheitentyp; im Nahkampf nicht möglich. Die abgetrennte Armee wird ausgewählt;
+  wird sie ohne Befehl abgewählt (oder steht sie 6 Spielstunden ohne Befehl am selben Ort wie die
+  Ursprungsarmee), gliedert sie sich wieder ein. „Schiffe abtrennen“ bleibt dauerhaft getrennt.
+- Zeitung: Karte oben, Meldungen darunter. Öffentliche Meldungen sammeln sich bis zur nächsten Ausgabe
+  (state.newsFeed); eroberte Städte je Eroberer zusammengefasst („X erobert die Stadt Y (Provinz Y)“,
+  Hauptstädte als eigene Meldung), vernichtete Armeen mit Namen und Sieger als Schlachtbericht.
+  Eroberte Provinzen erscheinen ganz in der Farbe des Eroberers (keine Schraffur mehr).
