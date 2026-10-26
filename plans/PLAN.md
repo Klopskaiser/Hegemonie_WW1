@@ -116,7 +116,8 @@
   Rechteck Schlachtschiff überdeckt alles), ein Kopf je Armee mit übereinander gezeichneten Formen,
   Zahl daneben; nahe Armeen (unter 14 px) werden aufgefächert.
 - Militär (M2): Bewegungsnetz aus Provinz- und Seegebietsmittelpunkten (45 Seegebiete,
-  küstennah feiner). Tempo nach Gebiet (eigen 100 %, fremd 70 %, feindlich 35 %), Bahn ×2,5 im
+  küstennah feiner). Tempo nach Gebiet (eigen 100 %, mit Durchmarschrecht/Bündnis 70 %, sonst – feindlich
+  oder ohne Wegerecht – 50 %; der Marsch wird ab der Grenze sichtbar langsamer), Bahn ×2,5 im
   eigenen Gebiet, Einschiffen 1 h, Transport 21 km/h. Kampf stündlich: Angreifer nutzt Angriff,
   Verteidiger in eigener Provinz Verteidigung, Festung mindert Schaden, Moral wirkt mit.
   Fernkampfeinheiten feuern selbständig auf Feinde in Reichweite. Eroberung bei Ankunft ohne
@@ -164,8 +165,8 @@
   in seiner Provinz −25 % (bestätigt: nur Gebäude, nur eigene Provinz; Einheiten unverändert).
 - Manufaktur (Vorgabe): 4 Stufen, Rohstoffproduktion +10 % je Stufe (nicht Geld), schließt sich
   mit der Fabrik aus, keine Einheiten.
-- Gebäudekosten (Vorgabe, L = Stufe): Fabrik 10000·L Geld, 2500·L Eisen/Holz/Öl, 48 h je Stufe;
-  Manufaktur 10000·L Geld, 2000·L Eisen/Holz, 3000·L Gas, 50 h; Wehramt 2000 Geld, 500 Holz, 2 h;
+- Gebäudekosten (Vorgabe, je Stufe gleich; nur die Festung dauert je Stufe länger): Fabrik 10000 Geld,
+  2500 Eisen/Holz/Öl, 48 h; Manufaktur 10000 Geld, 2000 Eisen/Holz, 3000 Gas, 50 h; Wehramt 2000 Geld, 500 Holz, 2 h;
   Festung 4000 Geld, 2000 Eisen je Stufe, 8·L h; Eisenbahn 10000 Geld, 5000 Holz, 3000 Eisen,
   1000 Kohle, 72 h; Hafen 10000 Geld, 10000 Holz, 72 h; Kaserne beide Stufen 4000 Geld,
   1500 Getreide, 1500 Holz, 24 h.
@@ -249,3 +250,40 @@
   Wege anderswo (Gesamtzahl gleich). Gebündelte Wege und Abkürzungen durch dritte Provinzen entfallen.
   Patras liegt auf der Peloponnes (`cityAt`), damit Patras–Kalamata im eigenen Gebiet bleibt.
 - Samsun hat genau einen Hafen nahe der Stadt zum Schwarzen Meer II (`seaLinks`).
+- Begegnungen auf Wegen: Armeen, die auf demselben Weg aneinander vorbeiziehen, sich überholen oder auf
+  eine dort stehende Armee treffen, bleiben am Treffpunkt stehen und kämpfen – im Krieg überall, an Land
+  auch im Frieden/Embargo (dann beginnt der Krieg); Durchmarschrecht und geteilte Karte lassen passieren.
+  Auf See kämpfen nur Nationen im Krieg. Wer in einen laufenden Kampf nachrückt, verschmilzt mit der
+  größten eigenen Armee dort; alle Kämpfe laufen im selben Stundentakt.
+- Kaserne und Eisenbahn lassen sich je Provinz abschalten: kein Unterhalt, aber auch keine Wirkung
+  (Rekrutierung, Produktion, Moral, Bahntempo, Eisenbahngeschütze).
+- Wirtschaft: Verbrauch je Rohstoff nach Verursachern (Provinzunterhalt laut Regler, Gebäude je Art,
+  Einheiten je Typ). Provinz: Moralziel mit allen Gründen (Gebäude einzeln, Kämpfe in der Provinz −10 %
+  bis zum nächsten Tageswechsel).
+- Armeen zählen Abschüsse. Schlachtschiffe und Eisenbahngeschütze bekommen beim Bau einen Namen (Orte der
+  eigenen Nation, z. B. „SMS …“); jede eigene Armee lässt sich umbenennen.
+- Karteneditor (nur `npm run dev`, Knopf im Hauptmenü oder `#editor`): Land-, Hafen- und Seewege
+  hinzufügen/löschen, Verläufe und Einschiffpunkte per Knick verschieben, Kreuzungen setzen. Gespeichert
+  werden Vorgaben in `scripts/maps/europe.edits.json`; der Kartenbau schreibt die Grundkarte nach
+  `data/maps/europe.base.json` und wendet die Vorgaben an (`src/game/mapedits.ts`).
+- Inseln werden nicht zerteilt: Stücke einer Insel gehören der Provinz, deren Stadt dort liegt (sonst dem
+  größten Anteil). Norwegen ist ocker.
+- Küstenorte ohne echte Stadt: Lag der Provinzmittelpunkt unter 10 km am Wasser, bleiben nur etwa 20 %
+  dort (feste Auswahl nach Namen); die übrigen rücken an eine zufällige Stelle im Inneren der Provinz
+  (mindestens halb so weit vom Rand wie der innerste Punkt, nicht direkt am Rohstoffsymbol). Echte Städte
+  und Vorgaben (`cityAt`) bleiben. Ergebnis: 33 verlegt, 8 bleiben; Mittelpunkte unter 10 km am Meer
+  62 → 29 (davon 19 echte Städte). Je Ortspaar gibt es nur noch eine Abkürzung (die kürzere).
+- Provinzmoral (Vorgabe): Ziel = 100 % − Entfernung zur Hauptstadt (1 % je 100 km ab 300 km, höchstens
+  35 %; ohne Hauptstadt die vollen 35 %) + Gebäude − 5 % je Krieg (höchstens 25 %) − Mangel (Nahrung 15 %,
+  Baustoffe 5 %, Energie 10 %) − 10 % bei Kämpfen in der Provinz − 2 % je angrenzender eigener Provinz
+  unter 33 % Moral. Kein Hauptstadtbonus, kein Abzug für besetztes Gebiet. Annäherung je Tag 35 % der
+  Lücke, höchstens ±10 Prozentpunkte. Eroberte Provinzen beginnen bei 25 %, Rückeroberung durch den
+  Vorbesitzer am selben Spieltag bei 40 % (wie Überlaufen). Hauptstadtfall: Sieger +10 %, Verlierer −15 %.
+- Hauptstadt verlegen: 20000 Geld, je 5000 Holz/Eisen/Getreide/Kohle, 48 h; je Nation eine Verlegung
+  gleichzeitig, Abbruch mit 50 % Erstattung; fällt die Zielprovinz, scheitert sie. Die KI verlegt eine
+  verlorene Hauptstadt in ihre wertvollste sichere Provinz. Der Stern auf der Karte zeigt die aktive Hauptstadt.
+- Truppenmoral (nur Infanterie): 10–100 %. Ziel = Provinzmoral (stehend in eigener Provinz) bzw. 50 %
+  (sonst), bei Getreidemangel −20 %. Zum Tageswechsel geht sie auf das Ziel zu, nie darüber hinaus:
+  höchstens +10 %/−8 %, bei Getreidemangel +5 %/−13 %. Kampfeffekte (Nahkampf −3 %, Beschuss −1,5 %,
+  Abschüsse +1 % bis +5 % je Runde) wirken sofort und unabhängig davon. Kampfkraft je Moral linear:
+  10 % → 0,4 bis 100 % → 1,2 (1,0 bei 77,5 %). Das Armeefenster zeigt Ziel und Gründe.

@@ -11,7 +11,7 @@ import { loadMap, MAPS } from './maps.ts';
 import type { SessionStart } from './useSession.ts';
 import { Flag } from './Flag.tsx';
 
-export function MainMenu({ onOpen }: { onOpen(start: SessionStart): void }) {
+export function MainMenu({ onOpen, onEditor }: { onOpen(start: SessionStart): void; onEditor?: () => void }) {
   const [games, setGames] = useState<GameMeta[]>([]);
   const [now, setNow] = useState(Date.now());
   const [mapId, setMapId] = useState('europe');
@@ -53,6 +53,7 @@ export function MainMenu({ onOpen }: { onOpen(start: SessionStart): void }) {
       <header className="menu-header">
         <h1>Hegemonie 1914</h1>
         <div className="menu-sub">Echtzeit-Strategie um die Vorherrschaft – nach dem Vorbild von Supremacy 1914</div>
+        {onEditor && <button className="btn small menu-editor" onClick={onEditor}>Karteneditor</button>}
       </header>
       <div className="menu-body">
         <Window title="Neues Spiel" className="menu-new">

@@ -101,7 +101,7 @@ const config: MapConfig = {
     { id: 'BE', name: 'Belgien', color: '#c6b25f', major: false, capital: 'Brussels' },
     { id: 'CH', name: 'Schweiz', color: '#e3c7c3', major: false, capital: 'Bern' },
     { id: 'DK', name: 'Dänemark', color: '#d88f8a', major: false, capital: 'Kobenhavn' },
-    { id: 'NO', name: 'Norwegen', color: '#a3b9d6', major: true, capital: 'Oslo' },
+    { id: 'NO', name: 'Norwegen', color: '#c9a24a', major: true, capital: 'Oslo' },
     { id: 'PT', name: 'Portugal', color: '#a7c69a', major: false, capital: 'Lisbon' },
     { id: 'SR', name: 'Serbien', color: '#a8866e', major: false, capital: 'Belgrade' },
     { id: 'MN', name: 'Montenegro', color: '#937d9c', major: false, capital: 'Podgorica' },

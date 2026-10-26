@@ -1,11 +1,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { DAY, HOUR, MINUTE } from '../src/game/balance.ts';
-import { atWar } from '../src/game/diplomacy.ts';
-import { edgeLength, isSea, nodePos } from '../src/game/graph.ts';
+import { BUILDINGS, DAY, HOUR, MINUTE, UNITS } from '../src/game/balance.ts';
+import { atWar, setRelation } from '../src/game/diplomacy.ts';
+import { edgeLength, edgeParts, edgePoint, edgeThrough, isSea, nodePos } from '../src/game/graph.ts';
 import type { MapData } from '../src/game/mapdata.ts';
-import { findPath, meleeOutput, segmentHours, unitCount } from '../src/game/military.ts';
+import { armyPosition, findPath, meleeOutput, segmentHours, unitCount } from '../src/game/military.ts';
 import { MILITARY } from '../src/game/balance.ts';
 import { Simulation } from '../src/game/sim.ts';
 import { createGame } from '../src/game/state.ts';
@@ -129,9 +129,9 @@ describe('See', () => {
   it('Landtruppen kämpfen auf See mit halber Stärke, Schlachtschiffe voll', () => {
     const sim = newSim();
     const sea = map.provinces.length;
-    const troops: Army = { id: 999, owner: 'DE', node: sea, units: { infantry: 10 }, morale: 0.5 };
+    const troops: Army = { id: 999, owner: 'DE', node: sea, units: { infantry: 10 }, morale: 0.775 };
     const fleet: Army = { id: 998, owner: 'DE', node: sea, units: { battleship: 1 } };
-    // Infanterie auf See: Angriffswert × halbe Stärke × Moralfaktor (50 % Moral = 1,0)
+    // Infanterie auf See: Angriffswert × halbe Stärke × Moralfaktor (77,5 % Moral = 1,0)
     expect(meleeOutput(sim.state, map, troops)).toBeCloseTo(10 * 1 * 0.5 * 1);
     // Schlachtschiff: keine Moral, im Nahkampf als Fernkampfeinheit halbe Wirkung
     expect(meleeOutput(sim.state, map, fleet)).toBeCloseTo(1 * 5 * 0.5);
@@ -188,7 +188,7 @@ describe('Nahkampf und Fernkampf', () => {
     expect(i1).toBeCloseTo(2 * 1.5 * 1.2);
     tanks.morale = 0.1;
     tanks.wounds = { tank: 40 };
-    inf.morale = 0.5;
+    inf.morale = 0.775;
     expect(meleeOutput(sim.state, map, tanks)).toBeCloseTo(t1);
     expect(meleeOutput(sim.state, map, inf)).toBeCloseTo(2 * 1.5 * 1.0);
   });
@@ -261,5 +261,100 @@ describe('Determinismus mit Kämpfen und KI', () => {
     a.advance(6 * DAY);
     for (let t = 0; t < 6 * DAY; t += 53_011) b.advance(Math.min(53_011, 6 * DAY - t));
     expect(JSON.stringify(b.state)).toBe(JSON.stringify(a.state));
+  });
+});
+
+describe('Begegnungen auf Wegen und Tempo', () => {
+  /** Landweg zwischen einer Provinz von `a` und einer von `b`, ohne Abkürzung durch Dritte */
+  const border = (a: string, b: string) => {
+    for (const p of map.provinces) {
+      if (p.nation !== a) continue;
+      const q = (p.links ?? p.neighbors).find((n) => map.provinces[n].nation === b && !edgeThrough(map, p.id, n));
+      if (q !== undefined) return [p.id, q] as const;
+    }
+    throw new Error('kein Grenzweg');
+  };
+  const clear = (sim: Simulation, ...nodes: number[]) => {
+    sim.state.armies = sim.state.armies.filter((a) => !nodes.includes(a.node));
+  };
+
+  it('verfeindete Armeen, die sich auf demselben Weg entgegenkommen, bleiben stehen und kämpfen', () => {
+    const sim = newSim();
+    const [p, q] = border('DE', 'FR');
+    sim.apply('DE', { type: 'declareWar', nation: 'FR' });
+    clear(sim, p, q);
+    const de: Army = { id: sim.state.nextArmyId++, owner: 'DE', node: p, units: { infantry: 5 } };
+    const fr: Army = { id: sim.state.nextArmyId++, owner: 'FR', node: q, units: { infantry: 5 } };
+    sim.state.armies.push(de, fr);
+    expect(sim.apply('DE', { type: 'move', army: de.id, to: q }).ok).toBe(true);
+    expect(sim.apply('FR', { type: 'move', army: fr.id, to: p }).ok).toBe(true);
+    sim.advance(DAY);
+    const de2 = sim.state.armies.find((a) => a.id === de.id), fr2 = sim.state.armies.find((a) => a.id === fr.id);
+    // keiner ist am anderen vorbei ans Ziel gekommen, und gekämpft wurde
+    expect(sim.state.provinces[q].owner).toBe('FR');
+    expect(sim.state.provinces[p].owner).toBe('DE');
+    expect((de2 ? unitCount(de2) : 0) + (fr2 ? unitCount(fr2) : 0)).toBeLessThan(10);
+  });
+
+  it('im Frieden an Land beginnt bei einer Begegnung der Krieg, mit Durchmarschrecht nicht', () => {
+    for (const row of [false, true]) {
+      const sim = newSim();
+      const [p, q] = border('DE', 'NL');
+      if (row) setRelation(sim.state, 'DE', 'NL', 'rightOfWay');
+      clear(sim, p, q);
+      const de: Army = { id: sim.state.nextArmyId++, owner: 'DE', node: p, units: { infantry: 5 } };
+      const nl: Army = { id: sim.state.nextArmyId++, owner: 'NL', node: p, pos: { a: p, b: q, f: 0.3 }, units: { infantry: 5 } };
+      sim.state.armies.push(de, nl);
+      expect(sim.apply('DE', { type: 'move', army: de.id, to: p, toward: q, frac: 0.45 }).ok).toBe(true);
+      sim.advance(DAY);
+      expect(atWar(sim.state, 'DE', 'NL')).toBe(!row);
+      if (row) expect(de.pos?.f).toBeCloseTo(0.45, 2);
+    }
+  });
+
+  it('Nachrücker verschmelzen im Kampf mit der größeren eigenen Armee', () => {
+    const sim = newSim();
+    const [p, q] = border('DE', 'FR');
+    sim.apply('DE', { type: 'declareWar', nation: 'FR' });
+    clear(sim, p, q);
+    const big: Army = { id: sim.state.nextArmyId++, owner: 'DE', node: q, units: { infantry: 30 } };
+    const foe: Army = { id: sim.state.nextArmyId++, owner: 'FR', node: q, units: { infantry: 30 } };
+    const late: Army = { id: sim.state.nextArmyId++, owner: 'DE', node: p, units: { infantry: 4 } };
+    sim.state.armies.push(big, foe, late);
+    expect(sim.apply('DE', { type: 'move', army: late.id, to: q }).ok).toBe(true);
+    const hours = findPath(sim.state, map, late, p, q)!.hours;
+    sim.advance(Math.ceil(hours * HOUR) + 2 * MINUTE);
+    expect(sim.state.armies.includes(late)).toBe(false);
+    expect(sim.state.armies.includes(big)).toBe(true);
+  });
+
+  it('halbes Tempo ohne Durchmarschrecht; der Marsch wird hinter der Grenze sichtbar langsamer', () => {
+    const sim = newSim();
+    const [p, q] = border('DE', 'FR');
+    const a: Army = { id: sim.state.nextArmyId++, owner: 'DE', node: p, units: { infantry: 2 } };
+    const [l1, d] = edgeParts(map, p, q);
+    const v = UNITS.infantry.speed;
+    expect(segmentHours(sim.state, map, a, p, q)).toBeCloseTo(l1 / v + (d - l1) / (v * 0.5), 6);
+    setRelation(sim.state, 'DE', 'FR', 'rightOfWay');
+    expect(segmentHours(sim.state, map, a, p, q)).toBeCloseTo(l1 / v + (d - l1) / (v * 0.7), 6);
+    // Position: nach der Zeit bis zur Grenze steht die Armee an der Grenze
+    setRelation(sim.state, 'DE', 'FR', 'war');
+    clear(sim, p, q);
+    sim.state.armies.push(a);
+    expect(sim.apply('DE', { type: 'move', army: a.id, to: q })).toMatchObject({ ok: true });
+    sim.advance(Math.round((l1 / v) * HOUR));
+    const [x, y] = armyPosition(map, a, sim.state.time), [bx, by] = edgePoint(map, p, q, l1 / d);
+    expect(Math.hypot(x - bx, y - by)).toBeLessThan(2);
+  });
+
+  it('Ausbaustufen kosten gleich viel und dauern gleich lang, nur die Festung dauert länger', () => {
+    for (const b of Object.keys(BUILDINGS) as (keyof typeof BUILDINGS)[]) {
+      const def = BUILDINGS[b];
+      for (let l = 2; l <= def.maxLevel; l++) {
+        expect(def.cost(l)).toEqual(def.cost(1));
+        if (b !== 'fortress') expect(def.hours(l)).toBe(def.hours(1));
+        else expect(def.hours(l)).toBeGreaterThan(def.hours(l - 1));
+      }
+    }
   });
 });

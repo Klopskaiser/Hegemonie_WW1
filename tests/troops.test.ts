@@ -5,7 +5,7 @@ import { DAY, HOUR, TROOP_MORALE } from '../src/game/balance.ts';
 import { setRelation } from '../src/game/diplomacy.ts';
 import { edgeLength, edgePoint, nodePos } from '../src/game/graph.ts';
 import type { MapData } from '../src/game/mapdata.ts';
-import { armyPosition, defectionChance, defections, planRoute } from '../src/game/military.ts';
+import { armyPosition, defectionChance, defections, planRoute, infantryStrength, nextTroopMorale } from '../src/game/military.ts';
 import { armyDesignation, armyName } from '../src/game/names.ts';
 import { Simulation } from '../src/game/sim.ts';
 import { createGame } from '../src/game/state.ts';
@@ -112,13 +112,34 @@ describe('Truppenmoral', () => {
     sim.advance(DAY);
     const up = a.morale! - 0.5;
     expect(up).toBeGreaterThan(0);
+    // Hunger kommt obendrauf (ohne Nachschub an Rekruten, die den Schnitt heben)
+    sim.state.provinces[berlin].buildings.recruitment = 0;
+    sim.state.provinces[berlin].buildings.barracks = 0;
     sim.state.nations.DE.stock.grain = 0;
     sim.state.nations.DE.consumption.grain = 100;
     sim.state.nations.DE.consumption.fish = 0;
+    sim.state.provinces[berlin].morale = a.morale!;
     const m = a.morale!;
     sim.advance(DAY);
     expect(a.morale!).toBeLessThan(m);
-    expect(m - a.morale!).toBeLessThanOrEqual(TROOP_MORALE.fall.max + 1e-9);
+    expect(m - a.morale!).toBeLessThanOrEqual(TROOP_MORALE.fall.max + TROOP_MORALE.hunger + 1e-9);
+    // Beispiel: Ziel 80 % (Provinz 100 % − 20 % Getreidemangel), Einheit 100 % → nach einem Tag 87 %
+    const t = { target: 0.8, parts: [], hungry: true };
+    expect(nextTroopMorale(1, t)).toBeCloseTo(0.87, 9);
+    expect(nextTroopMorale(0.82, t)).toBeCloseTo(0.8, 9);
+    expect(nextTroopMorale(0.5, { ...t, hungry: false })).toBeCloseTo(0.6, 9);
+    // unter dem Ziel fällt nichts, der Anstieg ist bei Getreidemangel nur +5 %
+    expect(nextTroopMorale(0.5, t)).toBeCloseTo(0.55, 9);
+    // Kampfkraft linear: 10 % → 0,4, 77,5 % → 1,0, 100 % → 1,2
+    expect(infantryStrength({ ...a, morale: 0.1 })).toBeCloseTo(0.4, 9);
+    expect(infantryStrength({ ...a, morale: 0.3 })).toBeCloseTo(0.4 + (0.2 * 0.8) / 0.9, 9);
+    expect(infantryStrength({ ...a, morale: 0.775 })).toBeCloseTo(1, 9);
+    expect(infantryStrength({ ...a, morale: 1 })).toBeCloseTo(1.2, 9);
+    // nie unter 10 %
+    a.morale = TROOP_MORALE.min + 0.02;
+    sim.state.provinces[berlin].morale = a.morale;
+    sim.advance(DAY);
+    expect(a.morale!).toBeCloseTo(TROOP_MORALE.min, 9);
   });
 });
 

@@ -54,6 +54,8 @@ export interface BuildingDef {
   /** Moralbonus der erreichten Stufe */
   morale(level: number): number;
   upkeep?: Cost;
+  /** kann abgeschaltet werden (spart den Unterhalt, wirkt dann aber auch nicht) */
+  switchable?: boolean;
   /** andere Gebäude als Bauvoraussetzung */
   requires?: Partial<Record<Building, number>>;
   /** schließt sich mit diesen Gebäuden in derselben Provinz aus */
@@ -72,6 +74,7 @@ export const BUILDINGS: Record<Building, BuildingDef> = {
     prodBonus: (l) => (l >= 1 ? 0.33 : 0),
     morale: (l) => (l >= 1 ? 0.07 : 0),
     upkeep: { coal: 500 },
+    switchable: true,
     describe: () => 'Produktion +33 %, Truppen ×2,5 schneller, Moral +7 %. Unterhalt 500 Kohle/Tag.',
   },
   harbor: {
@@ -84,7 +87,7 @@ export const BUILDINGS: Record<Building, BuildingDef> = {
   },
   factory: {
     name: 'Fabrik', maxLevel: 4,
-    cost: (l) => ({ money: 10000 * l, iron: 2500 * l, lumber: 2500 * l, oil: 2500 * l }),
+    cost: () => ({ money: 10000, iron: 2500, lumber: 2500, oil: 2500 }),
     hours: () => 48,
     prodBonus: (l) => FACTORY_BONUS[l],
     morale: (l) => 0.025 * l,
@@ -93,7 +96,7 @@ export const BUILDINGS: Record<Building, BuildingDef> = {
   },
   manufactory: {
     name: 'Manufaktur', maxLevel: 4,
-    cost: (l) => ({ money: 10000 * l, iron: 2000 * l, lumber: 2000 * l, gas: 3000 * l }),
+    cost: () => ({ money: 10000, iron: 2000, lumber: 2000, gas: 3000 }),
     hours: () => 50,
     prodBonus: (l) => 0.1 * l,
     morale: () => 0,
@@ -108,6 +111,7 @@ export const BUILDINGS: Record<Building, BuildingDef> = {
     morale: () => 0,
     requires: { recruitment: 1 },
     upkeep: { grain: 1000 },
+    switchable: true,
     describe: (l) => `Infanterie bei 100 % Moral alle ${RECRUIT_BASE_HOURS / 2 ** l} h. Arbeitet auch ohne Wehramt, dann halb so schnell. Unterhalt 1000 Getreide je Stufe und Tag.`,
   },
   recruitment: {
@@ -149,6 +153,12 @@ export const RECRUIT_WITHOUT_OFFICE = 0.5;
 /** Kampf in einer Provinz: Wahrscheinlichkeit je Stunde und Gebäude, eine Stufe zu verlieren */
 export const BUILDING_DAMAGE_CHANCE = 0.04;
 export const BUILD_REFUND = 0.5;
+
+/** Hauptstadt verlegen: Kosten und Dauer (je Nation höchstens eine Verlegung gleichzeitig) */
+export const CAPITAL_MOVE = {
+  cost: { money: 20000, lumber: 5000, iron: 5000, grain: 5000, coal: 5000 } as Cost,
+  hours: 48,
+};
 
 // ---------------------------------------------------------------- Einheiten
 
@@ -210,8 +220,8 @@ export const UNITS: Record<UnitType, UnitDef> = {
 // ---------------------------------------------------------------- Militär
 
 export const MILITARY = {
-  /** Geschwindigkeitsfaktor je Gebiet (Supremacy: Heimat 36, fremd 25, feindlich 12,5 km/h) */
-  territory: { own: 1, foreign: 0.7, enemy: 0.35 },
+  /** Geschwindigkeitsfaktor je Gebiet: eigenes, mit Durchmarschrecht/Bündnis, sonst (feindlich oder ohne Wegerecht) */
+  territory: { own: 1, foreign: 0.7, enemy: 0.5 },
   /** Eisenbahn im eigenen Gebiet */
   railFactor: 2.5,
   /** eingeschiffte Landtruppen (Transportschiffe) */
@@ -227,8 +237,8 @@ export const MILITARY = {
   seaFactor: 0.5,
   /** Zufallsstreuung des Schadens (±) */
   randomSpread: 0.25,
-  /** Moral einer frisch eroberten Provinz (höchstens) */
-  conquestMorale: 0.3,
+  /** Moral einer frisch eroberten Provinz; Rückeroberung am selben Tag: DEFECTION.morale */
+  conquestMorale: 0.25,
   /** Hauptstadt erobert: Moralbonus für den Sieger, Abzug für den Verlierer */
   capitalMoraleBonus: 0.1,
   capitalMoralePenalty: 0.15,
@@ -244,20 +254,22 @@ export const FACTORY_SPEEDUP = 0.25;
 // ---------------------------------------------------------------- Moral
 
 export const MORALE = {
-  base: 0.7,
-  capitalBonus: 0.3,
-  /** Abzug je 100 km Entfernung zur Hauptstadt ab `distanceFree` km */
-  distancePer100: 0.02,
+  base: 1,
+  /** Abzug je 100 km Entfernung zur Hauptstadt ab `distanceFree` km; ohne Hauptstadt der volle Abzug */
+  distancePer100: 0.01,
   distanceFree: 300,
   distanceMax: 0.35,
-  occupied: 0.2,
+  /** Kämpfe in der Provinz seit dem letzten Tageswechsel */
+  battle: 0.1,
+  /** je angrenzende eigene Provinz mit Moral unter DEFECTION.threshold */
+  unrestNeighbor: 0.02,
   warEach: 0.05,
   warMax: 0.25,
-  shortage: { food: 0.15, materials: 0.05, energy: 0.05 } as Record<Category, number>,
+  shortage: { food: 0.15, materials: 0.05, energy: 0.1 } as Record<Category, number>,
   min: 0.05,
-  /** Anteil der Lücke zum Zielwert, der pro Tag geschlossen wird */
+  /** Anteil der Lücke zum Zielwert, der pro Tag geschlossen wird; höchstens maxStep je Tag */
   adapt: 0.35,
-  maxStep: 0.08,
+  maxStep: 0.1,
   revolt: 0.25,
 };
 
@@ -268,21 +280,21 @@ export const TROOP_MORALE = {
   start: 0.7,
   /** Ziel auf See, auf Wegen oder in fremdem Gebiet, wenn Getreide da ist */
   neutral: 0.5,
-  /** Ziel ohne Getreide */
-  hungry: 0.1,
-  /** Annäherung an das Ziel je Tageswechsel: Anteil der Lücke, mindestens/höchstens (Steigen etwas schneller) */
-  rise: { share: 0.3, min: 0.02, max: 0.1 },
-  fall: { share: 0.25, min: 0.02, max: 0.08 },
+  /** Getreidemangel: Abzug am Ziel und zusätzlicher Abzug je Tag, solange die Moral über dem Ziel liegt */
+  hungerTarget: 0.2,
+  hunger: 0.05,
+  /** Annäherung an das Ziel je Tageswechsel: volle Lücke, höchstens so viel */
+  rise: { max: 0.1 },
+  fall: { max: 0.08 },
   /** Abzug je Nahkampfrunde bzw. je Fernkampfrunde als Ziel */
   melee: 0.03,
   shelled: 0.015,
   /** Zuwachs je vernichteter feindlicher Einheit, höchstens je Runde */
   perKill: 0.01,
   killMax: 0.05,
-  /** Kampfkraft der Infanterie bei 0 % und 100 % Moral (50 % = 1,0) */
-  strengthMin: 0.8,
-  strengthMax: 1.2,
-  min: 0.05,
+  /** Kampfkraft der Infanterie je Moral, linear: 10 % → 0,4, 100 % → 1,2 (1,0 bei 77,5 %) */
+  strength: [[0.1, 0.4], [1, 1.2]] as [number, number][],
+  min: 0.1,
 };
 
 // ---------------------------------------------------------------- Überlaufen von Provinzen

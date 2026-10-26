@@ -1,9 +1,9 @@
 import { useState } from 'react';
-import { checkBuild, checkProduce, missing, plannedBuildings, requirementsMet, type Action, type ActionResult } from '../game/actions.ts';
+import { checkBuild, checkCapitalMove, checkProduce, missing, plannedBuildings, requirementsMet, type Action, type ActionResult } from '../game/actions.ts';
 import {
-  BUILDING_ORDER, BUILDINGS, DEFECTION, RES_NAMES, UNIT_ORDER, UNITS, type UnitType,
+  BUILDING_ORDER, BUILDINGS, CAPITAL_MOVE, DEFECTION, MILITARY, RES_NAMES, UNIT_ORDER, UNITS, type UnitType,
 } from '../game/balance.ts';
-import { moraleTarget, provinceOutput, provincePoints, recruitHours } from '../game/economy.ts';
+import { activeCapital, moraleTarget, provinceOutput, provincePoints, recruitHours } from '../game/economy.ts';
 import type { MapData } from '../game/mapdata.ts';
 import { defectionChance, garrisonStrength } from '../game/military.ts';
 import { armyName } from '../game/names.ts';
@@ -45,7 +45,11 @@ export function ProvincePanel({ map, state, id, armies: visibleArmies, act, onSe
   };
 
   const armies = visibleArmies.filter((a) => a.node === id && !a.move);
-  const tags = [mp.capital ? 'Hauptstadt' : mp.city ? 'Stadt' : 'Land', mp.coastal ? 'Küste' : null, mp.nation !== ps.owner ? 'besetzt' : null]
+  const isCapital = activeCapital(state, map, ps.owner) === id;
+  const nationState = state.nations[state.playerNation];
+  const capMove = nationState.capitalMove;
+  const capChk = checkCapitalMove(state, map, state.playerNation, id);
+  const tags = [isCapital ? 'Hauptstadt' : mp.city ? 'Stadt' : 'Land', mp.coastal ? 'Küste' : null, mp.nation !== ps.owner ? 'besetzt' : null]
     .filter(Boolean).join(' · ');
 
   return (
@@ -60,17 +64,53 @@ export function ProvincePanel({ map, state, id, armies: visibleArmies, act, onSe
       </div>
 
       <h4>Moral</h4>
-      <div className="morale-row" title={mt.parts.map((p) => `${p.label}: ${p.value >= 0 ? '+' : ''}${Math.round(p.value * 100)} %`).join('\n')}>
+      <div className="morale-row">
         <Bar value={ps.morale} marker={mt.target} color={ps.morale < 0.33 ? '#a33' : ps.morale < 0.6 ? '#c9952f' : '#5d8a3a'} />
         <span>{fmtPercent(ps.morale)}</span>
       </div>
-      <div className="muted small">Ziel {fmtPercent(mt.target)} – ändert sich täglich zum Tageswechsel.</div>
+      <div className="muted small">Ziel {fmtPercent(mt.target)} – die Moral nähert sich ihm zum Tageswechsel.</div>
+      <ul className="morale-parts small">
+        {mt.parts.map((p) => (
+          <li key={p.label}>
+            <span>{p.label}</span>
+            <span className={p.value < 0 ? 'neg' : 'pos'}>{p.value >= 0 ? '+' : '−'}{Math.round(Math.abs(p.value) * 100)} %</span>
+          </li>
+        ))}
+      </ul>
+      <div className="muted small">
+        Einmalig: eroberte Provinzen beginnen bei {Math.round(MILITARY.conquestMorale * 100)} % (Rückeroberung am selben Tag {Math.round(DEFECTION.morale * 100)} %); fällt eine Hauptstadt,
+        bekommt der Eroberer +{Math.round(MILITARY.capitalMoraleBonus * 100)} %, der Verlierer −{Math.round(MILITARY.capitalMoralePenalty * 100)} % in allen Provinzen.
+      </div>
       {ps.morale < DEFECTION.threshold && (
         <div className="error small">
           ✊ Unruhen: Die Provinz kann zum Tageswechsel zu einer anderen Macht überlaufen
           (Wahrscheinlichkeit {Math.round(defectionChance(ps.morale, garrisonStrength(state, id)) * 100)} %;
           je 5 Kampfstärke Besatzung 1 Prozentpunkt weniger).
         </div>
+      )}
+
+      {own && (
+        <>
+          <h4>Hauptstadt</h4>
+          {isCapital ? (
+            <div className="muted small">Hier ist die Hauptstadt: kein Entfernungsabzug bei der Moral.</div>
+          ) : capMove?.province === id ? (
+            <div className="progress-row">
+              <span className="small">Verlegung läuft</span>
+              <Bar value={(state.time - capMove.start) / (capMove.end - capMove.start)} />
+              <span className="small">{remaining(capMove.end)}</span>
+              <button className="btn small" onClick={() => run({ type: 'cancelCapitalMove' })} title="Abbrechen (50 % Erstattung)">✕</button>
+            </div>
+          ) : (
+            <div className="progress-row">
+              <CostList cost={CAPITAL_MOVE.cost} stock={stock} />
+              <span className="small muted">{fmtDuration((CAPITAL_MOVE.hours * 3600_000) / state.speed)}</span>
+              <button className="btn small" disabled={!capChk.ok} title={capChk.error ?? 'Die bisherige Hauptstadt verliert ihren Status, sobald die Verlegung fertig ist'}
+                onClick={() => run({ type: 'moveCapital', province: id })}>Hauptstadt hierher</button>
+            </div>
+          )}
+          {capMove && capMove.province !== id && <div className="muted small">Die Hauptstadt wird gerade nach {map.provinces[capMove.province].name} verlegt.</div>}
+        </>
       )}
 
       <h4>Produktion pro Tag</h4>
@@ -100,7 +140,15 @@ export function ProvincePanel({ map, state, id, armies: visibleArmies, act, onSe
                     <span className="muted">
                       {def.maxLevel > 1 ? `Stufe ${level}/${def.maxLevel}` : level ? 'vorhanden' : '—'}
                       {waiting > 0 ? ` · ${waiting} geplant` : ''}
+                      {level > 0 && ps.off?.[b] ? ' · abgeschaltet' : ''}
                     </span>
+                    {def.switchable && level > 0 && (
+                      <button className={'btn small' + (ps.off?.[b] ? ' active' : '')}
+                        title={ps.off?.[b] ? 'Wieder einschalten: Unterhalt und Wirkung kehren zurück' : 'Abschalten: kein Unterhalt, aber auch keine Wirkung'}
+                        onClick={() => run({ type: 'switchBuilding', province: id, building: b, on: !!ps.off?.[b] })}>
+                        {ps.off?.[b] ? 'Einschalten' : 'Abschalten'}
+                      </button>
+                    )}
                   </div>
                   <div className="muted small">{def.describe(Math.min(def.maxLevel, Math.max(1, plannedLevel < def.maxLevel ? plannedLevel + 1 : plannedLevel)))}</div>
                   {c && (

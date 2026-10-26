@@ -5,6 +5,7 @@
 // Nachbarschaften, Küsten, Ressourcen, Doppelprovinzen.
 
 import fs from 'node:fs';
+import { applyEdits } from '../src/game/mapedits.ts';
 import path from 'node:path';
 import * as shapefile from 'shapefile';
 import { topology } from 'topojson-server';
@@ -499,6 +500,30 @@ for (const cfg of config.nations) {
     }
     pr.shape = keep;
   }
+  // Inseln nicht zerteilen: Stücke einer Insel gehören der Provinz, deren Stadt dort liegt
+  // (sonst dem größten Anteil); Provinzen mit Stadt anderswo geben ihre Stücke ab
+  for (const part of shape) {
+    if (part === largest || polyArea(part) < 5) continue;
+    const [bx0, by0, bx1, by1] = bboxOf([part]);
+    const pieces = local.map((pr) => {
+      if (!pr.shape.length) return 0;
+      const [x0, y0, x1, y1] = bboxOf(pr.shape);
+      if (x1 < bx0 || x0 > bx1 || y1 < by0 || y0 > by1) return 0;
+      return multiArea(polygonClipping.intersection(pr.shape as never, [part] as never) as MultiPoly);
+    });
+    const holders = local.filter((_, i) => pieces[i] > 0.01);
+    if (holders.length < 2) continue;
+    const on = holders.filter((pr) => pointInPoly(pr.seed.pos[0], pr.seed.pos[1], part));
+    const pick = on.length ? on : holders;
+    const winner = pick.reduce((a, b) => (pieces[local.indexOf(b)] > pieces[local.indexOf(a)] ? b : a));
+    for (const pr of holders) {
+      if (pr === winner || on.includes(pr)) continue;
+      const rest = polygonClipping.difference(pr.shape as never, [part] as never) as MultiPoly;
+      if (!rest.length) continue;
+      pr.shape = rest;
+      winner.shape = polygonClipping.union(winner.shape as never, [part] as never) as MultiPoly;
+    }
+  }
   const empty = local.filter((p) => !p.shape.length).length;
   if (empty) console.warn(`${cfg.id}: ${empty} leere Provinz(en)`);
   provs.push(...local.filter((p) => p.shape.length));
@@ -652,6 +677,53 @@ for (const n of config.nations) {
   const own = provinces.filter((p) => p.nation === n.id && !p.capital).sort((a, b) => biggestPop[b.id] - biggestPop[a.id]);
   const max = Math.floor((own.length + 1) * 0.3);
   own.slice(0, max).filter((p) => biggestPop[p.id] >= 300000).forEach((p) => (p.city = true));
+}
+
+// Küstenorte ohne echte Stadt: nur etwa 20 % bleiben am Wasser (unter 10 km), die übrigen rücken an
+// eine zufällige Stelle im Inneren der Provinz – weit genug von allen Grenzen und von der Mitte mit dem
+// Rohstoffsymbol, damit die Wege einfach bleiben. Vorgegebene Lagen (cityAt) bleiben unangetastet.
+{
+  const COAST_NEAR = 10, KEEP_SHARE = 0.2;
+  const coastSegs = provs.map(() => [] as number[]);
+  for (const b of borderMap.values()) if (b.b === -1) coastSegs[b.a].push(...b.segs);
+  const segDist = (segs: number[], p: Pt) => {
+    let d = Infinity;
+    for (let k = 0; k + 3 < segs.length; k += 4) d = Math.min(d, distSegment(p[0], p[1], segs[k], segs[k + 1], segs[k + 2], segs[k + 3]));
+    return d;
+  };
+  const fixed = new Set(Object.keys(config.cityAt ?? {}));
+  const near = provinces.filter((p) => !p.city && !p.capital && coastSegs[p.id].length && !fixed.has(p.name)
+    && segDist(coastSegs[p.id], p.center) < COAST_NEAR);
+  // feste Auswahl der Bleibenden (nach Namens-Hash), damit jeder Neubau gleich ausfällt
+  const order = [...near].sort((a, b) => (hash(a.name) >>> 0) - (hash(b.name) >>> 0));
+  const stay = new Set(order.slice(0, Math.round(near.length * KEEP_SHARE)).map((p) => p.id));
+  let movedCount = 0;
+  for (const p of near) {
+    if (stay.has(p.id)) continue;
+    const shape = provs[p.id].shape;
+    const main = shape.reduce((a, b) => (polyArea(a) > polyArea(b) ? a : b));
+    const edgeDist = (x: number, y: number) => {
+      let d = Infinity;
+      for (const ring of main) for (let k = 0; k + 1 < ring.length; k++) d = Math.min(d, distSegment(x, y, ring[k][0], ring[k][1], ring[k + 1][0], ring[k + 1][1]));
+      return d;
+    };
+    const mid: Pt = [p.mid[0], p.mid[1]];
+    const dMax = edgeDist(mid[0], mid[1]);
+    const [x0, y0, x1, y1] = bboxOf([main]);
+    const step = Math.max(2, Math.min(x1 - x0, y1 - y0) / 25);
+    const cand: Pt[] = [];
+    for (let x = x0; x <= x1; x += step) for (let y = y0; y <= y1; y += step) {
+      if (!pointInPoly(x, y, main)) continue;
+      if (edgeDist(x, y) >= 0.5 * dMax && dist([x, y], mid) >= 0.3 * dMax) cand.push([x, y]);
+    }
+    if (!cand.length) continue;
+    const pick = cand[Math.floor(makeRng(hash(p.name) ^ 0xc0a57)() * cand.length)];
+    p.center = [r1(pick[0]), r1(pick[1])];
+    const ll = unproject(pick);
+    p.lonlat = [Math.round(ll[0] * 1000) / 1000, Math.round(ll[1] * 1000) / 1000];
+    movedCount++;
+  }
+  console.log(`Küstenorte ohne Stadt unter ${COAST_NEAR} km: ${near.length}, davon bleiben ${stay.size}, ins Innere verlegt: ${movedCount}`);
 }
 
 // Doppelprovinzen: Spielernationen genau 2, Kleinstaaten ab 3 Provinzen eine
@@ -1100,7 +1172,18 @@ const data: MapData = {
   const key = (a: number, b: number) => `${Math.min(a, b)}:${Math.max(a, b)}`;
   const replaced = new Set(bundled.roads.map((r) => key(r.a, r.b)));
   data.roads = [...data.roads.filter((r) => !replaced.has(key(r.a, r.b))), ...bundled.roads];
-  data.shortcuts = bundled.shortcuts;
+  // je Ortspaar nur eine Abkürzung (die kürzere), falls zwei Bündel dieselbe Verbindung anbieten
+  const scLen = (s: { pts: number[] }) => {
+    let l = 0;
+    for (let k = 2; k < s.pts.length; k += 2) l += Math.hypot(s.pts[k] - s.pts[k - 2], s.pts[k + 1] - s.pts[k - 1]);
+    return l;
+  };
+  const bestSc = new Map<string, (typeof bundled.shortcuts)[number]>();
+  for (const s of bundled.shortcuts) {
+    const k = key(s.a, s.b), old = bestSc.get(k);
+    if (!old || scLen(s) < scLen(old)) bestSc.set(k, s);
+  }
+  data.shortcuts = [...bestSc.values()];
   // Seewege zusammenlegen (auf der Geometrie nach dem Bündeln)
   const snapped = snapSeaLanes({ ...data });
   const snappedKeys = new Set(snapped.roads.map((r) => key(r.a, r.b)));
@@ -1115,10 +1198,21 @@ const data: MapData = {
   console.log(`Wegkreuzungen: ${bundled.junctions.length} (${bundled.junctions.map((j) => where(j.node)).join(', ')}), Abkürzungen: ${bundled.shortcuts.length}`);
 }
 
+// Grundkarte sichern, dann die Handarbeit aus dem Karteneditor anwenden (scripts/maps/<id>.edits.json)
+const baseOut = path.join(ROOT, 'data', 'maps', `${config.id}.base.json`);
+fs.mkdirSync(path.dirname(baseOut), { recursive: true });
+fs.writeFileSync(baseOut, JSON.stringify(data));
+const editsFile = path.join(ROOT, 'scripts', 'maps', `${config.id}.edits.json`);
+let final: MapData = data;
+if (fs.existsSync(editsFile)) {
+  const res = applyEdits(data, JSON.parse(fs.readFileSync(editsFile, 'utf8')));
+  final = res.map;
+  console.log(`Vorgaben aus dem Karteneditor angewendet${res.warnings.length ? `; Hinweise: ${res.warnings.join('; ')}` : ''}`);
+}
 const outDir = path.join(ROOT, 'public', 'maps');
 fs.mkdirSync(outDir, { recursive: true });
 const out = path.join(outDir, `${config.id}.json`);
-fs.writeFileSync(out, JSON.stringify(data));
+fs.writeFileSync(out, JSON.stringify(final));
 const isolated = provinces.filter((p) => p.neighbors.length === 0 && !p.coastal).map((p) => p.name);
 if (isolated.length) console.warn('Ohne Nachbarn und Küste:', isolated.join(', '));
 console.log(`geschrieben: ${out} (${Math.round(fs.statSync(out).size / 1024)} KB), Küstenprovinzen: ${provinces.filter((p) => p.coastal).length}`);

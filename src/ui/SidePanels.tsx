@@ -1,6 +1,6 @@
 import type { Action, ActionResult } from '../game/actions.ts';
 import { ALL_RES, BUILDINGS, CATEGORY_NAMES, PROVINCE, RES_NAMES, VICTORY_SHARE, type Building, type Category } from '../game/balance.ts';
-import { netRate, totalUse, type NationRates } from '../game/economy.ts';
+import { netRate, totalUse, useSources, type NationRates } from '../game/economy.ts';
 import type { MapData } from '../game/mapdata.ts';
 import type { GameState } from '../game/types.ts';
 import { Window } from './common.tsx';
@@ -23,8 +23,9 @@ export function netPerDay(rates: NationRates, r: (typeof ALL_RES)[number]): numb
   return netRate(rates, r);
 }
 
-export function EconomyPanel({ state, rates, act, onClose }: Props & { act(a: Action): Promise<ActionResult> }) {
+export function EconomyPanel({ map, state, rates, act, onClose }: Props & { act(a: Action): Promise<ActionResult> }) {
   const n = state.nations[state.playerNation];
+  const sources = useSources(state, map, state.playerNation);
   const provinces = state.provinces.filter((p) => p.owner === state.playerNation).length;
   return (
     <Window title="Wirtschaft" onClose={onClose} className="side-panel">
@@ -48,6 +49,22 @@ export function EconomyPanel({ state, rates, act, onClose }: Props & { act(a: Ac
           })}
         </tbody>
       </table>
+      <h4>Verbrauch nach Verursachern (pro Tag)</h4>
+      <div className="use-sources">
+        {ALL_RES.filter((r) => sources[r].length).map((r) => (
+          <details key={r}>
+            <summary><ResIcon res={r} size={14} /> {RES_NAMES[r]}: {fmtNum(totalUse(rates, r))}</summary>
+            <table className="table small">
+              <tbody>
+                {sources[r].map((s) => (
+                  <tr key={s.label}><td>{s.label}</td><td className="num">{fmtNum(s.amount)}</td></tr>
+                ))}
+              </tbody>
+            </table>
+          </details>
+        ))}
+      </div>
+      <p className="muted small">Kaserne und Eisenbahn lassen sich in der Provinzansicht abschalten: kein Unterhalt, aber auch keine Wirkung.</p>
       <h4>Verbrauchsregler</h4>
       <p className="muted small">
         Provinzunterhalt: {provinces} Provinzen × {PROVINCE.upkeep} = {fmtNum(rates.upkeep)} je Kategorie und Tag.

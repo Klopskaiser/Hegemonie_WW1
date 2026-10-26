@@ -31,6 +31,12 @@ export interface ProvinceState {
   recruit: number;
   /** Aufständische halten die Provinz: keine Produktion */
   revolt?: boolean;
+  /** abgeschaltete Gebäude (Kaserne, Eisenbahn): kein Unterhalt, keine Wirkung */
+  off?: Partial<Record<Building, boolean>>;
+  /** seit dem letzten Tageswechsel wurde in der Provinz gekämpft (senkt das Moralziel) */
+  fought?: boolean;
+  /** zuletzt erobert: vorheriger Besitzer und Spieltag (Rückeroberung am selben Tag mit höherer Moral) */
+  lost?: { owner: string; day: number } | null;
 }
 
 /** Marsch entlang eines Weges im Bewegungsnetz (Provinzen und Seegebiete). */
@@ -46,6 +52,8 @@ export interface Movement {
   startFrac?: number;
   /** Ziel auf einem Weg: Anteil des letzten Abschnitts, bis zu dem marschiert wird */
   endFrac?: number;
+  /** Tempoverlauf des laufenden Abschnitts: [Anteil, Stunden, …] aufsteigend (Grenzen wechseln das Tempo) */
+  prof?: number[];
 }
 
 /** Punkt auf dem Weg zwischen zwei benachbarten Knoten: Anteil f (0..1) von a nach b */
@@ -81,6 +89,10 @@ export interface Army {
   target?: number | null;
   /** Ziel wurde selbständig erfasst (wird aufgegeben, sobald es außer Reichweite ist) */
   autoTarget?: boolean;
+  /** eigener Name (Schlachtschiffe und Eisenbahngeschütze bekommen einen, umbenennbar) */
+  name?: string;
+  /** vernichtete feindliche Einheiten */
+  kills?: number;
 }
 
 /** Beziehungsstufen, von schlecht nach gut */
@@ -159,6 +171,12 @@ export interface NationState {
   points: number;
   /** Engpässe seit dem letzten Tageswechsel */
   shortage: Record<Category, boolean>;
+  /** bisher vergebene Namen für Schlachtschiffe und Eisenbahngeschütze */
+  named?: number;
+  /** verlegte Hauptstadt (Provinz); fehlt das Feld, gilt die Hauptstadt der Karte */
+  capital?: number;
+  /** laufende Verlegung der Hauptstadt */
+  capitalMove?: { province: number; start: number; end: number } | null;
 }
 
 export interface GameEvent {

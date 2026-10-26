@@ -7,6 +7,7 @@ import { targetOwners, type Action } from '../game/actions.ts';
 import { MultiArmyPanel } from './MultiArmyPanel.tsx';
 import { UNITS, type UnitType } from '../game/balance.ts';
 import type { Army } from '../game/types.ts';
+import { activeCapital } from '../game/economy.ts';
 import { armyVisible, visibleNodes } from '../game/visibility.ts';
 import { ArmyPanel } from './ArmyPanel.tsx';
 import { Bar } from './common.tsx';
@@ -54,6 +55,7 @@ export function GameView({ start, onExit }: { start: SessionStart; onExit(): voi
 
   const owners = useMemo(() => state?.provinces.map((p) => p.owner) ?? [], [state]);
   const morale = useMemo(() => state?.provinces.map((p) => p.morale) ?? [], [state]);
+  const capitals = useMemo(() => (state && map ? map.nations.map((n) => activeCapital(state, map, n.id)).filter((c) => c >= 0) : []), [state, map]);
   const visible = useMemo(() => (state && map ? visibleNodes(state, map, state.playerNation) : null), [state, map]);
   const armies = useMemo<Army[]>(
     () => (state && map && visible ? state.armies.filter((a) => armyVisible(state, map, state.playerNation, a, visible)) : []),
@@ -310,6 +312,7 @@ export function GameView({ start, onExit }: { start: SessionStart; onExit(): voi
         <main className={'map-area' + (own.length ? ' targeting' : '')}>
           <MapCanvas map={map} owners={owners} morale={morale} armies={armies} time={state.time} nation={state.playerNation}
             visible={visible} provinces={state.provinces} selected={selected} selectedArmies={selectedArmies} battles={battles}
+            capitals={capitals}
             previews={previews} shots={shots} mode={mode} focus={focus} onNode={onNode} onArmy={onArmy}
             onHoverTarget={setHoverTarget} onTarget={onTarget} onLasso={onLasso} />
           {state.paused && <div className="paused-badge">{state.winner ? 'Spielende' : 'Pausiert – die Welt steht still'}</div>}

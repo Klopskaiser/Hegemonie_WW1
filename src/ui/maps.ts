@@ -15,6 +15,11 @@ export const MAPS: MapInfo[] = [
 
 const cache = new Map<string, Promise<MapData>>();
 
+/** Karte neu laden lassen (nach dem Speichern im Karteneditor) */
+export function forgetMap(id: string): void {
+  cache.delete(id);
+}
+
 export function loadMap(id: string): Promise<MapData> {
   let p = cache.get(id);
   if (!p) {

@@ -18,7 +18,8 @@ Optik bewusst nach dem **alten** Flash-Interface (Holz/Pergament/Gold), nicht de
 npm run dev          # Dev-Server auf http://127.0.0.1:5180
 npm run lint         # tsc --noEmit
 npm test             # Vitest (tests/)
-npm run map:europe   # Karte aus Natural-Earth-Daten neu erzeugen -> public/maps/europe.json
+npm run map:europe   # Karte aus Natural-Earth-Daten neu erzeugen -> data/maps/europe.base.json + public/maps/europe.json
+                     # (wendet die Vorgaben aus dem Karteneditor an: scripts/maps/europe.edits.json)
 npx tsx scripts/bench.ts   # Simulationsgeschwindigkeit messen
 npm run headless -- batch --games 4 --days 60 --record runs.jsonl   # KI-Partien ohne Browser
 npm run headless -- stdio --agents DE   # JSON-Zeilen-Schnittstelle für Modelle (Python)
@@ -56,6 +57,7 @@ Kartenbau nötig, nicht zur Laufzeit.
   `scripts/headless.ts`, Beispielmodell `scripts/example-model.ts` (devDependency `ws`).
 - `src/persist/db.ts` – IndexedDB (`meta` für das Menü, `saves` für den Zustand).
 - `src/ui/` – React-Oberfläche, `MapCanvas.tsx` zeichnet die Karte auf Canvas (Lasso, Rechtsklick-Befehle).
+  `MapEditor.tsx` Karteneditor (nur Dev-Server, Endpunkte in `vite.config.ts`, Logik in `src/game/mapedits.ts`).
   Bilder unter `public/images` (Platzhalter, solange Dateien fehlen; Liste in `public/images/README.md`).
 - `scripts/build-map.ts` + `scripts/maps/<id>.ts` – Kartenpipeline: Admin-1-Regionen →
   Grenzen von 1914 → Topologie/Vereinfachung → Projektion (km) → feste Provinzzahl je Nation

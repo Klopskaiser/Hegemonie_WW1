@@ -2,10 +2,10 @@
 // ausschließlich über diese Aktionen.
 
 import {
-  ALL_RES, BUILD_QUEUE_LIMIT, BUILD_REFUND, BUILDINGS, CATEGORY_RES, FACTORY_SPEEDUP, HOUR, OFFICE_SPEEDUP, QUEUE_LIMIT, RES_NAMES, UNITS,
+CAPITAL_MOVE,   ALL_RES, BUILD_QUEUE_LIMIT, BUILD_REFUND, BUILDINGS, CATEGORY_RES, FACTORY_SPEEDUP, HOUR, OFFICE_SPEEDUP, QUEUE_LIMIT, RES_NAMES, UNITS,
   type Building, type Category, type Cost, type Res, type UnitType,
 } from './balance.ts';
-import { validShares } from './economy.ts';
+import { validShares, activeCapital } from './economy.ts';
 import { atWar, hasRightOfWay, relation, relationRank, RELATION_NAMES, setRelation } from './diplomacy.ts';
 import { isSea, nodeNeighbors } from './graph.ts';
 import type { MapData, Resource } from './mapdata.ts';
@@ -24,7 +24,11 @@ export type ProvinceAction =
   | { type: 'dequeueBuild'; province: number; index: number }
   | { type: 'enqueue'; province: number; unit: UnitType }
   | { type: 'dequeue'; province: number; index: number }
-  | { type: 'setRepeat'; province: number; repeat: boolean };
+  | { type: 'setRepeat'; province: number; repeat: boolean }
+  /** Kaserne oder Eisenbahn ab- bzw. wieder einschalten (kein Unterhalt, keine Wirkung) */
+  | { type: 'switchBuilding'; province: number; building: Building; on: boolean }
+  /** Hauptstadt in diese Provinz verlegen (CAPITAL_MOVE: Kosten, 48 h; je Nation eine Verlegung gleichzeitig) */
+  | { type: 'moveCapital'; province: number };
 
 export type ArmyAction =
   /**
@@ -46,7 +50,9 @@ export type ArmyAction =
   | { type: 'split'; army: number; units: Partial<Record<UnitType, number>>; rejoin?: boolean }
   | { type: 'merge'; army: number; into: number }
   /** abgetrennte Armee ohne Befehl sofort wieder eingliedern (sofern noch am selben Ort) */
-  | { type: 'rejoin'; army: number };
+  | { type: 'rejoin'; army: number }
+  /** eigenen Namen setzen (leer = wieder automatisch benennen) */
+  | { type: 'rename'; army: number; name: string };
 
 export type DiplomacyAction =
   | { type: 'declareWar'; nation: string }
@@ -61,11 +67,15 @@ export type MarketAction =
   | { type: 'cancelOffer'; id: number }
   | { type: 'acceptOffer'; id: number; amount: number };
 
+export type CapitalAction =
+  /** laufende Verlegung der Hauptstadt abbrechen (50 % Erstattung) */
+  | { type: 'cancelCapitalMove' };
+
 export type EconomyAction =
   /** Verbrauchsregler einer Kategorie: ganze Prozent je Rohstoff, Summe 100 */
   | { type: 'setConsumption'; category: Category; shares: Partial<Record<Resource, number>> };
 
-export type Action = ProvinceAction | ArmyAction | DiplomacyAction | MarketAction | EconomyAction;
+export type Action = ProvinceAction | ArmyAction | DiplomacyAction | MarketAction | EconomyAction | CapitalAction;
 
 /** Ergebnis einer Aktion; beim Teilen mit der ID der neuen Armee */
 export type ActionResult = { ok: true; army?: number } | { ok: false; error: string };
@@ -152,6 +162,18 @@ export function checkBuild(state: GameState, map: MapData, nation: string, provi
   return res();
 }
 
+/** Kann die Hauptstadt in diese Provinz verlegt werden? */
+export function checkCapitalMove(state: GameState, map: MapData, nation: string, province: number): { ok: boolean; error?: string } {
+  const ps = state.provinces[province];
+  const n = state.nations[nation];
+  if (!ps || !n || ps.owner !== nation) return { ok: false, error: 'Provinz gehört nicht dir' };
+  if (activeCapital(state, map, nation) === province) return { ok: false, error: 'Hier ist schon die Hauptstadt' };
+  if (n.capitalMove) return { ok: false, error: 'Es wird schon eine Hauptstadt verlegt' };
+  if (ps.revolt) return { ok: false, error: 'Aufständische halten die Provinz' };
+  if (!canAfford(n.stock, CAPITAL_MOVE.cost)) return { ok: false, error: `Zu wenig ${missing(n.stock, CAPITAL_MOVE.cost)}` };
+  return { ok: true };
+}
+
 export interface ProduceCheck {
   ok: boolean;
   error?: string;
@@ -201,6 +223,13 @@ export function applyAction(ctx: ActionContext, nation: string, action: Action):
     ctx.invalidate();
     return { ok: true };
   }
+  if (action.type === 'cancelCapitalMove') {
+    const n = ctx.state.nations[nation];
+    if (!n?.capitalMove) return { ok: false, error: 'Keine Verlegung der Hauptstadt im Gange' };
+    refund(n.stock, CAPITAL_MOVE.cost);
+    n.capitalMove = null;
+    return { ok: true };
+  }
   if (!('province' in action)) return applyDiplomacy(ctx, nation, action);
   const { state, map } = ctx;
   const ps = state.provinces[action.province];
@@ -248,6 +277,24 @@ export function applyAction(ctx: ActionContext, nation: string, action: Action):
     }
     case 'setRepeat': {
       ps.repeat = action.repeat;
+      return { ok: true };
+    }
+    case 'moveCapital': {
+      const chk = checkCapitalMove(state, map, nation, action.province);
+      if (!chk.ok) return { ok: false, error: chk.error! };
+      pay(stock, CAPITAL_MOVE.cost);
+      state.nations[nation].capitalMove = { province: action.province, start: state.time, end: state.time + Math.round(CAPITAL_MOVE.hours * HOUR) };
+      return { ok: true };
+    }
+    case 'switchBuilding': {
+      const def = BUILDINGS[action.building];
+      if (!def?.switchable) return { ok: false, error: 'Dieses Gebäude lässt sich nicht abschalten' };
+      if (ps.buildings[action.building] <= 0) return { ok: false, error: `Kein(e) ${def.name} vorhanden` };
+      if (action.on) {
+        if (ps.off) delete ps.off[action.building];
+        if (ps.off && !Object.keys(ps.off).length) delete ps.off;
+      } else (ps.off ??= {})[action.building] = true;
+      ctx.invalidate();
       return { ok: true };
     }
   }
@@ -368,6 +415,12 @@ function applyArmyAction(ctx: ActionContext, nation: string, action: ArmyAction)
     case 'rejoin': {
       if (!a.split) return { ok: false, error: 'Nicht abgetrennt' };
       rejoinSplits(ctx, true, a.id);
+      return { ok: true };
+    }
+    case 'rename': {
+      const name = String(action.name ?? '').trim().slice(0, 40);
+      if (name) a.name = name;
+      else delete a.name;
       return { ok: true };
     }
     case 'merge': {

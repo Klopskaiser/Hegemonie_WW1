@@ -14,12 +14,12 @@ import { observe, type Controller, type NationView, type Observation } from './c
 import { allRates, defaultConsumption, moraleTarget, provincePoints, recruitHours, stepMorale, type NationRates } from './economy.ts';
 import type { MapData } from './mapdata.ts';
 import {
-  combatRound, defections, engageRanged, isNaval, mixMorale, processArrivals, rangedRound, rejoinSplits, updateRevoltFlags,
+  combatRound, defections, encounters, engageRanged, isNaval, mixMorale, processArrivals, rangedRound, rejoinSplits, updateRevoltFlags, nextTroopMorale, troopTarget,
 } from './military.ts';
 import { harborSea, isSea } from './graph.ts';
 import { expireOffers } from './market.ts';
 import { publishNewspaper } from './newspaper.ts';
-import { numberArmies } from './names.ts';
+import { numberArmies, unitName } from './names.ts';
 import { nextRandom } from './rng.ts';
 import { migrate } from './state.ts';
 import { REBELS, type GameState, type NewsInfo } from './types.ts';
@@ -132,6 +132,8 @@ export class Simulation {
       processArrivals(this.ctx);
       this.dirty = true;
     }
+    if (encounters(this.ctx)) this.dirty = true;
+    this.capitalMoves();
     if (s.time % (10 * MINUTE) === 0) {
       this.startWaitingOrders();
       engageRanged(this.ctx);
@@ -274,6 +276,8 @@ export class Simulation {
     // neue Infanterie bringt die Moral ihrer Provinz mit
     if (unit === 'infantry') army.morale = mixMorale(army, count, s.provinces[province]?.morale ?? TROOP_MORALE.start);
     army.units[unit] = (army.units[unit] ?? 0) + count;
+    // Schlachtschiffe und Eisenbahngeschütze tragen eigene Namen
+    if ((unit === 'battleship' || unit === 'railgun') && !army.name) army.name = unitName(s, this.map, owner, unit);
     this.dirty = true;
   }
 
@@ -331,20 +335,26 @@ export class Simulation {
    * Tageswechsel: Moral der Infanterie nähert sich ihrem Ziel – in eigener Provinz deren Moral,
    * auf See, auf Wegen oder in fremdem Gebiet 50 %, ohne Getreide deutlich weniger.
    */
+  /** Verlegung der Hauptstadt abschließen */
+  private capitalMoves(): void {
+    for (const id of this.nationIds) {
+      const n = this.state.nations[id];
+      const m = n.capitalMove;
+      if (!m || m.end > this.state.time) continue;
+      n.capitalMove = null;
+      if (this.state.provinces[m.province].owner !== id) continue;
+      n.capital = m.province;
+      const name = this.map.nations.find((x) => x.id === id)?.name ?? id;
+      this.log(`${name} verlegt die Hauptstadt nach ${this.map.provinces[m.province].name}.`, undefined, m.province);
+      this.dirty = true;
+    }
+  }
+
   private troopMorale(): void {
     const s = this.state;
     for (const a of s.armies) {
       if (a.owner === REBELS || !(a.units.infantry ?? 0)) continue;
-      const n = s.nations[a.owner];
-      const hungry = !n || n.stock.grain < 1 || n.shortage.food;
-      let target: number = TROOP_MORALE.neutral;
-      if (hungry) target = TROOP_MORALE.hungry;
-      else if (!a.move && !a.pos && !isSea(this.map, a.node) && s.provinces[a.node].owner === a.owner) target = s.provinces[a.node].morale;
-      const m = a.morale ?? TROOP_MORALE.start;
-      const gap = target - m;
-      const r = gap >= 0 ? TROOP_MORALE.rise : TROOP_MORALE.fall;
-      const step = Math.min(Math.abs(gap), Math.min(r.max, Math.max(r.min, Math.abs(gap) * r.share)));
-      a.morale = Math.max(TROOP_MORALE.min, Math.min(1, m + Math.sign(gap) * step));
+      a.morale =nextTroopMorale(a.morale ?? TROOP_MORALE.start, troopTarget(s, this.map, a));
     }
   }
 
@@ -353,6 +363,7 @@ export class Simulation {
     const targets = s.provinces.map((_, i) => moraleTarget(s, this.map, i).target);
     s.provinces.forEach((ps, i) => {
       ps.morale = stepMorale(ps.morale, targets[i]);
+      delete ps.fought;
       if (ps.morale < DEFECTION.threshold) this.log(`Unruhen in ${this.map.provinces[i].name} (Moral ${Math.round(ps.morale * 100)} %): Die Provinz droht überzulaufen.`, ps.owner, i);
     });
     this.troopMorale();

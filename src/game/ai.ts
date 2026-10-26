@@ -3,10 +3,10 @@
 // Persönlichkeit je Nation (state.aiProfiles) und Schwierigkeitsgrad (state.difficulty).
 
 import { checkBuild, checkProduce, canAfford, type Action } from './actions.ts';
-import { BUILDINGS, CATEGORIES, CATEGORY_RES, DAY, DIFFICULTY, MARKET, UNITS, type Building, type UnitType } from './balance.ts';
+import { BUILDINGS, CATEGORIES, CATEGORY_RES, DAY, DIFFICULTY, MARKET, UNITS, type Building, type UnitType, CAPITAL_MOVE } from './balance.ts';
 import type { Controller, NationView } from './controller.ts';
 import { atWar, enemiesOf, relation, warKey } from './diplomacy.ts';
-import { netRate, provinceOutput, toShares } from './economy.ts';
+import { netRate, provinceOutput, toShares, activeCapital, capitalOf, provincePoints } from './economy.ts';
 import { distanceKm, RESOURCES, type MapData, type Resource } from './mapdata.ts';
 import { priceBounds, priceOf, tradeableOffers } from './market.ts';
 import { isSea, nodeDist } from './graph.ts';
@@ -98,6 +98,12 @@ export class BasicAI implements Controller {
   private build(view: NationView, sit: Situation, actions: Action[]): void {
     const { state, map, nation, own, major, front } = sit;
     const stock = state.nations[nation].stock;
+    // Hauptstadt verloren: in die wertvollste sichere eigene Provinz verlegen
+    if (capitalOf(state, map, nation) === null && !state.nations[nation].capitalMove && canAfford(stock, CAPITAL_MOVE.cost)) {
+      const safe = own.filter((i) => !front.get(i) && !state.provinces[i].revolt);
+      const pick = (safe.length ? safe : own).reduce<number | null>((b, i) => (b === null || provincePoints(map, state.provinces[i], i) > provincePoints(map, state.provinces[b], b) ? i : b), null);
+      if (pick !== null) actions.push({ type: 'moveCapital', province: pick });
+    }
     const net = (r: 'coal' | 'oil') => netRate(view.rates, r);
     const building = own.filter((i) => state.provinces[i].construction).length;
     const maxParallel = Math.max(1, Math.ceil(own.length / (major ? 6 : 10)));
@@ -375,7 +381,7 @@ export class BasicAI implements Controller {
     }
     if (!sit.enemies.length) return;
 
-    const capital = map.nations.find((n) => n.id === nation)?.capital ?? -1;
+    const capital = activeCapital(state, map, nation);
     const superiority = diff.attack * profile.caution / Math.sqrt(profile.aggression);
     for (const [node, group] of byNode) {
       if (isSea(map, node)) continue; // Truppen auf See führen ihren Befehl aus

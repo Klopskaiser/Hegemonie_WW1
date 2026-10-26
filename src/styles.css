@@ -529,3 +529,36 @@ svg.flag { vertical-align: -2px; border-radius: 1px; box-shadow: 0 1px 1px rgba(
 .split-row { display: grid; grid-template-columns: 110px 1fr 56px; gap: 6px; align-items: center; font-size: 13px; }
 .split-row input[type="range"] { width: 100%; accent-color: #7a5a2e; }
 .split-n { text-align: right; font-variant-numeric: tabular-nums; }
+
+/* ---------------------------------------------------------------- Karteneditor (nur Dev-Server) */
+.menu-header { position: relative; }
+.menu-editor { position: absolute; right: 16px; top: 16px; }
+.editor { position: fixed; inset: 0; display: flex; flex-direction: column; background: var(--wood-3); color: var(--ink); }
+.editor-bar { display: flex; align-items: center; gap: 8px; padding: 6px 12px; background: linear-gradient(var(--wood-1), var(--wood-2)); color: var(--gold-light); border-bottom: 2px solid var(--gold); }
+.editor-status { color: #f3e2b8; margin-left: 8px; flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.editor-main { flex: 1; display: flex; min-height: 0; }
+.editor-map { flex: 1; position: relative; min-width: 0; }
+.editor-map canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; }
+.editor-hover { position: absolute; left: 8px; bottom: 6px; background: rgba(245, 233, 205, 0.92); padding: 2px 8px; border-radius: 3px; pointer-events: none; }
+.editor-side { width: 300px; max-width: 40vw; overflow-y: auto; background: #efe2c4; padding: 10px 12px; border-left: 2px solid var(--gold); }
+.editor-side h3 { margin: 12px 0 4px; font-size: 14px; }
+.editor-side section { border-top: 1px solid rgba(90, 60, 30, 0.25); }
+.editor-side p { margin: 4px 0; }
+.editor-search { width: 100%; box-sizing: border-box; padding: 4px 6px; }
+.editor-link { display: block; width: 100%; text-align: left; background: none; border: none; padding: 2px 4px; cursor: pointer; color: var(--ink); font: inherit; font-size: 13px; }
+.editor-link:hover { background: rgba(201, 163, 90, 0.3); }
+.editor-buttons { display: flex; gap: 6px; flex-wrap: wrap; margin: 6px 0; }
+.editor-row { display: flex; justify-content: space-between; align-items: center; gap: 6px; padding: 1px 0; }
+.editor-row .add { color: #1d6a2a; }
+.editor-row .del { color: #9c2a1b; }
+.editor-side .warn { color: #9c2a1b; }
+.editor-error { margin: auto; padding: 24px; background: #efe2c4; border: 2px solid var(--gold); }
+
+.morale-parts { list-style: none; margin: 4px 0; padding: 0; }
+.morale-parts li { display: flex; justify-content: space-between; border-bottom: 1px dotted rgba(140, 106, 67, 0.3); padding: 1px 0; }
+.use-sources details { margin: 2px 0; }
+.use-sources summary { cursor: pointer; }
+.use-sources .table td.num { text-align: right; }
+.use-sources .table td:first-child { white-space: normal; }
+.rename-row { display: flex; gap: 4px; margin: 4px 0; }
+.rename-row input { flex: 1; min-width: 0; }

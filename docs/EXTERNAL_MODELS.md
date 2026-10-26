@@ -43,11 +43,15 @@ Typdefinitionen (maßgeblich): `src/game/bridgeProtocol.ts` (Nachrichten, Karten
 {"type":"enqueue","province":12,"unit":"tank"}           // artillery, armoredCar, tank, railgun, battleship (Infanterie entsteht automatisch)
 {"type":"dequeue","province":12,"index":0}
 {"type":"setRepeat","province":12,"repeat":true}
+{"type":"switchBuilding","province":12,"building":"barracks","on":false}   // Kaserne/Eisenbahn abschalten: kein Unterhalt, keine Wirkung
+{"type":"moveCapital","province":12}                     // Hauptstadt verlegen (20000 Geld, je 5000 Holz/Eisen/Getreide/Kohle, 48 h)
+{"type":"cancelCapitalMove"}                             // Verlegung abbrechen (50 % zurück)
 {"type":"move","army":57,"to":180}                       // Provinz oder Seegebiet; Landungen werden automatisch geplant
 {"type":"stop","army":57}
 {"type":"attack","army":57,"target":91}                  // Fernkampfziel, null hebt auf
 {"type":"split","army":57,"units":{"infantry":3}}        // diese Einheiten bleiben als neue Armee stehen
 {"type":"merge","army":58,"into":57}
+{"type":"rename","army":57,"name":"SMS Kiel"}            // eigener Name, leer = automatisch
 {"type":"declareWar","nation":"FR"}
 {"type":"downgrade","nation":"FR","to":"embargo"}
 {"type":"propose","nation":"FR","kind":"peace"}          // peace, rightOfWay, sharedMap

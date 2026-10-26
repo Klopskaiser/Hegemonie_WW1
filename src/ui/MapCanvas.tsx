@@ -54,6 +54,8 @@ interface Props {
   selectedArmies?: number[];
   /** Orte mit laufenden Kämpfen */
   battles?: number[];
+  /** aktive Hauptstädte (verlegt oder laut Karte); fehlt das Feld, gelten die der Karte */
+  capitals?: number[];
   /** laufende Fernkampfgefechte (animiert) */
   shots?: Shot[];
   /** Vorschau eines Marschweges (Knoten) mit Beschriftung am Ziel */
@@ -500,11 +502,13 @@ export function MapCanvas(props: Props) {
     }
 
     if (!compact) {
+      const caps = p.capitals ? new Set(p.capitals) : null;
       for (const mp of map.provinces) {
-        if (!mp.city) continue;
+        const isCapital = caps ? caps.has(mp.id) : mp.capital;
+        if (!mp.city && !isCapital) continue;
         const x = X(mp.center[0]), y = Y(mp.center[1]);
         if (!visible(x, y)) continue;
-        if (mp.capital) {
+        if (isCapital) {
           ctx.fillStyle = '#f3e5bf';
           ctx.strokeStyle = INK;
           ctx.lineWidth = 1.2;

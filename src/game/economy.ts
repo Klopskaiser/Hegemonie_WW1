@@ -1,7 +1,7 @@
 // Produktion, Verbrauch, Moral und Siegpunkte.
 
 import {
-  ALL_RES, BUILDINGS, CATEGORIES, CATEGORY_OF, CATEGORY_RES, MORALE, POINTS, PROVINCE, RECRUIT_BASE_HOURS,
+  ALL_RES, BUILDING_ORDER, BUILDINGS, CATEGORIES, CATEGORY_OF, CATEGORY_RES, DEFECTION, MORALE, POINTS, PROVINCE, RECRUIT_BASE_HOURS,
   RECRUIT_WITHOUT_OFFICE, UNITS, type Building, type Category, type Res, type UnitType,
 } from './balance.ts';
 import { RESOURCES, type MapData, type Resource } from './mapdata.ts';
@@ -28,9 +28,14 @@ export interface NationRates {
 
 const zero = (): Record<Res, number> => Object.fromEntries(ALL_RES.map((r) => [r, 0])) as Record<Res, number>;
 
+/** Wirksame Stufe eines Gebäudes: abgeschaltete zählen wie nicht gebaut */
+export function activeLevel(ps: ProvinceState, b: Building): number {
+  return ps.off?.[b] ? 0 : ps.buildings[b];
+}
+
 export function productionBonus(ps: ProvinceState): number {
   let b = 0;
-  for (const k of Object.keys(ps.buildings) as Building[]) b += BUILDINGS[k].prodBonus(ps.buildings[k]);
+  for (const k of Object.keys(ps.buildings) as Building[]) b += BUILDINGS[k].prodBonus(activeLevel(ps, k));
   return b;
 }
 
@@ -59,7 +64,8 @@ export function allRates(state: GameState, map: MapData): Record<string, NationR
     r.upkeep += PROVINCE.upkeep;
     for (const b of Object.keys(ps.buildings) as Building[]) {
       const up = BUILDINGS[b].upkeep;
-      if (up && ps.buildings[b] > 0) for (const k of Object.keys(up) as Res[]) r.cons[k] += up[k]! * ps.buildings[b];
+      const lvl = activeLevel(ps, b);
+      if (up && lvl > 0) for (const k of Object.keys(up) as Res[]) r.cons[k] += up[k]! * lvl;
     }
   });
   for (const a of state.armies) {
@@ -86,6 +92,57 @@ export function upkeepUse(r: NationRates, res: Res): number {
 /** Gesamtverbrauch pro Tag: fester Unterhalt plus Anteil am Provinzunterhalt */
 export function totalUse(r: NationRates, res: Res): number {
   return r.cons[res] + upkeepUse(r, res);
+}
+
+export interface UseSource {
+  label: string;
+  amount: number;
+}
+
+/**
+ * Verbrauch einer Nation nach Verursachern je Rohstoff (pro Tag): Provinzunterhalt laut Regler,
+ * Gebäude je Art (Stufen zusammengezählt) und Einheiten je Typ (über alle Armeen).
+ */
+export function useSources(state: GameState, map: MapData, nation: string): Record<Res, UseSource[]> {
+  const out = Object.fromEntries(ALL_RES.map((r) => [r, [] as UseSource[]])) as Record<Res, UseSource[]>;
+  const r = nationRates(state, map, nation);
+  for (const res of ALL_RES) {
+    const u = upkeepUse(r, res);
+    if (u > 0) out[res].push({ label: `Provinzunterhalt (${Math.round(r.shares[res as Resource] * 100)} % laut Regler)`, amount: u });
+  }
+  const levels = new Map<Building, { levels: number; provinces: number; off: number }>();
+  for (const ps of state.provinces) {
+    if (ps.owner !== nation) continue;
+    for (const b of Object.keys(ps.buildings) as Building[]) {
+      if (!BUILDINGS[b].upkeep || ps.buildings[b] <= 0) continue;
+      const e = levels.get(b) ?? { levels: 0, provinces: 0, off: 0 };
+      if (ps.off?.[b]) e.off++;
+      else {
+        e.levels += ps.buildings[b];
+        e.provinces++;
+      }
+      levels.set(b, e);
+    }
+  }
+  for (const [b, e] of levels) {
+    const up = BUILDINGS[b].upkeep!;
+    for (const res of Object.keys(up) as Res[]) {
+      const lvl = BUILDINGS[b].maxLevel > 1 ? `${e.levels} Stufen in ${e.provinces} Provinzen` : `${e.provinces}×`;
+      out[res].push({ label: `${BUILDINGS[b].name} (${lvl}${e.off ? `, ${e.off} abgeschaltet` : ''})`, amount: up[res]! * e.levels });
+    }
+  }
+  const units = new Map<UnitType, number>();
+  for (const a of state.armies) {
+    if (a.owner !== nation) continue;
+    for (const u of Object.keys(a.units) as UnitType[]) units.set(u, (units.get(u) ?? 0) + (a.units[u] ?? 0));
+  }
+  for (const [u, n] of units) {
+    for (const res of Object.keys(UNITS[u].upkeep) as Res[]) {
+      if (n > 0) out[res].push({ label: `${UNITS[u].name} (${n}× à ${UNITS[u].upkeep[res]})`, amount: UNITS[u].upkeep[res]! * n });
+    }
+  }
+  for (const res of ALL_RES) out[res].sort((x, y) => y.amount - x.amount);
+  return out;
 }
 
 /** Tagesbilanz eines Rohstoffs */
@@ -136,7 +193,7 @@ export function validShares(cat: Category, shares: Partial<Record<Resource, numb
 /** Spielstunden je Infanterie in einer Provinz, null = es entsteht keine Infanterie. */
 export function recruitHours(ps: ProvinceState): number | null {
   const office = ps.buildings.recruitment > 0;
-  const barracks = ps.buildings.barracks;
+  const barracks = activeLevel(ps, 'barracks');
   if ((!office && barracks === 0) || ps.revolt || ps.morale <= 0) return null;
   const rate = (2 ** barracks * (office ? 1 : RECRUIT_WITHOUT_OFFICE) * ps.morale) / RECRUIT_BASE_HOURS;
   return 1 / rate;
@@ -154,11 +211,17 @@ export interface MoraleBreakdown {
   parts: { label: string; value: number }[];
 }
 
+/** Hauptstadt einer Nation (verlegt oder laut Karte), auch wenn sie gerade verloren ist; -1 ohne */
+export function activeCapital(state: GameState, map: MapData, nation: string): number {
+  const own = state.nations[nation]?.capital;
+  if (own !== undefined) return own;
+  return map.nations.find((x) => x.id === nation)?.capital ?? -1;
+}
+
 /** Hauptstadtprovinz, sofern die Nation sie noch hält */
 export function capitalOf(state: GameState, map: MapData, nation: string): number | null {
-  const n = map.nations.find((x) => x.id === nation);
-  if (!n) return null;
-  return state.provinces[n.capital]?.owner === nation ? n.capital : null;
+  const c = activeCapital(state, map, nation);
+  return c >= 0 && state.provinces[c]?.owner === nation ? c : null;
 }
 
 export function warsOf(state: GameState, nation: string): number {
@@ -171,20 +234,23 @@ export function moraleTarget(state: GameState, map: MapData, id: number): Morale
   const nation = state.nations[ps.owner];
   const parts: { label: string; value: number }[] = [{ label: 'Grundwert', value: MORALE.base }];
   const cap = capitalOf(state, map, ps.owner);
-  if (cap === id) parts.push({ label: 'Hauptstadt', value: MORALE.capitalBonus });
-  else {
+  if (cap !== id) {
     let pen = MORALE.distanceMax;
     if (cap !== null) {
       const c = map.provinces[cap].center;
       const d = Math.hypot(c[0] - mp.center[0], c[1] - mp.center[1]);
       pen = Math.min(MORALE.distanceMax, (Math.max(0, d - MORALE.distanceFree) / 100) * MORALE.distancePer100);
     }
-    if (pen > 0) parts.push({ label: cap === null ? 'Hauptstadt verloren' : 'Entfernung zur Hauptstadt', value: -pen });
+    if (pen > 0) parts.push({ label: cap === null ? 'Hauptstadt verloren (verlegen!)' : 'Entfernung zur Hauptstadt', value: -pen });
   }
-  let b = 0;
-  for (const k of Object.keys(ps.buildings) as Building[]) b += BUILDINGS[k].morale(ps.buildings[k]);
-  if (b > 0) parts.push({ label: 'Gebäude', value: b });
-  if (mp.nation !== ps.owner) parts.push({ label: 'Besetztes Gebiet', value: -MORALE.occupied });
+  for (const k of BUILDING_ORDER) {
+    const lvl = activeLevel(ps, k);
+    const v = BUILDINGS[k].morale(lvl);
+    if (v > 0) parts.push({ label: BUILDINGS[k].maxLevel > 1 ? `${BUILDINGS[k].name} Stufe ${lvl}` : BUILDINGS[k].name, value: v });
+  }
+  if (ps.fought) parts.push({ label: 'Kämpfe in der Provinz', value: -MORALE.battle });
+  const unrest = mp.neighbors.filter((n) => state.provinces[n].owner === ps.owner && state.provinces[n].morale < DEFECTION.threshold).length;
+  if (unrest > 0) parts.push({ label: `Unruhe in ${unrest} Nachbarprovinz${unrest > 1 ? 'en' : ''}`, value: -unrest * MORALE.unrestNeighbor });
   const wars = warsOf(state, ps.owner);
   if (wars > 0) parts.push({ label: 'Kriege', value: -Math.min(MORALE.warMax, wars * MORALE.warEach) });
   if (nation) {

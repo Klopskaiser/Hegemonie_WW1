@@ -5,7 +5,7 @@ import { atWar } from '../game/diplomacy.ts';
 import { isSea, nodeName } from '../game/graph.ts';
 import type { MapData } from '../game/mapdata.ts';
 import {
-  armyPosition, armyPower, armySpeed, infantryStrength, isNaval, maxRange, samePlace, segmentHours, troopMorale, unitCount,
+  armyPosition, armyPower, armySpeed, infantryStrength, isNaval, maxRange, samePlace, segmentHours, troopMorale, troopTarget, unitCount,
 } from '../game/military.ts';
 import { armyName } from '../game/names.ts';
 import { Flag } from './Flag.tsx';
@@ -40,6 +40,8 @@ function remainingHours(state: GameState, map: MapData, a: Army): number {
 }
 
 export function ArmyPanel({ map, state, army: a, armies, act, onSelectArmy, onSplit, onClose }: Props) {
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const tt = troopTarget(state, map, a);
   const [splitting, setSplitting] = useState<Partial<Record<UnitType, number>> | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const own = a.owner === state.playerNation;
@@ -106,9 +108,24 @@ export function ArmyPanel({ map, state, army: a, armies, act, onSelectArmy, onSp
           <div className="prov-owner">{ownerName}</div>
           <div className="muted">
             {carrying ? 'Flotte mit Truppen an Bord' : isNaval(a) ? 'Flotte' : atSea ? 'Truppen eingeschifft' : 'Landtruppen'} · Stärke {Math.round(armyPower(a))}
+            {' '}· Abschüsse {Math.floor(a.kills ?? 0)}
           </div>
         </div>
+        {own && renaming === null && (
+          <button className="btn small" title="Umbenennen" onClick={() => setRenaming(a.name ?? armyName(a))}>✎</button>
+        )}
       </div>
+      {own && renaming !== null && (
+        <form className="rename-row" onSubmit={(e) => {
+          e.preventDefault();
+          void act({ type: 'rename', army: a.id, name: renaming });
+          setRenaming(null);
+        }}>
+          <input autoFocus maxLength={40} value={renaming} onChange={(e) => setRenaming(e.target.value)} placeholder="leer = automatischer Name" />
+          <button className="btn small" type="submit">OK</button>
+          <button className="btn small" type="button" onClick={() => setRenaming(null)}>✕</button>
+        </form>
+      )}
       <p className="army-status">{status}</p>
       {target && <p className="small">Fernkampf auf {armyName(target)} ({nodeName(map, target.node)})</p>}
 
@@ -134,11 +151,22 @@ export function ArmyPanel({ map, state, army: a, armies, act, onSelectArmy, onSp
         </tbody>
       </table>
       {(a.units.infantry ?? 0) > 0 && (
-        <div className="morale-row" title="Infanterie: 50 % Moral = normale Stärke, 100 % = 1,2-fach. Sinkt im Kampf, unter Beschuss, ohne Getreide und in Provinzen mit niedriger Moral; steigt bei Siegen und in Provinzen mit hoher Moral.">
-          <span className="small">Moral der Infanterie</span>
-          <Bar value={troopMorale(a)} color={troopMorale(a) < 0.33 ? '#a33' : troopMorale(a) < 0.5 ? '#c9952f' : '#5d8a3a'} />
-          <span className="small">{Math.round(troopMorale(a) * 100)} % · Stärke ×{infantryStrength(a).toFixed(2)}</span>
-        </div>
+        <>
+          <div className="morale-row" title="Kampfkraft der Infanterie: linear von 0,4-fach bei 10 % Moral bis 1,2-fach bei 100 % (normal 1,0 bei 77,5 %). Sinkt im Kampf, unter Beschuss, bei Getreidemangel und in Provinzen mit niedriger Moral; steigt bei Siegen und in Provinzen mit hoher Moral.">
+            <span className="small">Moral der Infanterie</span>
+            <Bar value={troopMorale(a)} marker={tt.target} color={troopMorale(a) < 0.33 ? '#a33' : troopMorale(a) < 0.5 ? '#c9952f' : '#5d8a3a'} />
+            <span className="small">{Math.round(troopMorale(a) * 100)} % · Stärke ×{infantryStrength(a).toFixed(2)}</span>
+          </div>
+          <div className="muted small">Ziel {Math.round(tt.target * 100)} % – zum Tageswechsel {tt.hungry ? 'höchstens +5 % bzw. −13 % (Getreidemangel)' : 'höchstens +10 % bzw. −8 %'}.</div>
+          <ul className="morale-parts small">
+            {tt.parts.map((p) => (
+              <li key={p.label}>
+                <span>{p.label}</span>
+                <span className={p.value < 0 ? 'neg' : ''}>{p.value < 0 ? '−' : ''}{Math.round(Math.abs(p.value) * 100)} %</span>
+              </li>
+            ))}
+          </ul>
+        </>
       )}
       <div className="muted small">
         Tempo {Math.round(armySpeed(a))} km/h{range > 0 ? ` · Reichweite ${range} km` : ''}
