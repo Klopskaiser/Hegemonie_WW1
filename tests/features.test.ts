@@ -160,3 +160,16 @@ describe('Provinzmoral und Hauptstadt', () => {
     expect(stock.money).toBe(before + 10000);
   });
 });
+
+describe('Untergang einer Nation', () => {
+  it('Angebote der untergegangenen Nation (diplomatisch und an der Börse) verschwinden', () => {
+    const sim = newSim();
+    sim.apply('DE', { type: 'declareWar', nation: 'MN' });
+    sim.state.proposals.push({ from: 'MN', to: 'DE', kind: 'peace', time: 0 }, { from: 'FR', to: 'MN', kind: 'peace', time: 0 }, { from: 'FR', to: 'DE', kind: 'peace', time: 0 });
+    sim.state.market.offers.push({ id: 900, nation: 'MN', side: 'sell', res: 'grain', amount: 100, price: 1, time: 0 });
+    for (const [i, p] of sim.state.provinces.entries()) if (p.owner === 'MN') conquer(sim.ctx, i, 'DE');
+    expect(sim.state.nations.MN.alive).toBe(false);
+    expect(sim.state.proposals).toEqual([{ from: 'FR', to: 'DE', kind: 'peace', time: 0 }]);
+    expect(sim.state.market.offers.some((o) => o.nation === 'MN')).toBe(false);
+  });
+});

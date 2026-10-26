@@ -993,11 +993,25 @@ export function conquer(ctx: MilitaryContext, node: number, by: string): void {
     }
   }
   if (!state.provinces.some((p) => p.owner === old) && state.nations[old]) {
-    state.nations[old].alive = false;
-    state.armies = state.armies.filter((a) => a.owner !== old);
+    eliminate(state, old);
     ctx.log(`${oldName} hat aufgehört zu existieren.`);
   }
   ctx.invalidate();
+}
+
+/**
+ * Eine Nation ist untergegangen: ihre Armeen, diplomatischen Angebote (von ihr und an sie),
+ * Börsenangebote und eine laufende Hauptstadtverlegung verschwinden.
+ */
+export function eliminate(state: GameState, nation: string): void {
+  const n = state.nations[nation];
+  if (n) {
+    n.alive = false;
+    n.capitalMove = null;
+  }
+  state.armies = state.armies.filter((a) => a.owner !== nation);
+  state.proposals = state.proposals.filter((p) => p.from !== nation && p.to !== nation);
+  state.market.offers = state.market.offers.filter((o) => o.nation !== nation);
 }
 
 // ---------------------------------------------------------------- Wiedervereinigung
@@ -1100,8 +1114,7 @@ export function defections(ctx: MilitaryContext): void {
     ctx.log(`Revolution in ${mp.name}: Die Provinz sagt sich von ${name(old)} los und läuft zu ${name(to)} über!`
       + (total ? ` ${kept} von ${total} Einheiten wechseln die Seite.` : ''), undefined, i);
     if (!state.provinces.some((p) => p.owner === old) && state.nations[old]) {
-      state.nations[old].alive = false;
-      state.armies = state.armies.filter((a) => a.owner !== old);
+      eliminate(state, old);
       ctx.log(`${name(old)} hat aufgehört zu existieren.`);
     }
     ctx.invalidate();

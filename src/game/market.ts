@@ -126,6 +126,9 @@ export function expireOffers(state: GameState): void {
     else if (alive) refund(state, o);
   }
   state.market.offers = keep;
+  // diplomatische Angebote untergegangener Nationen (auch aus älteren Spielständen)
+  const alive = (id: string) => !!state.nations[id]?.alive;
+  if (state.proposals.some((p) => !alive(p.from) || !alive(p.to))) state.proposals = state.proposals.filter((p) => alive(p.from) && alive(p.to));
 }
 
 /** Angebote, die `nation` annehmen kann (kein Krieg/Embargo, nicht eigene), günstigste zuerst */
