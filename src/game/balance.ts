@@ -162,7 +162,7 @@ export const RECRUIT_BASE_HOURS = 16;
 /** Kaserne ohne Wehramt: halbes Tempo */
 export const RECRUIT_WITHOUT_OFFICE = 0.5;
 /** Kampf in einer Provinz: Wahrscheinlichkeit je Stunde und Gebäude, eine Stufe zu verlieren */
-export const BUILDING_DAMAGE_CHANCE = 0.04;
+export const BUILDING_DAMAGE_CHANCE = 0.05;
 /** Abbruch eines Baus, einer Fertigung oder einer Hauptstadtverlegung: Anteil der Kosten, der zurückkommt */
 export const BUILD_REFUND = 1;
 

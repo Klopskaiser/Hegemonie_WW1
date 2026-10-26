@@ -96,7 +96,7 @@
   Bauzeit: Startwert auf der Mindeststufe (Artillerie 96 h, Panzerwagen 16 h, Panzer 36 h,
   Eisenbahngeschütz 62 h, Schlachtschiff 96 h), jede weitere Fabrikstufe −25 % des Startwerts.
   Kosten und Unterhalt: siehe src/game/balance.ts (Stand nach Vorgabe des Auftraggebers).
-- Kämpfe in einer Provinz beschädigen Gebäude (4 % je Stunde und Gebäude, eine Stufe; das Wehramt
+- Kämpfe in einer Provinz beschädigen Gebäude (5 % je Stunde und Gebäude, eine Stufe; das Wehramt
   kann zerstört werden).
 - Unterhalt angepasst: Infanterie 10 Getreide, Nahrungsbedarf je Provinz 100/200.
 - See: Schlachtschiffe entstehen im Seegebiet vor der Hafenprovinz und gehen nie an Land.
@@ -332,7 +332,7 @@
 - Zielmoral der Infanterie richtet sich nach dem Gebiet, in dem die Armee gerade ist – auch unterwegs und auf
   Wegen: im eigenen Gebiet die Moral dieser Provinz, erst nach dem Grenzübertritt in fremdes Gebiet (oder auf
   See) 50 %.
-- Gebäudeschäden: Jede Stufe hat Leben (Eisenbahn, Hafen 3; Festung 1; sonst 2). Ein Treffer im Kampf (4 % je
+- Gebäudeschäden: Jede Stufe hat Leben (Eisenbahn, Hafen 3; Festung 1; sonst 2). Ein Treffer im Kampf (5 % je
   Gebäude und Stunde, auch bei Kämpfen auf Wegen) kostet ein Leben der obersten Stufe; ohne Leben fällt die
   Stufe weg, die darunter ist heil. Beschädigte Gebäude wirken nicht (Unterhalt läuft weiter), bis sie
   repariert sind: sofort, Kosten anteilig zu den fehlenden Leben an den Kosten der obersten Stufe (Eisenbahn
