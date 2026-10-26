@@ -18,7 +18,7 @@ import type { Army, GameState, ProvinceState, Relation, Stock } from './types.ts
 
 export type ProvinceAction =
   | { type: 'build'; province: number; building: Building }
-  /** laufenden Bau abbrechen (50 % Erstattung); der nächste geplante startet */
+  /** laufenden Bau abbrechen (volle Erstattung); der nächste geplante startet */
   | { type: 'cancelBuild'; province: number }
   /** geplantes Gebäude aus der Bauschleife nehmen (noch nicht bezahlt) */
   | { type: 'dequeueBuild'; province: number; index: number }
@@ -68,7 +68,7 @@ export type MarketAction =
   | { type: 'acceptOffer'; id: number; amount: number };
 
 export type CapitalAction =
-  /** laufende Verlegung der Hauptstadt abbrechen (50 % Erstattung) */
+  /** laufende Verlegung der Hauptstadt abbrechen (volle Erstattung) */
   | { type: 'cancelCapitalMove' };
 
 export type EconomyAction =
@@ -301,6 +301,22 @@ export function applyAction(ctx: ActionContext, nation: string, action: Action):
 }
 
 /** Besitzer des Zielortes (Provinz bzw. die Provinzen an beiden Enden eines Weges) */
+/**
+ * Nationen im Frieden (ohne Durchmarschrecht), denen bei diesem Marsch der Krieg erklärt werden müsste:
+ * nur wenn das Ziel ihre Stadt ist oder der Weg zwingend durch eine ihrer Städte führt. Wege, Wegpunkte
+ * und der Abzug aus ihrem Gebiet sind frei (Begegnungen mit ihren Armeen lösen weiterhin Kampf aus).
+ */
+export function requiredWars(state: GameState, map: MapData, a: Army, target: MoveTarget): string[] {
+  const free = planRoute(state, map, { ...a, warOn: null }, state.time, target);
+  if (free) return [];
+  const peaceful = Object.keys(state.nations).filter((o) => o !== a.owner && state.nations[o].alive
+    && !atWar(state, a.owner, o) && !hasRightOfWay(state, a.owner, o));
+  const plan = planRoute(state, map, { ...a, warOn: peaceful }, state.time, target);
+  if (!plan) return [];
+  const nodes = [...plan.path.slice(1), ...(plan.then ?? [])].filter((n) => !isSea(map, n));
+  return [...new Set(nodes.map((n) => state.provinces[n].owner))].filter((o) => peaceful.includes(o));
+}
+
 export function targetOwners(map: MapData, state: GameState, t: MoveTarget): string[] {
   const nodes = 'node' in t ? [t.node] : [t.road.a, t.road.b];
   return [...new Set(nodes.filter((n) => !isSea(map, n)).map((n) => state.provinces[n].owner))];
@@ -345,8 +361,7 @@ function applyArmyAction(ctx: ActionContext, nation: string, action: ArmyAction)
         target = { road: { a: action.to, b: action.toward, f } };
       }
       // Kriegserklärung beim Eintreffen: an die Besitzer des Ziels, mit denen kein Krieg und kein Durchmarsch besteht
-      const warOn = action.declareWar ? targetOwners(map, state, target).filter((o) => o !== nation
-        && !atWar(state, nation, o) && !hasRightOfWay(state, nation, o)) : [];
+      const warOn = action.declareWar ? requiredWars(state, map, a, target) : [];
       // Besatzung: verlässt die letzte Armee eine eigene Stadt, bleibt eine Einheit zurück
       const keep = garrisonKeep(state, map, a);
       if (keep === 'last') return { ok: false, error: 'Die letzte Einheit bleibt als Besatzung in der Stadt' };
@@ -358,6 +373,7 @@ function applyArmyAction(ctx: ActionContext, nation: string, action: ArmyAction)
         state.armies.push({ id: ctx.newArmyId(), owner: nation, node: a.node, units: { [keep]: 1 }, morale: a.morale });
       }
       a.node = nearestNode(map, a, state.time);
+      a.resume = null;
       a.target = null;
       a.autoTarget = false;
       a.split = null;
@@ -369,6 +385,7 @@ function applyArmyAction(ctx: ActionContext, nation: string, action: ArmyAction)
     case 'stop': {
       halt(map, a, state.time);
       a.target = null;
+      a.resume = null;
       ctx.invalidate();
       return { ok: true };
     }

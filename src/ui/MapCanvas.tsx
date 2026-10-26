@@ -6,7 +6,7 @@ import type { Sight } from '../game/visibility.ts';
 import type { Res } from '../game/balance.ts';
 import { closestOnEdge, edgeParts, edgePoints, edgeSlice, harborSea, isSea, nodeCount, nodeNeighbors, nodePos } from '../game/graph.ts';
 import type { MapData } from '../game/mapdata.ts';
-import { armyPosition, isNaval, normalizeTarget, remainingRoute, unitCount, type MoveTarget } from '../game/military.ts';
+import { armyPosition, isNaval, normalizeTarget, remainingRoute, unitCount, unitRange, type MoveTarget } from '../game/military.ts';
 import { makeRng } from '../game/rng.ts';
 import { REBELS, type Army, type ProvinceState } from '../game/types.ts';
 import { DEFECTION, UNITS, type UnitType } from '../game/balance.ts';
@@ -416,8 +416,12 @@ export function MapCanvas(props: Props) {
         ctx.beginPath();
         for (const e of prepared.edges) {
           if (e.land !== land) continue;
-          const [a, b] = [e.pts[0], e.pts[e.pts.length - 1]];
-          if (!visible(X(a[0]), Y(a[1]), 600) && !visible(X(b[0]), Y(b[1]), 600)) continue;
+          // nur Wege, deren Umriss ins Bild ragt (lange Wege können mitten durchs Bild laufen)
+          let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+          for (const [x, y] of e.pts) {
+            if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+          }
+          if (X(x1) < -20 || X(x0) > w + 20 || Y(y1) < -20 || Y(y0) > h + 20) continue;
           e.pts.forEach(([x, y], k) => (k ? ctx.lineTo(X(x), Y(y)) : ctx.moveTo(X(x), Y(y))));
         }
         ctx.strokeStyle = land ? 'rgba(105, 75, 45, 0.6)' : 'rgba(35, 70, 95, 0.5)';
@@ -440,16 +444,21 @@ export function MapCanvas(props: Props) {
     }
 
     // Eisenbahn: Schienen auf den Wegen von der Stadt bis zur Grenze (treffen sich bei beidseitiger Bahn)
+    // und bis zu den Hafenpunkten
     if (p.provinces && !compact) {
       const rails: [number, number, number, number][] = [];
+      const P = map.provinces.length;
+      const add = (pts: [number, number][]) => {
+        if (!pts.some(([x, y]) => visible(X(x), Y(y), 400))) return;
+        for (let k = 0; k + 1 < pts.length; k++) rails.push([X(pts[k][0]), Y(pts[k][1]), X(pts[k + 1][0]), Y(pts[k + 1][1])]);
+      };
       map.provinces.forEach((mp, i) => {
         if (!shown(i) || p.provinces![i].buildings.railroad <= 0) return;
         for (const n of mp.links ?? mp.neighbors) {
           const [l1, len] = edgeParts(map, i, n);
-          const pts = edgeSlice(map, i, n, 0, len > 0 ? l1 / len : 0.5);
-          if (!pts.some(([x, y]) => visible(X(x), Y(y), 400))) continue;
-          for (let k = 0; k + 1 < pts.length; k++) rails.push([X(pts[k][0]), Y(pts[k][1]), X(pts[k + 1][0]), Y(pts[k + 1][1])]);
+          add(edgeSlice(map, i, n, 0, len > 0 ? l1 / len : 0.5));
         }
+        for (const z of mp.seaLinks ?? mp.seas) add(edgePoints(map, i, P + z).slice(0, 2));
       });
       drawRails(ctx, rails, s);
     }
@@ -638,7 +647,7 @@ export function MapCanvas(props: Props) {
         const [px, py] = armyPosition(map, chosen, time);
         const ranges = new Map<number, string>();
         for (const u of Object.keys(chosen.units) as UnitType[]) {
-          if ((chosen.units[u] ?? 0) > 0 && UNITS[u].range > 0) {
+          if ((chosen.units[u] ?? 0) > 0 && unitRange(chosen, u, map) > 0) {
             const r = UNITS[u].range;
             ranges.set(r, ranges.has(r) ? `${ranges.get(r)}, ${UNITS[u].name}` : UNITS[u].name);
           }

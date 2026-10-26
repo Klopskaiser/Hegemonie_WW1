@@ -119,7 +119,7 @@
 - Militär (M2): Bewegungsnetz aus Provinz- und Seegebietsmittelpunkten (45 Seegebiete,
   küstennah feiner). Tempo nach Gebiet (eigen 100 %, mit Durchmarschrecht/Bündnis 70 %, sonst – feindlich
   oder ohne Wegerecht – 50 %; der Marsch wird ab der Grenze sichtbar langsamer), Bahn ×2,5 im
-  eigenen Gebiet, Einschiffen 1 h, Transport 21 km/h. Kampf stündlich: Angreifer nutzt Angriff,
+  eigenen Gebiet, Ein-/Ausschiffen 2 h an der Wassergrenze (eigener oder befreundeter Hafen: 1 h), Transport 21 km/h. Kampf stündlich: Angreifer nutzt Angriff,
   Verteidiger in eigener Provinz Verteidigung, Festung mindert Schaden, Moral wirkt mit.
   Fernkampfeinheiten feuern selbständig auf Feinde in Reichweite. Eroberung bei Ankunft ohne
   Gegner; Hauptstadtfall: Moral +10 % Sieger / −15 % Verlierer. Aufständische ab Moral < 25 %.
@@ -281,7 +281,7 @@
   Lücke, höchstens ±10 Prozentpunkte. Eroberte Provinzen beginnen bei 25 %, Rückeroberung durch den
   Vorbesitzer am selben Spieltag bei 40 % (wie Überlaufen). Hauptstadtfall: Sieger +10 %, Verlierer −15 %.
 - Hauptstadt verlegen: 20000 Geld, je 5000 Holz/Eisen/Getreide/Kohle, 48 h; je Nation eine Verlegung
-  gleichzeitig, Abbruch mit 50 % Erstattung; fällt die Zielprovinz, scheitert sie. Die KI verlegt eine
+  gleichzeitig, Abbruch mit voller Erstattung; fällt die Zielprovinz, scheitert sie. Die KI verlegt eine
   verlorene Hauptstadt in ihre wertvollste sichere Provinz. Der Stern auf der Karte zeigt die aktive Hauptstadt.
 - Truppenmoral (nur Infanterie): 10–100 %. Ziel = Provinzmoral (stehend in eigener Provinz) bzw. 50 %
   (sonst), bei Getreidemangel −20 %. Zum Tageswechsel geht sie auf das Ziel zu, nie darüber hinaus:
@@ -289,3 +289,38 @@
   Abschüsse +1 % bis +5 % je Runde) wirken sofort und unabhängig davon. Kampfkraft je Moral linear:
   10 % → 0,4 bis 100 % → 1,2 (1,0 bei 77,5 %). Das Armeefenster zeigt Ziel und Gründe.
 - Spielbeginn: alle Provinzen und Truppen haben 70 % Moral (Startgeld 100.000).
+- Kämpfe und Eroberungen gelten je Ort: Armeen auf einem Weg kämpfen nur mit Armeen am selben Wegpunkt
+  (nicht mit der Besatzung der nächsten Stadt); erobern kann nur, wer in der Stadt steht. Läuft eine
+  Provinz ohne Besatzung über, stellt der neue Herr eine Infanterie hinein – eine Stadt ist nie leer.
+- Unterbrochene Befehle: Wird ein Marsch durch Nahkampf, eine Begegnung auf dem Weg oder ein Fernkampfziel
+  angehalten, merkt sich die Armee ihr Ziel und zieht weiter, sobald sie wieder frei ist (Prüfung alle
+  10 Spielminuten). Ein neuer Befehl oder „Halt“ verwirft das gemerkte Ziel.
+- Eisenbahn deckt auch die Wege bis zu den Hafenpunkten ab (Schienen auf der Karte, Bahntempo bis zum
+  Hafenpunkt, danach Transporttempo).
+- Abbruch eines Baus, einer laufenden Fertigung oder einer Hauptstadtverlegung erstattet die vollen Kosten.
+- See (Vorgabe): Landeinheiten brauchen beim Ein- und Ausschiffen 2 h am Hafenpunkt (Wassergrenze); ein
+  eigener Hafen oder einer mit Durchmarschrecht/Bündnis halbiert das, feindliche Häfen nicht. Bis zum
+  Hafenpunkt geht es im Landtempo (mit eigener Bahn auf der Schiene), auf dem Wasser im Transporttempo.
+  Auf See kämpfen Landeinheiten mit halber Stärke (Schlachtschiffe voll); Artillerie und
+  Eisenbahngeschütze haben dort keine Reichweite und kämpfen als Nahkämpfer. Eisenbahngeschütze dürfen
+  aufs Wasser, an Land aber nur in Provinzen mit eigener, eingeschalteter Eisenbahn.
+- Beim Ein- und Ausschiffen sind Landtruppen am Hafenpunkt vom Land aus im Nahkampf angreifbar (Rechtsklick
+  auf die Armee führt genau dorthin). Werden sie dort gestellt, kämpfen sie mit halber Stärke und ohne
+  Fernkampf; danach setzen sie das Ein- bzw. Ausschiffen fort (die Wartezeit beginnt neu).
+- Stadteinnahme: Erobert wird erst, wenn in der Stadt keine Verfeindeten mehr gegeneinander stehen. Stehen
+  dann mehrere Angreifer (untereinander nicht im Krieg) dort, erobert die stärkste verbliebene
+  Landstreitmacht; die anderen bleiben stehen und können ohne Krieg abziehen.
+- Krieg beim Marsch: Die Kriegserklärung (mit Rückfrage) ist nur nötig, wenn das Ziel eine Stadt einer
+  Nation im Frieden ist oder der Weg zwingend durch eine ihrer Städte führt. Wege und Wegpunkte in ihrem
+  Gebiet und der Abzug von dort sind frei; Begegnungen mit ihren Armeen an Land lösen weiterhin Kampf aus.
+- Nahkampf (Vorgabe): je Armee kämpfen die stärksten Einheiten vorne (Panzer, Panzerwagen, dann Infanterie,
+  Fernkampfeinheiten mit halbem Wert zuletzt). Platz 1–20 zählt voll, Platz 21–50 linear weniger
+  ((51 − Platz)/31), ab Platz 51 nichts – höchstens 35 „volle“ Einheiten. Fernkampf hat keine Grenze.
+  Treffer (Nah- und Fernkampf) werden je Einheit ausgewürfelt (jede Einheit gleich wahrscheinlich), ein
+  Treffer trifft die Einheit, bis sie fällt; Infanterie schützt so teure Technik. Kämpfe auf Wegen
+  beschädigen Gebäude der Provinz, in deren Gebiet gekämpft wird.
+- Lebenspunkte der Infanterie hängen wie ihre Kampfkraft von der Moral ab: 20 × (0,4 bei 10 % … 1,2 bei 100 %),
+  also 8 bis 24 (20 bei 77,5 %). Angeschlagene Einheiten, deren Wunde nach einem Moralverlust über den
+  Lebenspunkten liegt, fallen beim nächsten Treffer.
+- Maschinen (alle Einheiten außer Infanterie) reparieren sich zum Tageswechsel um 1/7 ihrer fehlenden
+  Lebenspunkte, mindestens aber 5 % der vollen, sofern sie nicht im Nahkampf stehen – so werden sie ganz heil.

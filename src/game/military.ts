@@ -5,7 +5,7 @@ import {
   type Building, type UnitType,
 } from './balance.ts';
 import { atWar, hasRightOfWay, setRelation } from './diplomacy.ts';
-import { edgeParts, edgePoint, edgeSlice, edgeThrough, isSea, nodeCount, nodeName, nodeNeighbors, nodePos } from './graph.ts';
+import { edgeParts, edgePoint, edgePoints, edgeSlice, edgeThrough, isSea, nodeCount, nodeName, nodeNeighbors, nodePos } from './graph.ts';
 import type { MapData } from './mapdata.ts';
 import { activeCapital } from './economy.ts';
 import { armyName } from './names.ts';
@@ -38,18 +38,36 @@ export function isRailOnly(a: Army): boolean {
   return unitTypes(a).some((u) => UNITS[u].railOnly);
 }
 
-/** nur Fernkampfeinheiten (Artillerie, Eisenbahngeschütze, Schlachtschiffe) */
-export function isRangedOnly(a: Army): boolean {
+/** Reichweite eines Einheitentyps am Standort der Armee: auf See haben Landeinheiten keine (sie kämpfen im Nahkampf) */
+export function unitRange(a: Army, u: UnitType, map?: MapData): number {
+  return ((map && isSea(map, a.node)) || a.boarding) && !UNITS[u].naval ? 0 : UNITS[u].range;
+}
+
+/**
+ * Ist die Armee gerade beim Ein- oder Ausschiffen (Hafenweg, Richtung Wasser über den Hafenpunkt hinaus
+ * oder vom Wasser kommend)? Wer nur bis zum Hafenpunkt marschiert (z. B. um dort anzugreifen), nicht.
+ */
+function isBoarding(map: MapData, a: Army): boolean {
+  const m = a.move;
+  if (!m || isNaval(a)) return false;
+  const u = m.path[m.seg], v = m.path[m.seg + 1];
+  if (isSea(map, u) === isSea(map, v)) return false;
+  if (isSea(map, u)) return true;
+  return !(m.seg === m.path.length - 2 && m.endFrac !== undefined && m.endFrac < 1);
+}
+
+/** nur Fernkampfeinheiten (Artillerie, Eisenbahngeschütze, Schlachtschiffe) – auf See nur Schiffe */
+export function isRangedOnly(a: Army, map?: MapData): boolean {
   const t = unitTypes(a);
-  return t.length > 0 && t.every((u) => UNITS[u].range > 0);
+  return t.length > 0 && t.every((u) => unitRange(a, u, map) > 0);
 }
 
 export function armySpeed(a: Army): number {
   return Math.min(...unitTypes(a).map((u) => UNITS[u].speed));
 }
 
-export function maxRange(a: Army): number {
-  return Math.max(0, ...unitTypes(a).map((u) => UNITS[u].range));
+export function maxRange(a: Army, map?: MapData): number {
+  return Math.max(0, ...unitTypes(a).map((u) => unitRange(a, u, map)));
 }
 
 /** Grobe Kampfkraft (für KI und Anzeige) */
@@ -71,12 +89,19 @@ export function canTraverse(state: GameState, map: MapData, a: Army, u: number, 
 }
 
 export function canEnter(state: GameState, map: MapData, a: Army, node: number): boolean {
-  if (isSea(map, node)) return !isRailOnly(a);
+  if (isSea(map, node)) return true;
   // Schiffe (auch mit Truppen an Bord) gehen nie an Land
   if (isNaval(a)) return false;
   const owner = state.provinces[node].owner;
   if (isRailOnly(a)) return owner === a.owner && state.provinces[node].buildings.railroad > 0 && !state.provinces[node].off?.railroad;
   return owner === a.owner || atWar(state, a.owner, owner) || hasRightOfWay(state, a.owner, owner) || !!a.warOn?.includes(owner);
+}
+
+/** Länge des Landstücks eines Hafenweges: von der Stadt bis zum Hafenpunkt */
+export function harborLeg(map: MapData, u: number, v: number): number {
+  const pts = edgePoints(map, u, v);
+  const [c, h] = isSea(map, u) ? [pts[pts.length - 1], pts[pts.length - 2]] : [pts[0], pts[1]];
+  return Math.hypot(h[0] - c[0], h[1] - c[1]);
 }
 
 function landSpeed(state: GameState, a: Army, province: number): number {
@@ -128,8 +153,18 @@ export function segmentProfile(state: GameState, map: MapData, a: Army, u: numbe
     const h1 = h0 + (d * (through.f1 - through.f0)) / landSpeed(state, a, through.via);
     return [0, 0, through.f0, h0, through.f1, h1, 1, h1 + (d * (1 - through.f1)) / landSpeed(state, a, v)];
   }
-  if (sv) return [0, 0, 1, d / MILITARY.transportSpeed + embarkHours(state, u, a.owner)]; // einschiffen
-  if (su) return [0, 0, 1, d / MILITARY.transportSpeed + embarkHours(state, v, a.owner)]; // anlanden
+  // Hafenwege: an Land bis zum Hafenpunkt im Landtempo (mit eigener Bahn auf der Schiene), dort
+  // Ein- bzw. Ausschiffen (Pause an der Wassergrenze), auf dem Wasser im Transporttempo
+  if (sv || su) {
+    const prov = sv ? u : v;
+    const wait = embarkHours(state, prov, a.owner);
+    const land = Math.min(d, harborLeg(map, u, v));
+    const fl = d > 0 ? land / d : 0;
+    const hl = land / landSpeed(state, a, prov), hs = (d - land) / MILITARY.transportSpeed;
+    return sv
+      ? [0, 0, fl, hl, fl, hl + wait, 1, hl + wait + hs]
+      : [0, 0, 1 - fl, hs, 1 - fl, hs + wait, 1, hs + wait + hl];
+  }
   // Landweg: bis zur Grenze im Tempo von u, danach im Tempo von v
   const h0 = l1 / landSpeed(state, a, u);
   return [0, 0, d > 0 ? l1 / d : 0, h0, 1, h0 + (d - l1) / landSpeed(state, a, v)];
@@ -325,7 +360,7 @@ export function planRoute(state: GameState, map: MapData, a: Army, time: number,
     : [
       { node: to.road.a, path: [to.road.a, to.road.b], frac: to.road.f, hours: seg(to.road.a, to.road.b) * to.road.f },
       { node: to.road.b, path: [to.road.b, to.road.a], frac: 1 - to.road.f, hours: seg(to.road.b, to.road.a) * (1 - to.road.f) },
-    ].filter((l) => l.frac < 0.5 || canEnter(state, map, a, l.path[1]));
+    ];
   let best: MovePlan | null = null;
   for (const s of starts) {
     const tree = pathsFrom(state, map, a, s.node);
@@ -381,6 +416,7 @@ export function startMove(ctx: MilitaryContext, a: Army, path: number[], then?: 
   }
   const t = ctx.state.time;
   a.pos = null;
+  delete a.boarding;
   a.move = { path, seg: 0, segStart: t, segEnd: t, then };
   if (frac?.startFrac !== undefined) a.move.startFrac = frac.startFrac;
   if (frac?.endFrac !== undefined) a.move.endFrac = frac.endFrac;
@@ -414,7 +450,15 @@ function disembark(ctx: MilitaryContext, fleet: Army, then: number[]): void {
 /** Im Nahkampf gebunden: stehende Armee mit stehenden Feinden am selben Ort. */
 export function inMelee(state: GameState, a: Army): boolean {
   if (a.move) return false;
-  return state.armies.some((b) => b !== a && b.node === a.node && !b.move && atWar(state, a.owner, b.owner) && unitCount(b) > 0);
+  return hostileAt(state, a).length > 0;
+}
+
+/** Schlüssel des Standorts: Knoten oder genauer Wegpunkt (Armeen auf einem Weg gehören nicht zur Stadt) */
+function placeKey(a: Army): string {
+  const p = a.pos;
+  if (!p) return `n${a.node}`;
+  const [u, v, f] = p.a < p.b ? [p.a, p.b, p.f] : [p.b, p.a, 1 - p.f];
+  return `r${u}-${v}-${Math.round(f * 1e6)}`;
 }
 
 /** Aktuelle Position (km) – auf dem Weg zwischen zwei Knoten (mit Knick an der Grenze). */
@@ -459,8 +503,60 @@ export function samePlace(a: Army, b: Army): boolean {
   return (p.a === q.a && p.b === q.b && Math.abs(p.f - q.f) < 1e-6) || (p.a === q.b && p.b === q.a && Math.abs(p.f + q.f - 1) < 1e-6);
 }
 
-function hostileAt(state: GameState, node: number, owner: string, except?: Army): Army[] {
-  return state.armies.filter((b) => b !== except && b.node === node && !b.move && atWar(state, owner, b.owner) && unitCount(b) > 0);
+/** Stehende Feinde am selben Ort wie `a` (Knoten bzw. derselbe Wegpunkt) */
+function hostileAt(state: GameState, a: Army): Army[] {
+  return state.armies.filter((b) => b !== a && !b.move && samePlace(a, b) && atWar(state, a.owner, b.owner) && unitCount(b) > 0);
+}
+
+/**
+ * Feinde, die gerade genau an diesem Wegpunkt warten (beim Ein- oder Ausschiffen am Hafenpunkt),
+ * werden gestellt: sie bleiben stehen (Ziel bleibt vorgemerkt) und es kommt zum Nahkampf.
+ */
+function catchWaiting(map: MapData, state: GameState, a: Army): void {
+  const [x, y] = armyPosition(map, a, state.time);
+  for (const b of state.armies) {
+    if (b === a || !b.move || unitCount(b) === 0 || !atWar(state, a.owner, b.owner)) continue;
+    const [bx, by] = armyPosition(map, b, state.time);
+    if (Math.hypot(bx - x, by - y) > MEET_KM) continue;
+    halt(map, b, state.time, true);
+    b.node = a.node;
+    b.pos = a.pos ? { ...a.pos } : null;
+  }
+}
+
+/** Endziel eines Marsches (für die Fortsetzung nach einem Kampf) */
+function finalTarget(a: Army): { node: number } | { road: RoadPos } | null {
+  const m = a.move;
+  if (!m) return null;
+  if (m.then?.length) return { node: m.then[m.then.length - 1] };
+  const n = m.path.length;
+  if (m.endFrac !== undefined && m.endFrac < 1) return { road: { a: m.path[n - 2], b: m.path[n - 1], f: m.endFrac } };
+  return { node: m.path[n - 1] };
+}
+
+/** Marsch wegen eines Kampfes unterbrechen; das Ziel bleibt vorgemerkt (außer es ist schon erreicht) */
+function interrupt(map: MapData, a: Army): void {
+  const t = finalTarget(a);
+  a.boarding = isBoarding(map, a) || undefined;
+  a.move = null;
+  if (t && !('node' in t && t.node === a.node && !a.pos)) a.resume = t;
+}
+
+/**
+ * Unterbrochene Marschbefehle fortsetzen (alle 10 Spielminuten): sobald die Armee nicht mehr im
+ * Nahkampf gebunden ist und kein Fernkampfziel in Reichweite hat, zieht sie zum vorgemerkten Ziel weiter.
+ */
+export function resumeOrders(ctx: MilitaryContext): void {
+  const { state, map } = ctx;
+  for (const a of state.armies) {
+    if (!a.resume || a.move || unitCount(a) === 0) continue;
+    if (inMelee(state, a) || engagedTarget(state, map, a)) continue;
+    const plan = planRoute(state, map, a, state.time, a.resume);
+    a.resume = null;
+    if (!plan || plan.path.length < 2) continue;
+    startMove(ctx, a, plan.path, plan.then, plan);
+    ctx.invalidate();
+  }
 }
 
 /** Verarbeitet Ankünfte aller Armeen, deren Abschnitt bis jetzt abgeschlossen ist. */
@@ -476,7 +572,8 @@ export function processArrivals(ctx: MilitaryContext): void {
         a.pos = { a: u, b: v, f: m.endFrac };
         a.node = m.endFrac < 0.5 ? u : v;
         declareOnArrival(ctx, a);
-        const hostile = hostileAt(state, a.node, a.owner, a);
+        catchWaiting(map, state, a);
+        const hostile = hostileAt(state, a);
         if (hostile.length > 0) {
           ctx.log(`Kampf bei ${nodeName(map, a.node)}.`, a.owner, isSea(map, a.node) ? undefined : a.node);
           joinBattle(ctx, a);
@@ -487,13 +584,13 @@ export function processArrivals(ctx: MilitaryContext): void {
       a.node = node;
       m.seg++;
       declareOnArrival(ctx, a);
-      const hostile = hostileAt(state, node, a.owner, a);
+      const hostile = hostileAt(state, a);
       if (!isSea(map, node) && !isNaval(a)) {
         const owner = state.provinces[node].owner;
         if (hostile.length === 0 && owner !== a.owner && atWar(state, a.owner, owner)) conquer(ctx, node, a.owner);
       }
       if (hostile.length > 0) {
-        a.move = null;
+        interrupt(map, a);
         joinBattle(ctx, a);
         ctx.log(`Kampf bei ${nodeName(map, node)}.`, a.owner, isSea(map, node) ? undefined : node);
         for (const o of new Set(hostile.map((h) => h.owner))) {
@@ -604,7 +701,7 @@ export function encounters(ctx: MilitaryContext): boolean {
 function meet(ctx: MilitaryContext, x: Army, y: Army, u: number, v: number, f: number): void {
   const { state, map } = ctx;
   for (const a of [x, y]) {
-    a.move = null;
+    interrupt(map, a);
     if (f <= ROAD_EPS || f >= 1 - ROAD_EPS) {
       a.node = f < 0.5 ? u : v;
       a.pos = null;
@@ -719,21 +816,63 @@ function spread(ctx: MilitaryContext): number {
   return 1 + (ctx.random() * 2 - 1) * MILITARY.randomSpread;
 }
 
-export function applyDamage(a: Army, dmg: number): void {
-  const types = unitTypes(a);
-  const pool = types.reduce((s, u) => s + a.units[u]! * UNITS[u].hp, 0);
-  if (pool <= 0) return;
-  for (const u of types) {
-    const share = (dmg * a.units[u]! * UNITS[u].hp) / pool;
-    const w = (a.wounds?.[u] ?? 0) + share;
-    const kills = Math.min(a.units[u]!, Math.floor(w / UNITS[u].hp));
-    a.units[u] = a.units[u]! - kills;
-    (a.wounds ??= {})[u] = kills >= (a.units[u]! + kills) ? 0 : w - kills * UNITS[u].hp;
-    if (!a.units[u]) {
-      delete a.units[u];
-      delete a.wounds[u];
+/**
+ * Schaden zufällig auf die Einheiten einer Armee verteilen: jeder Treffer gilt einer ausgewürfelten
+ * Einheit (jede Einheit gleich wahrscheinlich, viele Infanteristen schützen also teure Technik) und trifft
+ * sie, bis sie fällt oder der Schaden aufgebraucht ist. Angeschlagene Einheiten behalten ihre Wunden.
+ */
+export function applyDamage(a: Army, dmg: number, random: () => number): void {
+  let rest = dmg;
+  while (rest > 1e-9) {
+    const types = unitTypes(a);
+    const total = types.reduce((s, u) => s + a.units[u]!, 0);
+    if (total <= 0) return;
+    let r = random() * total, u = types[types.length - 1];
+    for (const t of types) if ((r -= a.units[t]!) < 0) { u = t; break; }
+    const hp = unitHp(a, u);
+    const w = a.wounds?.[u] ?? 0;
+    // ist die Moral gefallen, kann die Wunde schon über den Lebenspunkten liegen: dann fällt die Einheit
+    const hit = Math.max(0, Math.min(rest, hp - w));
+    rest -= hit;
+    if (w + hit >= hp - 1e-9) {
+      a.units[u] = a.units[u]! - 1;
+      if (a.wounds) a.wounds[u] = 0;
+      if (!a.units[u]) {
+        delete a.units[u];
+        if (a.wounds) delete a.wounds[u];
+      }
+    } else (a.wounds ??= {})[u] = w + hit;
+  }
+}
+
+/** Lebenspunkte einer Einheit: Infanterie nach Moral wie ihre Kampfkraft (10 % → 0,4-fach … 100 % → 1,2-fach) */
+export function unitHp(a: Army, u: UnitType): number {
+  return UNITS[u].hp * (u === 'infantry' ? infantryStrength(a) : 1);
+}
+
+/** Tageswechsel: Maschinen außerhalb von Kämpfen bekommen einen Teil ihrer fehlenden Lebenspunkte zurück */
+export function repairMachines(state: GameState): void {
+  for (const a of state.armies) {
+    if (!a.wounds || inMelee(state, a)) continue;
+    for (const u of Object.keys(a.wounds) as UnitType[]) {
+      if (u === 'infantry' || !a.wounds[u]) continue;
+      const w = a.wounds[u]!;
+      const heal = Math.max(w * MILITARY.repairShare, UNITS[u].hp * MILITARY.repairMin);
+      if (heal >= w - 1e-6) delete a.wounds[u];
+      else a.wounds[u] = w - heal;
     }
   }
+}
+
+/** Summe der Nahkampfgewichte der Plätze 1..n (bis meleeFull je 1, dann linear fallend, nach meleeMax 0) */
+function meleeWeight(n: number): number {
+  const full = MILITARY.meleeFull, max = MILITARY.meleeMax, span = max - full + 1;
+  if (n <= full) return Math.max(0, n);
+  const m = Math.min(n, max);
+  // Platz k (full < k ≤ max) zählt (max + 1 − k) / span
+  let s = full;
+  for (let k = full + 1; k <= m; k++) s += (max + 1 - k) / span;
+  return s;
 }
 
 /** Kampfkraft-Faktor: Infanterie nach Moral; Maschinen kämpfen immer voll, unabhängig vom Zustand. */
@@ -742,13 +881,22 @@ function soldierFactor(a: Army, u: UnitType): number {
 }
 
 export function meleeOutput(state: GameState, map: MapData, a: Army): number {
-  const sea = isSea(map, a.node);
+  // auf See und beim Ein-/Ausschiffen kämpfen Landeinheiten mit halber Stärke
+  const sea = isSea(map, a.node) || !!a.boarding;
   const defending = !sea && state.provinces[a.node].owner === a.owner;
-  let out = 0;
-  for (const u of unitTypes(a)) {
+  // Nahkampfwert je Einheit; die stärksten kämpfen vorne, nur die ersten Plätze zählen (siehe meleeWeight)
+  const per = unitTypes(a).map((u) => {
     const d = UNITS[u];
-    out += a.units[u]! * (defending ? d.defense : d.attack) * (d.range > 0 ? MILITARY.meleeRangedFactor : 1)
-      * (sea && !d.naval ? MILITARY.seaFactor : 1) * soldierFactor(a, u);
+    return {
+      n: a.units[u]!,
+      v: (defending ? d.defense : d.attack) * (unitRange(a, u, map) > 0 ? MILITARY.meleeRangedFactor : 1)
+        * (sea && !d.naval ? MILITARY.seaFactor : 1) * soldierFactor(a, u),
+    };
+  }).sort((x, y) => y.v - x.v);
+  let out = 0, rank = 0;
+  for (const { n, v } of per) {
+    out += v * (meleeWeight(rank + n) - meleeWeight(rank));
+    rank += n;
   }
   return out;
 }
@@ -756,13 +904,16 @@ export function meleeOutput(state: GameState, map: MapData, a: Army): number {
 /** Eine Kampfrunde (stündlich) an allen Orten mit verfeindeten Truppen. */
 export function combatRound(ctx: MilitaryContext): void {
   const { state, map } = ctx;
-  const byNode = new Map<number, Army[]>();
+  const byPlace = new Map<string, Army[]>();
   for (const a of state.armies) {
     if (a.move || unitCount(a) === 0) continue;
-    (byNode.get(a.node) ?? byNode.set(a.node, []).get(a.node)!).push(a);
+    const k = placeKey(a);
+    (byPlace.get(k) ?? byPlace.set(k, []).get(k)!).push(a);
   }
-  for (const [node, here] of byNode) {
+  for (const here of byPlace.values()) {
     if (!here.some((a) => here.some((b) => atWar(state, a.owner, b.owner)))) continue;
+    const node = here[0].node;
+    const onRoad = !!here[0].pos;
     const damage = new Map<Army, number>();
     // wer wem wie viel Schaden zufügt (für die Moral durch Vernichtung)
     const dealt = new Map<Army, Map<Army, number>>();
@@ -781,7 +932,7 @@ export function combatRound(ctx: MilitaryContext): void {
     }
     const before = new Map([...damage.keys()].map((b) => [b, unitCount(b)]));
     const names = new Map(here.map((x) => [x, armyName(x)]));
-    for (const [b, dmg] of damage) applyDamage(b, dmg * fortressShield(state, map, b));
+    for (const [b, dmg] of damage) applyDamage(b, dmg * fortressShield(state, map, b), ctx.random);
     // Moral der Infanterie: Nahkampf zehrt, vernichtete Gegner stärken
     for (const [a, mine] of dealt) {
       let kills = 0;
@@ -789,9 +940,10 @@ export function combatRound(ctx: MilitaryContext): void {
       if (kills > 0) a.kills = (a.kills ?? 0) + kills;
       shiftMorale(a, -TROOP_MORALE.melee + Math.min(TROOP_MORALE.killMax, kills * TROOP_MORALE.perKill));
     }
-    if (!isSea(map, node)) {
-      damageBuildings(ctx, node);
-      state.provinces[node].fought = true;
+    const prov = onRoad ? roadProvince(map, here[0].pos!) : isSea(map, node) ? -1 : node;
+    if (prov >= 0) {
+      damageBuildings(ctx, prov);
+      state.provinces[prov].fought = true;
     }
     // Sieger einer vernichteten Armee: die feindliche Seite mit dem meisten Schaden an ihr
     const victors = new Map<Army, string>();
@@ -814,16 +966,19 @@ export function engagedTarget(state: GameState, map: MapData, a: Army): Army | n
   if (a.target == null) return null;
   const t = state.armies.find((b) => b.id === a.target);
   if (!t || unitCount(t) === 0 || !atWar(state, a.owner, t.owner)) return null;
-  return distance(map, a, t, state.time) <= maxRange(a) ? t : null;
+  return distance(map, a, t, state.time) <= maxRange(a, map) ? t : null;
 }
 
 /** Marsch anhalten: die Armee bleibt genau dort stehen, wo sie ist (auch mitten auf dem Weg). */
-export function halt(map: MapData, a: Army, time: number): void {
+export function halt(map: MapData, a: Army, time: number, keepOrder = false): void {
   if (!a.move) return;
   const loc = armyLocation(a, time);
+  const t = keepOrder ? finalTarget(a) : null;
+  a.boarding = (keepOrder && isBoarding(map, a)) || undefined;
   a.node = nearestNode(map, a, time);
   a.pos = 'road' in loc ? loc.road : null;
   a.move = null;
+  a.resume = t;
 }
 
 /**
@@ -833,16 +988,16 @@ export function halt(map: MapData, a: Army, time: number): void {
 export function engageRanged(ctx: MilitaryContext): void {
   const { state, map } = ctx;
   for (const a of state.armies) {
-    const range = maxRange(a);
+    const range = maxRange(a, map);
     if (range <= 0 || unitCount(a) === 0) continue;
-    if (a.move && !isRangedOnly(a)) continue;
+    if (a.move && !isRangedOnly(a, map)) continue;
     if (a.target != null) {
       const t = state.armies.find((b) => b.id === a.target);
       if (!t || unitCount(t) === 0 || !atWar(state, a.owner, t.owner)) {
         a.target = null;
         a.autoTarget = false;
       } else if (distance(map, a, t, state.time) <= range) {
-        halt(map, a, state.time);
+        halt(map, a, state.time, true);
         continue;
       } else if (a.autoTarget) {
         a.target = null;
@@ -858,7 +1013,7 @@ export function engageRanged(ctx: MilitaryContext): void {
     if (!best) continue;
     a.target = best.id;
     a.autoTarget = true;
-    halt(map, a, state.time);
+    halt(map, a, state.time, true);
   }
 }
 
@@ -866,7 +1021,7 @@ export function engageRanged(ctx: MilitaryContext): void {
 export function rangedRound(ctx: MilitaryContext): void {
   const { state, map } = ctx;
   for (const a of [...state.armies]) {
-    const range = maxRange(a);
+    const range = maxRange(a, map);
     if (range <= 0 || unitCount(a) === 0) continue;
     const pos = armyPosition(map, a, state.time);
     const inRange = (b: Army) => {
@@ -892,15 +1047,15 @@ export function rangedRound(ctx: MilitaryContext): void {
       continue;
     }
     if (!target) continue;
-    if (a.move) halt(map, a, state.time); // in Reichweite: stehen bleiben und feuern
+    if (a.move) halt(map, a, state.time, true); // in Reichweite: stehen bleiben und feuern, danach weiter
+    // auf See schießen nur Schiffe (Landeinheiten haben dort keine Reichweite)
     let out = 0;
-    const atSea = isSea(map, a.node);
     for (const u of unitTypes(a)) {
-      if (UNITS[u].range > 0) out += a.units[u]! * UNITS[u].attack * (atSea && !UNITS[u].naval ? MILITARY.seaFactor : 1);
+      if (unitRange(a, u, map) > 0) out += a.units[u]! * UNITS[u].attack;
     }
     const n0 = unitCount(target);
     const targetName = armyName(target);
-    applyDamage(target, out * spread(ctx) * fortressShield(state, map, target));
+    applyDamage(target, out * spread(ctx) * fortressShield(state, map, target), ctx.random);
     // beschossen werden zehrt an der Moral, Treffer stärken die Schützen
     shiftMorale(target, -TROOP_MORALE.shelled);
     shiftMorale(a, Math.min(TROOP_MORALE.killMax, (n0 - unitCount(target)) * TROOP_MORALE.perKill));
@@ -928,15 +1083,33 @@ function cleanup(ctx: MilitaryContext, node: number, names?: Map<Army, string>, 
   ctx.invalidate();
   if (isSea(map, node)) return;
   const ps = state.provinces[node];
-  const here = state.armies.filter((x) => x.node === node && !x.move);
-  const owners = new Set(here.map((x) => x.owner));
-  if (owners.size !== 1) return;
-  const [x] = owners;
-  if (x === REBELS) {
+  // nur Truppen in der Stadt selbst zählen (nicht solche, die auf einem Weg in der Nähe stehen)
+  const here = state.armies.filter((x) => x.node === node && !x.move && !x.pos);
+  const owners = [...new Set(here.map((x) => x.owner))];
+  // solange sich noch Verfeindete gegenüberstehen, geht der Kampf weiter
+  if (owners.some((o) => owners.some((q) => atWar(state, o, q)))) return;
+  if (owners.length === 1 && owners[0] === REBELS) {
     ps.revolt = true;
     return;
   }
-  if (x !== ps.owner && atWar(state, x, ps.owner) && here.some((h) => !isNaval(h))) conquer(ctx, node, x);
+  if (owners.includes(ps.owner)) return;
+  // mehrere Angreifer, die untereinander nicht verfeindet sind: die stärkste verbliebene Landstreitmacht erobert
+  const power = new Map<string, number>();
+  for (const h of here) {
+    if (isNaval(h) || h.owner === REBELS || !atWar(state, h.owner, ps.owner)) continue;
+    power.set(h.owner, (power.get(h.owner) ?? 0) + armyPower(h));
+  }
+  if (!power.size) return;
+  const winner = [...power].reduce((b, e) => (e[1] > b[1] ? e : b))[0];
+  conquer(ctx, node, winner);
+}
+
+/** Provinz, in deren Gebiet ein Wegpunkt liegt (vor oder hinter der Grenze); -1 auf dem Wasser */
+function roadProvince(map: MapData, p: RoadPos): number {
+  const [l1, len] = edgeParts(map, p.a, p.b);
+  const first = p.f * len <= l1 ? p.a : p.b, other = first === p.a ? p.b : p.a;
+  if (!isSea(map, first)) return first;
+  return isSea(map, other) ? -1 : other;
 }
 
 /** Kämpfe in einer Provinz beschädigen Gebäude: je Stunde und Gebäude eine Chance, eine Stufe zu verlieren. */
@@ -1100,7 +1273,12 @@ export function defections(ctx: MilitaryContext): void {
       kept = 1;
     }
     state.armies = state.armies.filter((a) => !here.includes(a));
-    if (kept) state.armies.push({ id: ctx.newArmyId(), owner: to, node: i, units: turned, morale: TROOP_MORALE.neutral });
+    // die Stadt bleibt nie leer: ohne Überläufer stellt der neue Herr eine Infanterie
+    if (!kept) {
+      turned.infantry = 1;
+      kept = 1;
+    }
+    state.armies.push({ id: ctx.newArmyId(), owner: to, node: i, units: turned, morale: TROOP_MORALE.neutral });
 
     ps.owner = to;
     ps.morale = DEFECTION.morale;

@@ -5,7 +5,7 @@ import { atWar } from '../game/diplomacy.ts';
 import { isSea, nodeName } from '../game/graph.ts';
 import type { MapData } from '../game/mapdata.ts';
 import {
-  armyPosition, armyPower, armySpeed, infantryStrength, isNaval, maxRange, samePlace, segmentHours, troopMorale, troopTarget, unitCount,
+  armyPosition, armyPower, armySpeed, infantryStrength, isNaval, maxRange, samePlace, segmentHours, troopMorale, troopTarget, unitCount, unitHp,
 } from '../game/military.ts';
 import { armyName } from '../game/names.ts';
 import { Flag } from './Flag.tsx';
@@ -57,7 +57,7 @@ export function ArmyPanel({ map, state, army: a, armies, act, onSelectArmy, onSp
   const here = a.move ? null : a.node;
   const hostileHere = here === null ? [] : armies.filter((b) => b.node === here && !b.move && atWar(state, a.owner, b.owner));
   const target = a.target != null ? armies.find((b) => b.id === a.target) : undefined;
-  const range = maxRange(a);
+  const range = maxRange(a, map);
   const pos = armyPosition(map, a, state.time);
   const targets = range > 0
     ? armies.filter((b) => atWar(state, a.owner, b.owner) && unitCount(b) > 0).map((b) => {
@@ -135,7 +135,7 @@ export function ArmyPanel({ map, state, army: a, armies, act, onSelectArmy, onSp
         <tbody>
           {UNIT_ORDER.filter((u) => a.units[u]).map((u) => {
             const n = a.units[u]!;
-            const health = 1 - (a.wounds?.[u] ?? 0) / (n * UNITS[u].hp);
+            const health = Math.max(0, 1 - (a.wounds?.[u] ?? 0) / (n * unitHp(a, u)));
             const machine = u !== 'infantry';
             return (
               <tr key={u}>
@@ -152,7 +152,7 @@ export function ArmyPanel({ map, state, army: a, armies, act, onSelectArmy, onSp
       </table>
       {(a.units.infantry ?? 0) > 0 && (
         <>
-          <div className="morale-row" title="Kampfkraft der Infanterie: linear von 0,4-fach bei 10 % Moral bis 1,2-fach bei 100 % (normal 1,0 bei 77,5 %). Sinkt im Kampf, unter Beschuss, bei Getreidemangel und in Provinzen mit niedriger Moral; steigt bei Siegen und in Provinzen mit hoher Moral.">
+          <div className="morale-row" title="Kampfkraft und Lebenspunkte der Infanterie: linear von 0,4-fach bei 10 % Moral bis 1,2-fach bei 100 % (normal 1,0 bei 77,5 %). Sinkt im Kampf, unter Beschuss, bei Getreidemangel und in Provinzen mit niedriger Moral; steigt bei Siegen und in Provinzen mit hoher Moral.">
             <span className="small">Moral der Infanterie</span>
             <Bar value={troopMorale(a)} marker={tt.target} color={troopMorale(a) < 0.33 ? '#a33' : troopMorale(a) < 0.5 ? '#c9952f' : '#5d8a3a'} />
             <span className="small">{Math.round(troopMorale(a) * 100)} % · Stärke ×{infantryStrength(a).toFixed(2)}</span>

@@ -152,7 +152,8 @@ export const RECRUIT_BASE_HOURS = 16;
 export const RECRUIT_WITHOUT_OFFICE = 0.5;
 /** Kampf in einer Provinz: Wahrscheinlichkeit je Stunde und Gebäude, eine Stufe zu verlieren */
 export const BUILDING_DAMAGE_CHANCE = 0.04;
-export const BUILD_REFUND = 0.5;
+/** Abbruch eines Baus, einer Fertigung oder einer Hauptstadtverlegung: Anteil der Kosten, der zurückkommt */
+export const BUILD_REFUND = 1;
 
 /** Hauptstadt verlegen: Kosten und Dauer (je Nation höchstens eine Verlegung gleichzeitig) */
 export const CAPITAL_MOVE = {
@@ -227,12 +228,19 @@ export const MILITARY = {
   /** eingeschiffte Landtruppen (Transportschiffe) */
   transportSpeed: 21,
   /** Ein- bzw. Ausschiffen; mit befreundetem Hafen am Ort nur halb so lange */
-  embarkHours: 3,
+  embarkHours: 2,
   harborEmbarkFactor: 0.5,
   /** Sichtweite eigener Armeen (km); Eisenbahngeschütze und Schlachtschiffe siehe UNITS.sight */
   viewRange: 100,
   /** Fernkampfeinheiten im Nahkampf */
   meleeRangedFactor: 0.5,
+  /** Nahkampf je Armee: die stärksten Einheiten zuerst; bis Platz `meleeFull` voll, danach linear weniger, ab Platz `meleeMax` + 1 nichts */
+  meleeFull: 20,
+  meleeMax: 50,
+  /** Maschinen (alles außer Infanterie) reparieren sich zum Tageswechsel außerhalb von Kämpfen um diesen Anteil der fehlenden Lebenspunkte */
+  repairShare: 1 / 7,
+  /** mindestens so viel der vollen Lebenspunkte je Tag, damit Maschinen ganz heil werden */
+  repairMin: 0.05,
   /** Landtruppen auf See kämpfen mit halber Stärke (Schlachtschiffe voll) */
   seaFactor: 0.5,
   /** Zufallsstreuung des Schadens (±) */

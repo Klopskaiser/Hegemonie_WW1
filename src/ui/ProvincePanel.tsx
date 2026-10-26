@@ -99,7 +99,7 @@ export function ProvincePanel({ map, state, id, armies: visibleArmies, act, onSe
               <span className="small">Verlegung läuft</span>
               <Bar value={(state.time - capMove.start) / (capMove.end - capMove.start)} />
               <span className="small">{remaining(capMove.end)}</span>
-              <button className="btn small" onClick={() => run({ type: 'cancelCapitalMove' })} title="Abbrechen (50 % Erstattung)">✕</button>
+              <button className="btn small" onClick={() => run({ type: 'cancelCapitalMove' })} title="Abbrechen (Kosten kommen zurück)">✕</button>
             </div>
           ) : (
             <div className="progress-row">
@@ -155,7 +155,7 @@ export function ProvincePanel({ map, state, id, armies: visibleArmies, act, onSe
                     <div className="progress-row">
                       <Bar value={(state.time - c.start) / (c.end - c.start)} />
                       <span className="small">{remaining(c.end)}</span>
-                      <button className="btn small" onClick={() => run({ type: 'cancelBuild', province: id })} title="Abbrechen (50 % Erstattung)">✕</button>
+                      <button className="btn small" onClick={() => run({ type: 'cancelBuild', province: id })} title="Abbrechen (Kosten kommen zurück)">✕</button>
                     </div>
                   )}
                   {plannedLevel < def.maxLevel && !excluded && (

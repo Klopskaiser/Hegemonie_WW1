@@ -1,12 +1,15 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { ALL_RES, DAY, HOUR, MORALE } from '../src/game/balance.ts';
-import { conquer } from '../src/game/military.ts';
+import { ALL_RES, DAY, HOUR, MINUTE, MORALE, UNITS } from '../src/game/balance.ts';
+import { applyDamage, armyLocation, combatRound, conquer, defections, harborLeg, inMelee, maxRange, meleeOutput, repairMachines, unitHp } from '../src/game/military.ts';
 import { capitalOf, moraleTarget, nationRates, recruitHours, totalUse, useSources } from '../src/game/economy.ts';
 import type { MapData } from '../src/game/mapdata.ts';
 import { segmentHours } from '../src/game/military.ts';
+import { requiredWars } from '../src/game/actions.ts';
+import { atWar } from '../src/game/diplomacy.ts';
 import { armyName } from '../src/game/names.ts';
+import { makeRng } from '../src/game/rng.ts';
 import { Simulation } from '../src/game/sim.ts';
 import { createGame } from '../src/game/state.ts';
 import type { Army } from '../src/game/types.ts';
@@ -139,7 +142,7 @@ describe('Provinzmoral und Hauptstadt', () => {
     expect(ps.morale).toBe(0.4);
   });
 
-  it('Hauptstadt verlegen: kostet, dauert 48 h, nur eine Verlegung gleichzeitig; Abbruch erstattet die Hälfte', () => {
+  it('Hauptstadt verlegen: kostet, dauert 48 h, nur eine Verlegung gleichzeitig; Abbruch erstattet alles', () => {
     const sim = newSim();
     const target = prov('Hamburg'), other = map.provinces.find((p) => p.nation === 'DE' && !p.capital && p.id !== target)!.id;
     const stock = sim.state.nations.DE.stock;
@@ -157,7 +160,7 @@ describe('Provinzmoral und Hauptstadt', () => {
     expect(sim.apply('DE', { type: 'moveCapital', province: other }).ok).toBe(true);
     const before = stock.money;
     expect(sim.apply('DE', { type: 'cancelCapitalMove' }).ok).toBe(true);
-    expect(stock.money).toBe(before + 10000);
+    expect(stock.money).toBe(before + 20000);
   });
 });
 
@@ -179,5 +182,216 @@ describe('Spielbeginn', () => {
     const sim = newSim();
     expect(sim.state.provinces.every((p) => p.morale === 0.7)).toBe(true);
     expect(sim.state.armies.every((a) => a.morale === 0.7)).toBe(true);
+  });
+});
+
+describe('Kampf am Ort, fortgesetzte Befehle, Besatzung, Bahn zum Hafen', () => {
+  /** Landweg von einer deutschen zu einer Provinz der Nation `to` */
+  const border = (to: string) => {
+    for (const p of map.provinces) {
+      if (p.nation !== 'DE') continue;
+      const q = (p.links ?? []).find((n) => map.provinces[n].nation === to);
+      if (q !== undefined) return [p.id, q] as const;
+    }
+    throw new Error('kein Grenzweg');
+  };
+
+  it('eine Armee auf dem Weg vor einer Stadt kämpft nicht mit der Besatzung und erobert sie nicht', () => {
+    const sim = newSim();
+    const [p, q] = border('FR');
+    sim.apply('DE', { type: 'declareWar', nation: 'FR' });
+    sim.state.armies = sim.state.armies.filter((a) => a.node !== p && a.node !== q);
+    const garrison: Army = { id: sim.state.nextArmyId++, owner: 'FR', node: q, units: { infantry: 1 } };
+    const road: Army = { id: sim.state.nextArmyId++, owner: 'DE', node: q, pos: { a: p, b: q, f: 0.8 }, units: { infantry: 20 } };
+    sim.state.armies.push(garrison, road);
+    expect(inMelee(sim.state, road)).toBe(false);
+    combatRound(sim.ctx);
+    expect(garrison.units.infantry).toBe(1);
+    expect(sim.state.provinces[q].owner).toBe('FR');
+  });
+
+  it('nach einem Kampf auf dem Weg zieht die Armee zu ihrem Ziel weiter', () => {
+    const sim = newSim();
+    const [p, q] = border('FR');
+    sim.apply('DE', { type: 'declareWar', nation: 'FR' });
+    sim.state.armies = sim.state.armies.filter((a) => a.node !== p && a.node !== q);
+    const de: Army = { id: sim.state.nextArmyId++, owner: 'DE', node: p, units: { infantry: 40 } };
+    const fr: Army = { id: sim.state.nextArmyId++, owner: 'FR', node: p, pos: { a: p, b: q, f: 0.4 }, units: { infantry: 2 } };
+    sim.state.armies.push(de, fr);
+    expect(sim.apply('DE', { type: 'move', army: de.id, to: q }).ok).toBe(true);
+    sim.advance(3 * DAY);
+    expect(sim.state.armies.includes(fr)).toBe(false);
+    expect(de.node).toBe(q);
+    expect(de.pos ?? null).toBeNull();
+    expect(sim.state.provinces[q].owner).toBe('DE');
+  });
+
+  it('läuft eine leere Stadt über, stellt der neue Herr eine Infanterie hinein', () => {
+    const sim = newSim();
+    const t = map.provinces.find((p) => p.nation === 'DE' && !p.capital && p.neighbors.some((n) => map.provinces[n].nation !== 'DE'))!.id;
+    sim.state.armies = sim.state.armies.filter((a) => a.node !== t);
+    sim.state.provinces[t].morale = 0;
+    for (let k = 0; k < 200 && sim.state.provinces[t].owner === 'DE'; k++) defections(sim.ctx);
+    const owner = sim.state.provinces[t].owner;
+    expect(owner).not.toBe('DE');
+    const here = sim.state.armies.filter((a) => a.node === t && a.owner === owner);
+    expect(here.reduce((s, a) => s + (a.units.infantry ?? 0), 0)).toBeGreaterThanOrEqual(1);
+  });
+
+  it('eigene Eisenbahn verkürzt den Weg zum Hafenpunkt', () => {
+    const sim = newSim();
+    const mp = map.provinces.find((p) => p.nation === 'DE' && (p.seaLinks ?? p.seas).length > 0)!;
+    const sea = map.provinces.length + (mp.seaLinks ?? mp.seas)[0];
+    const a: Army = { id: 998, owner: 'DE', node: mp.id, units: { infantry: 2 } };
+    const slow = segmentHours(sim.state, map, a, mp.id, sea);
+    sim.state.provinces[mp.id].buildings.railroad = 1;
+    expect(segmentHours(sim.state, map, a, mp.id, sea)).toBeLessThan(slow);
+    expect(segmentHours(sim.state, map, a, sea, mp.id)).toBeLessThan(slow);
+  });
+});
+
+describe('Bauabbruch', () => {
+  it('ein abgebrochener Bau erstattet die vollen Kosten', () => {
+    const sim = newSim();
+    const berlin = prov('Berlin');
+    const stock = sim.state.nations.DE.stock;
+    const before = { ...stock };
+    expect(sim.apply('DE', { type: 'build', province: berlin, building: 'factory' }).ok).toBe(true);
+    expect(stock.money).toBeLessThan(before.money);
+    expect(sim.apply('DE', { type: 'cancelBuild', province: berlin }).ok).toBe(true);
+    for (const r of ALL_RES) expect(stock[r]).toBeCloseTo(before[r], 6);
+  });
+});
+
+describe('Ein- und Ausschiffen angreifbar', () => {
+  it('wer beim Einschiffen am Hafenpunkt gestellt wird, kämpft mit halber Stärke ohne Fernkampf und schifft danach weiter ein', () => {
+    const sim = newSim();
+    sim.apply('DE', { type: 'declareWar', nation: 'FR' });
+    const mp = map.provinces.find((p) => p.nation === 'DE' && (p.seaLinks ?? []).length > 0)!;
+    const sea = map.provinces.length + mp.seaLinks![0];
+    const de: Army = { id: sim.state.nextArmyId++, owner: 'DE', node: mp.id, units: { infantry: 10, artillery: 2 }, morale: 1 };
+    sim.state.armies.push(de);
+    expect(sim.apply('DE', { type: 'move', army: de.id, to: sea }).ok).toBe(true);
+    // bis in die Wartezeit am Hafenpunkt
+    const land = harborLeg(map, mp.id, sea) / UNITS.artillery.speed;
+    sim.advance(Math.ceil((land + 0.5) * HOUR));
+    const loc = armyLocation(de, sim.state.time);
+    expect('road' in loc).toBe(true);
+    const f = 'road' in loc ? loc.road.f : 0;
+    // Franzosen kurz vor dem Hafenpunkt auf demselben Weg, Ziel: die wartende Armee
+    const fr: Army = { id: sim.state.nextArmyId++, owner: 'FR', node: mp.id, pos: { a: mp.id, b: sea, f: f - 0.002 }, units: { infantry: 30 }, morale: 1 };
+    sim.state.armies.push(fr);
+    expect(sim.apply('FR', { type: 'move', army: fr.id, to: mp.id, toward: sea, frac: f }).ok).toBe(true);
+    sim.advance(5 * MINUTE);
+    expect(de.move ?? null).toBeNull();
+    expect(de.boarding).toBe(true);
+    expect(fr.boarding).toBeFalsy();
+    expect(maxRange(de, map)).toBe(0);
+    const full = meleeOutput(sim.state, map, { ...de, boarding: undefined });
+    expect(meleeOutput(sim.state, map, de)).toBeLessThan(full);
+    expect(de.resume).toBeTruthy();
+  });
+});
+
+describe('Mehrere Angreifer, Abzug im Frieden', () => {
+  it('greifen zwei nicht verfeindete Nationen dieselbe Stadt an, erobert die stärkere; die andere zieht ohne Krieg ab', () => {
+    const sim = newSim();
+    const ch = map.provinces.find((p) => p.nation === 'CH' && p.neighbors.some((n) => map.provinces[n].nation === 'DE'))!.id;
+    sim.apply('DE', { type: 'declareWar', nation: 'CH' });
+    sim.apply('IT', { type: 'declareWar', nation: 'CH' });
+    sim.state.armies = sim.state.armies.filter((a) => a.node !== ch);
+    const de: Army = { id: sim.state.nextArmyId++, owner: 'DE', node: ch, units: { infantry: 30 } };
+    const it: Army = { id: sim.state.nextArmyId++, owner: 'IT', node: ch, units: { infantry: 10 } };
+    const sw: Army = { id: sim.state.nextArmyId++, owner: 'CH', node: ch, units: { infantry: 2 } };
+    sim.state.armies.push(de, it, sw);
+    for (let k = 0; k < 10 && sim.state.provinces[ch].owner === 'CH'; k++) combatRound(sim.ctx);
+    expect(sim.state.provinces[ch].owner).toBe('DE');
+    expect(sim.state.armies.includes(it)).toBe(true);
+    // Italien zieht in eigenes Gebiet ab: kein Krieg mit Deutschland nötig
+    const home = map.provinces.find((p) => p.nation === 'IT')!.id;
+    expect(requiredWars(sim.state, map, it, { node: home })).toEqual([]);
+    expect(sim.apply('IT', { type: 'move', army: it.id, to: home }).ok).toBe(true);
+    expect(atWar(sim.state, 'IT', 'DE')).toBe(false);
+  });
+
+  it('Wege und Wegpunkte im Friedensgebiet verlangen keinen Krieg, fremde Städte schon', () => {
+    const sim = newSim();
+    const p = map.provinces.find((x) => x.nation === 'DE' && (x.links ?? []).some((n) => map.provinces[n].nation === 'NL'))!;
+    const nl = p.links!.find((n) => map.provinces[n].nation === 'NL')!;
+    const a: Army = { id: sim.state.nextArmyId++, owner: 'DE', node: nl, pos: { a: p.id, b: nl, f: 0.8 }, units: { infantry: 5 } };
+    sim.state.armies.push(a);
+    expect(requiredWars(sim.state, map, a, { node: p.id })).toEqual([]);
+    expect(requiredWars(sim.state, map, a, { road: { a: p.id, b: nl, f: 0.95 } })).toEqual([]);
+    expect(requiredWars(sim.state, map, a, { node: nl })).toEqual(['NL']);
+  });
+});
+
+describe('Nahkampfbegrenzung und zufällige Treffer', () => {
+  it('Beispiel: 2 Panzer + 100 Infanterie machen 5,6 mehr Schaden als 110 Infanterie (100 % Moral)', () => {
+    const sim = newSim();
+    // neutraler Ort an Land (keine eigene Provinz → Angriffswerte)
+    const at = map.provinces.find((p) => p.nation === 'FR')!.id;
+    const a: Army = { id: 1, owner: 'DE', node: at, units: { tank: 2, infantry: 100 }, morale: 1 };
+    const b: Army = { id: 2, owner: 'IT', node: at, units: { infantry: 110 }, morale: 1 };
+    expect(meleeOutput(sim.state, map, b)).toBeCloseTo(35 * 1.2, 9);
+    expect(meleeOutput(sim.state, map, a) - meleeOutput(sim.state, map, b)).toBeCloseTo(5.6, 9);
+    // unter 20 Einheiten zählt jede voll
+    expect(meleeOutput(sim.state, map, { ...b, units: { infantry: 10 } })).toBeCloseTo(12, 9);
+  });
+
+  it('Treffer werden je Einheit ausgewürfelt: viele Infanteristen schützen den Panzer', () => {
+    let tankLost = 0, infLost = 0;
+    const rnd = makeRng(7);
+    for (let k = 0; k < 50; k++) {
+      const a: Army = { id: 1, owner: 'DE', node: 0, units: { tank: 1, infantry: 100 } };
+      applyDamage(a, 200, rnd);
+      tankLost += 1 - (a.units.tank ?? 0);
+      infLost += 100 - (a.units.infantry ?? 0);
+    }
+    expect(tankLost).toBeLessThan(10);
+    expect(infLost / 50).toBeGreaterThanOrEqual(8);
+  });
+});
+
+describe('Lebenspunkte der Infanterie nach Moral', () => {
+  it('8 bei 10 % Moral, 20 bei 77,5 %, 24 bei 100 %', () => {
+    const rnd = makeRng(1);
+    const inf = (morale: number): Army => ({ id: 1, owner: 'DE', node: 0, units: { infantry: 1 }, morale });
+    expect(unitHp(inf(0.1), 'infantry')).toBeCloseTo(8, 9);
+    expect(unitHp(inf(0.775), 'infantry')).toBeCloseTo(20, 9);
+    expect(unitHp(inf(1), 'infantry')).toBeCloseTo(24, 9);
+    const strong = inf(1);
+    applyDamage(strong, 23, rnd);
+    expect(strong.units.infantry).toBe(1);
+    const weak = inf(0.1);
+    applyDamage(weak, 8, rnd);
+    expect(weak.units.infantry ?? 0).toBe(0);
+    // Panzer: unabhängig von der Moral
+    expect(unitHp({ id: 2, owner: 'DE', node: 0, units: { tank: 1 }, morale: 0.1 }, 'tank')).toBe(50);
+  });
+});
+
+describe('Reparatur', () => {
+  it('Maschinen bekommen zum Tageswechsel 1/7 der fehlenden Lebenspunkte zurück, Infanterie nicht; im Nahkampf keine Reparatur', () => {
+    const sim = newSim();
+    const berlin = prov('Berlin');
+    const a: Army = { id: sim.state.nextArmyId++, owner: 'DE', node: berlin, units: { tank: 2, infantry: 5 }, wounds: { tank: 35, infantry: 10 } };
+    sim.state.armies.push(a);
+    sim.advance(DAY);
+    expect(a.wounds!.tank).toBeCloseTo(30, 9);
+    expect(a.wounds!.infantry).toBe(10);
+    // kleine Wunden: mindestens 5 % von 50 = 2,5 je Tag, bis sie ganz verheilt sind
+    const b: Army = { id: sim.state.nextArmyId++, owner: 'DE', node: berlin, units: { tank: 1 }, wounds: { tank: 4 } };
+    sim.state.armies.push(b);
+    repairMachines(sim.state);
+    expect(b.wounds!.tank).toBeCloseTo(1.5, 9);
+    repairMachines(sim.state);
+    expect(b.wounds!.tank).toBeUndefined();
+    // im Nahkampf: keine Reparatur
+    sim.apply('DE', { type: 'declareWar', nation: 'FR' });
+    sim.state.armies.push({ id: sim.state.nextArmyId++, owner: 'FR', node: berlin, units: { infantry: 1 } });
+    const before = a.wounds!.tank!;
+    repairMachines(sim.state);
+    expect(a.wounds!.tank).toBe(before);
   });
 });

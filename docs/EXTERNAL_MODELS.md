@@ -38,14 +38,14 @@ Typdefinitionen (maßgeblich): `src/game/bridgeProtocol.ts` (Nachrichten, Karten
 ```jsonc
 {"type":"build","province":12,"building":"factory"}      // railroad, harbor, fortress, factory, manufactory, barracks, recruitment, office
                                                          // läuft schon ein Bau: kommt in die Bauschleife (bezahlt beim Start)
-{"type":"cancelBuild","province":12}                     // laufenden Bau abbrechen (50 % zurück)
+{"type":"cancelBuild","province":12}                     // laufenden Bau abbrechen (Kosten kommen ganz zurück)
 {"type":"dequeueBuild","province":12,"index":0}          // geplantes Gebäude aus der Bauschleife nehmen
 {"type":"enqueue","province":12,"unit":"tank"}           // artillery, armoredCar, tank, railgun, battleship (Infanterie entsteht automatisch)
 {"type":"dequeue","province":12,"index":0}
 {"type":"setRepeat","province":12,"repeat":true}
 {"type":"switchBuilding","province":12,"building":"barracks","on":false}   // Kaserne/Eisenbahn abschalten: kein Unterhalt, keine Wirkung
 {"type":"moveCapital","province":12}                     // Hauptstadt verlegen (20000 Geld, je 5000 Holz/Eisen/Getreide/Kohle, 48 h)
-{"type":"cancelCapitalMove"}                             // Verlegung abbrechen (50 % zurück)
+{"type":"cancelCapitalMove"}                             // Verlegung abbrechen (Kosten kommen ganz zurück)
 {"type":"move","army":57,"to":180}                       // Provinz oder Seegebiet; Landungen werden automatisch geplant
 {"type":"stop","army":57}
 {"type":"attack","army":57,"target":91}                  // Fernkampfziel, null hebt auf

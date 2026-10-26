@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState, useRef } from 'react';
 import { ALL_RES, DAY, HOUR, RES_NAMES, SPEEDS } from '../game/balance.ts';
-import { atWar, hasRightOfWay } from '../game/diplomacy.ts';
+import { atWar } from '../game/diplomacy.ts';
 import { nodeName } from '../game/graph.ts';
 import { armyLocation, engagedTarget, isRangedOnly, planRoute, routePoints, type MoveTarget } from '../game/military.ts';
-import { targetOwners, type Action } from '../game/actions.ts';
+import { requiredWars, type Action } from '../game/actions.ts';
 import { MultiArmyPanel } from './MultiArmyPanel.tsx';
 import { UNITS, type UnitType } from '../game/balance.ts';
 import type { Army } from '../game/types.ts';
@@ -98,9 +98,10 @@ export function GameView({ start, onExit }: { start: SessionStart; onExit(): voi
     const dest = 'node' in hoverTarget ? nodeName(map, hoverTarget.node)
       : `Weg ${nodeName(map, hoverTarget.road.a)} – ${nodeName(map, hoverTarget.road.b)}`;
     let longest = 0;
-    const neutral = targetOwners(map, state, hoverTarget)
-      .filter((o) => o !== state.playerNation && !atWar(state, state.playerNation, o) && !hasRightOfWay(state, state.playerNation, o));
+    const wars = new Set<string>();
     const out = own.slice(0, 12).map((a) => {
+      const neutral = requiredWars(state, map, a, hoverTarget);
+      neutral.forEach((o) => wars.add(o));
       const r = planRoute(state, map, neutral.length ? { ...a, warOn: neutral } : a, state.time, hoverTarget);
       if (!r) return { pts: [] as [number, number][], label: '' };
       longest = Math.max(longest, r.hours);
@@ -111,7 +112,7 @@ export function GameView({ start, onExit }: { start: SessionStart; onExit(): voi
     const first = out.find((x) => x.pts.length > 1);
     if (!first) return [{ pts: [], label: `${dest}: kein Weg` }];
     const eta = state.paused ? `${Math.round(longest)} h Spielzeit` : fmtDuration((longest * HOUR) / state.speed);
-    const war = neutral.length ? `⚔ Krieg mit ${neutral.map((o) => map.nations.find((n) => n.id === o)?.name ?? o).join(', ')} · ` : '';
+    const war = wars.size ? `⚔ Krieg mit ${[...wars].map((o) => map.nations.find((n) => n.id === o)?.name ?? o).join(', ')} · ` : '';
     first.label = `${war}${'landing' in first && first.landing ? 'Landung: ' : ''}${dest} · ${eta}${own.length > 1 ? ` (${own.length} Armeen)` : ''}`;
     return out;
   }, [own, hoverTarget, state, map]);
@@ -225,8 +226,7 @@ export function GameView({ start, onExit }: { start: SessionStart; onExit(): voi
     ...(declareWar ? { declareWar: true } : {}),
   });
   /** Nationen am Ziel, mit denen Frieden herrscht (ohne Durchmarschrecht): Marsch dorthin bedeutet Krieg */
-  const neutralAt = (t: MoveTarget) => targetOwners(map, state, t)
-    .filter((o) => o !== state.playerNation && !atWar(state, state.playerNation, o) && !hasRightOfWay(state, state.playerNation, o));
+  const neutralAt = (t: MoveTarget) => [...new Set(own.flatMap((a) => requiredWars(state, map, a, t)))];
   /** Rechtsklick: alle ausgewählten eigenen Armeen marschieren dorthin bzw. greifen an */
   const onTarget = async (t: MoveTarget | { army: number }, confirmed = false) => {
     if (!own.length) return;
@@ -244,7 +244,7 @@ export function GameView({ start, onExit }: { start: SessionStart; onExit(): voi
         const other = armies.find((b) => b.id === t.army);
         if (!other || other.id === a.id) continue;
         // reine Fernkampfverbände beschießen Feinde, alle anderen marschieren zum Ziel
-        action = isRangedOnly(a) && atWar(state, state.playerNation, other.owner)
+        action = isRangedOnly(a, map) && atWar(state, state.playerNation, other.owner)
           ? { type: 'attack', army: a.id, target: other.id }
           : moveAction(a.id, place, confirmed);
       } else action = moveAction(a.id, t, confirmed);

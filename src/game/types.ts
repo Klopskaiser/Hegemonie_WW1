@@ -93,6 +93,10 @@ export interface Army {
   name?: string;
   /** vernichtete feindliche Einheiten */
   kills?: number;
+  /** durch Kampf unterbrochener Marschbefehl: wird fortgesetzt, sobald die Armee wieder frei ist */
+  resume?: { node: number } | { road: RoadPos } | null;
+  /** beim Ein- oder Ausschiffen gestellt: halbe Stärke, kein Fernkampf (bis sie weiterzieht) */
+  boarding?: boolean;
 }
 
 /** Beziehungsstufen, von schlecht nach gut */

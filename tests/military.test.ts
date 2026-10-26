@@ -5,7 +5,7 @@ import { BUILDINGS, DAY, HOUR, MINUTE, UNITS } from '../src/game/balance.ts';
 import { atWar, setRelation } from '../src/game/diplomacy.ts';
 import { edgeLength, edgeParts, edgePoint, edgeThrough, isSea, nodePos } from '../src/game/graph.ts';
 import type { MapData } from '../src/game/mapdata.ts';
-import { armyPosition, findPath, meleeOutput, segmentHours, unitCount } from '../src/game/military.ts';
+import { armyPosition, findPath, meleeOutput, segmentHours, unitCount, canEnter, harborLeg, isRangedOnly, maxRange } from '../src/game/military.ts';
 import { MILITARY } from '../src/game/balance.ts';
 import { Simulation } from '../src/game/sim.ts';
 import { createGame } from '../src/game/state.ts';
@@ -112,18 +112,39 @@ describe('See', () => {
     expect(findPath(sim.state, map, fleet, fleet.node, hamburg)).toBeNull();
   });
 
-  it('Einschiffen dauert 3 h, mit eigenem Hafen 1,5 h; fremde Häfen helfen nicht', () => {
+  it('Ein- und Ausschiffen dauern 2 h an der Wassergrenze, mit eigenem Hafen 1 h; fremde Häfen helfen nicht', () => {
     const sim = newSim();
     const hamburg = prov('Hamburg');
     const army = garrison(sim, 'DE', hamburg)!;
     const sea = map.provinces.length + (map.provinces[hamburg].seaLinks ?? map.provinces[hamburg].seas)[0];
-    const travel = edgeLength(map, hamburg, sea) / MILITARY.transportSpeed;
-    expect(segmentHours(sim.state, map, army, hamburg, sea)).toBeCloseTo(travel + 3);
+    const land = harborLeg(map, hamburg, sea);
+    const travel = land / UNITS.infantry.speed + (edgeLength(map, hamburg, sea) - land) / MILITARY.transportSpeed;
+    expect(segmentHours(sim.state, map, army, hamburg, sea)).toBeCloseTo(travel + 2);
     sim.state.provinces[hamburg].buildings.harbor = 1;
-    expect(segmentHours(sim.state, map, army, hamburg, sea)).toBeCloseTo(travel + 1.5);
-    expect(segmentHours(sim.state, map, army, sea, hamburg)).toBeCloseTo(travel + 1.5);
+    expect(segmentHours(sim.state, map, army, hamburg, sea)).toBeCloseTo(travel + 1);
+    expect(segmentHours(sim.state, map, army, sea, hamburg)).toBeCloseTo(travel + 1);
+    // fremder Hafen (Feind): kein Vorteil; dort zählt auch das halbe Tempo im Feindesland
     sim.state.provinces[hamburg].owner = 'FR';
-    expect(segmentHours(sim.state, map, army, sea, hamburg)).toBeCloseTo(travel + 3);
+    const hostile = land / (UNITS.infantry.speed * 0.5) + (edgeLength(map, hamburg, sea) - land) / MILITARY.transportSpeed;
+    expect(segmentHours(sim.state, map, army, sea, hamburg)).toBeCloseTo(hostile + 2);
+  });
+
+  it('Artillerie und Eisenbahngeschütze haben auf See keine Reichweite und kämpfen im Nahkampf; Geschütze an Land nur auf Bahn', () => {
+    const sim = newSim();
+    const sea = map.provinces.length;
+    const art: Army = { id: 997, owner: 'DE', node: sea, units: { artillery: 2, railgun: 1 } };
+    expect(maxRange(art, map)).toBe(0);
+    expect(isRangedOnly(art, map)).toBe(false);
+    // Nahkampf: volle Wirkung (kein Fernkampfabzug), aber halbe Stärke auf See
+    expect(meleeOutput(sim.state, map, art)).toBeCloseTo((2 * UNITS.artillery.attack + UNITS.railgun.attack) * MILITARY.seaFactor);
+    const berlin = prov('Berlin');
+    const rg: Army = { id: 996, owner: 'DE', node: berlin, units: { railgun: 1 } };
+    expect(maxRange(rg, map)).toBe(UNITS.railgun.range);
+    expect(canEnter(sim.state, map, rg, sea)).toBe(true);
+    const n = map.provinces[berlin].neighbors.find((x) => map.provinces[x].nation === 'DE')!;
+    expect(canEnter(sim.state, map, rg, n)).toBe(false);
+    sim.state.provinces[n].buildings.railroad = 1;
+    expect(canEnter(sim.state, map, rg, n)).toBe(true);
   });
 
   it('Landtruppen kämpfen auf See mit halber Stärke, Schlachtschiffe voll', () => {
