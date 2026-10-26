@@ -174,12 +174,14 @@ export interface UnitDef {
   upkeep: Cost;
   naval?: boolean;
   railOnly?: boolean;
+  /** Sichtweite in km, falls größer als die übliche (MILITARY.viewRange) */
+  sight?: number;
 }
 
 export const UNITS: Record<UnitType, UnitDef> = {
   infantry: {
     name: 'Infanterie', short: 'Inf', cost: {}, hours: 0,
-    requires: {}, auto: true, speed: 36, attack: 1, defense: 1.5, hp: 20, range: 0, upkeep: { grain: 20 },
+    requires: {}, auto: true, speed: 36, attack: 1, defense: 1.5, hp: 20, range: 0, upkeep: { grain: 18 },
   },
   artillery: {
     name: 'Artillerie', short: 'Art', cost: { money: 10000, iron: 3000, oil: 2000 }, hours: 96,
@@ -196,11 +198,11 @@ export const UNITS: Record<UnitType, UnitDef> = {
   railgun: {
     name: 'Eisenbahngeschütz', short: 'EBG', cost: { money: 50000, iron: 10000, lumber: 5000, coal: 5000, oil: 10000 }, hours: 62,
     requires: { factory: 3, railroad: 1 }, speed: 12.5, attack: 6, defense: 1, hp: 30, range: 250,
-    upkeep: { oil: 10, coal: 40 }, railOnly: true,
+    upkeep: { oil: 10, coal: 40 }, railOnly: true, sight: 200,
   },
   battleship: {
     name: 'Schlachtschiff', short: 'SS', cost: { money: 50000, iron: 15000, coal: 10000, oil: 5000 }, hours: 96,
-    requires: { factory: 3, harbor: 1 }, speed: 30, attack: 5, defense: 4, hp: 80, range: 150, upkeep: { oil: 30, coal: 30 }, naval: true,
+    requires: { factory: 3, harbor: 1 }, speed: 30, attack: 5, defense: 4, hp: 80, range: 150, upkeep: { oil: 30, coal: 30 }, naval: true, sight: 200,
   },
 };
 
@@ -217,8 +219,8 @@ export const MILITARY = {
   /** Ein- bzw. Ausschiffen; mit befreundetem Hafen am Ort nur halb so lange */
   embarkHours: 3,
   harborEmbarkFactor: 0.5,
-  /** Sichtweite eigener Armeen (km) */
-  viewRange: 120,
+  /** Sichtweite eigener Armeen (km); Eisenbahngeschütze und Schlachtschiffe siehe UNITS.sight */
+  viewRange: 100,
   /** Fernkampfeinheiten im Nahkampf */
   meleeRangedFactor: 0.5,
   /** Landtruppen auf See kämpfen mit halber Stärke (Schlachtschiffe voll) */

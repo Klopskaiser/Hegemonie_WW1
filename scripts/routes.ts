@@ -106,6 +106,15 @@ function blockedShare(pts: Pt[], ok: (x: number, y: number) => boolean, from = 0
 /** Seewege über Land durchs Wasser legen (Provinz–See ab dem Hafenpunkt, See–See ganz). */
 export function waterRoutes(map: MapData, anyLand: (x: number, y: number) => boolean): Road[] {
   const water = (x: number, y: number) => !anyLand(x, y);
+  const P = map.provinces.length;
+  // grob zuerst; scheitert es (enge Meerengen), fein in einem schmaleren Streifen;
+  // um Inseln herum braucht es mitunter einen größeren Suchbereich
+  const route = (a: Pt, b: Pt) => rasterPath(a, b, water) ?? rasterPath(a, b, water, 0.12, 1.5) ?? rasterPath(a, b, water, 1.2) ?? rasterPath(a, b, water, 0.6, 2.5);
+  const coast = map.provinces.map(() => [] as Pt[]);
+  for (const b of map.borders) {
+    if (b.b >= 0) continue;
+    for (let k = 0; k < b.segs.length; k += 2) coast[b.a].push([b.segs[k], b.segs[k + 1]]);
+  }
   const out: Road[] = [];
   for (let u = 0; u < nodeCount(map); u++) {
     for (const v of nodeNeighbors(map, u)) {
@@ -113,12 +122,33 @@ export function waterRoutes(map: MapData, anyLand: (x: number, y: number) => boo
       const pts = edgePoints(map, u, v);
       const fromHarbor = !isSea(map, u) ? 1 : 0;
       if (blockedShare(pts, water, fromHarbor) <= 0.03) continue;
-      const a = pts[fromHarbor], b = pts[pts.length - 1];
-      // grob zuerst; scheitert es (enge Meerengen), fein in einem schmaleren Streifen
-      // um Inseln herum braucht es mitunter einen größeren Suchbereich
-      const path = rasterPath(a, b, water) ?? rasterPath(a, b, water, 0.12, 1.5) ?? rasterPath(a, b, water, 1.2) ?? rasterPath(a, b, water, 0.6, 2.5);
+      const b = pts[pts.length - 1];
+      let path = route(pts[fromHarbor], b);
+      let harbor = pts[fromHarbor];
+      // Hafenweg: lässt sich vom üblichen Einschiffpunkt kein Weg durchs Wasser finden (oder bleibt er
+      // über Land), wird ein anderer Küstenpunkt zu diesem Seegebiet gewählt – der stadtnächste, der passt
+      if (fromHarbor && (!path || blockedShare(path, water) > 0.03)) {
+        const zone = map.seas[v - P].polys.flatMap((poly) => poly.flatMap((ring) => {
+          const r: Pt[] = [];
+          for (let k = 0; k < ring.length; k += 2) r.push([ring[k], ring[k + 1]]);
+          return r;
+        }));
+        const city = pts[0];
+        const cands = coast[u]
+          .filter((c) => zone.some((z) => Math.hypot(z[0] - c[0], z[1] - c[1]) < 12))
+          .sort((x, y) => Math.hypot(x[0] - city[0], x[1] - city[1]) - Math.hypot(y[0] - city[0], y[1] - city[1]));
+        const tried = new Set<string>();
+        for (const c of cands) {
+          const k = `${Math.round(c[0] / 15)},${Math.round(c[1] / 15)}`;
+          if (tried.has(k)) continue;
+          tried.add(k);
+          if (tried.size > 12) break;
+          const p = route(c, b);
+          if (p && blockedShare(p, water) <= 0.03) { path = p; harbor = c; break; }
+        }
+      }
       if (!path) continue;
-      out.push({ a: u, b: v, pts: flat([...pts.slice(0, fromHarbor), ...path]), split: 0.5 });
+      out.push({ a: u, b: v, pts: flat(fromHarbor ? [pts[0], harbor, ...path.slice(1)] : path), split: 0.5 });
     }
   }
   return out;
@@ -226,6 +256,27 @@ export function bundleRoutes(map: MapData, shapes: MultiPoly[]): BundleResult {
     }
     return bad <= 1;
   };
+  const boxes = shapes.map((sh) => {
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const poly of sh) for (const [x, y] of poly[0]) { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); }
+    return [x0, y0, x1, y1];
+  });
+  /** Anteil der Strecke in Provinzen außer den erlaubten (Wasser zählt nicht) */
+  const foreignShare = (pts: Pt[], allowed: number[]) => {
+    const l = line(pts);
+    let bad = 0, total = 0;
+    for (let s = 2; s < l.len; s += 4) {
+      const p = pointAt(l, s);
+      total++;
+      if (allowed.some((i) => inProv(i, p))) continue;
+      for (let i = 0; i < shapes.length; i++) {
+        const b = boxes[i];
+        if (p[0] < b[0] || p[0] > b[2] || p[1] < b[1] || p[1] > b[3]) continue;
+        if (inProv(i, p)) { bad++; break; }
+      }
+    }
+    return total ? bad / total : 0;
+  };
   const splitOf = (pts: Pt[], u: number, m: number) => {
     const l = line(pts);
     for (let s = 0; s <= l.len; s += 2) {
@@ -304,12 +355,15 @@ export function bundleRoutes(map: MapData, shapes: MultiPoly[]): BundleResult {
       }
       for (const m of members) {
         const pts = simplify([...trunk, ...tails.get(m)!.slice(1)], 0.5);
+        // führt der gebündelte Weg durch eine dritte Provinz, bleibt es beim bisherigen Weg
+        if (foreignShare(pts, [u, m]) > 0.03) continue;
         roads.push({ a: u, b: m, pts: flat(pts), split: splitOf(pts, u, m) });
       }
       for (let i = 0; i < members.length; i++) for (let j = i + 1; j < members.length; j++) {
         const a = members[i], b = members[j];
         if (adjacent(a, b)) continue;
         const pts: Pt[] = [...[...tails.get(a)!].reverse(), ...tails.get(b)!.slice(1)];
+        if (foreignShare(pts, [a, b, u]) > 0.03) continue;
         const l = line(pts);
         let f0 = -1, f1 = -1;
         for (let s = 0; s <= l.len; s += 2) if (inProv(u, pointAt(l, s))) { if (f0 < 0) f0 = s / l.len; f1 = s / l.len; }
@@ -356,29 +410,35 @@ export function snapSeaLanes(map: MapData): { roads: Road[]; junctions: BundleRe
       }
       return best;
     });
-    const seaPart: Pt[] = [];
-    let changed = false;
-    let k = 0;
-    while (k < samples.length) {
+    // Läufe entlang eines Rückgrats; mehrere Läufe auf demselben Rückgrat werden verbunden, damit der Weg
+    // es nicht verlässt, um später wieder einzumünden (kein Abzweig ohne Ziel)
+    const runs: { k: number; e: number; b: number }[] = [];
+    for (let k = 0; k < samples.length;) {
       const h = hits[k];
-      if (h) {
-        let e = k;
-        while (e + 1 < samples.length && hits[e + 1] && hits[e + 1]!.b === h.b) e++;
-        if (samples[e].s - samples[k].s >= minRun) {
-          const bl = backbone[h.b];
-          const s0 = h.s, s1 = hits[e]!.s;
-          const part = s0 <= s1 ? sliceLine(bl, s0, s1) : sliceLine(bl, s1, s0).reverse();
-          if (k > 0) junctions.push({ node: lane.a, x: r1(part[0][0]), y: r1(part[0][1]) });
-          if (e < samples.length - 1) junctions.push({ node: lane.a, x: r1(part[part.length - 1][0]), y: r1(part[part.length - 1][1]) });
-          seaPart.push(...part);
-          changed = true;
-          k = e + 1;
-          continue;
-        }
+      if (!h) { k++; continue; }
+      let e = k;
+      while (e + 1 < samples.length && hits[e + 1] && hits[e + 1]!.b === h.b) e++;
+      if (samples[e].s - samples[k].s >= minRun) {
+        const prev = runs[runs.length - 1];
+        if (prev && prev.b === h.b && Math.sign(hits[e]!.s - hits[k]!.s) === Math.sign(hits[prev.e]!.s - hits[prev.k]!.s)) prev.e = e;
+        else runs.push({ k, e, b: h.b });
       }
-      seaPart.push(samples[k].p);
-      k++;
+      k = e + 1;
     }
+    const seaPart: Pt[] = [];
+    const changed = runs.length > 0;
+    let k = 0;
+    for (const r of runs) {
+      for (; k < r.k; k++) seaPart.push(samples[k].p);
+      const bl = backbone[r.b];
+      const s0 = hits[r.k]!.s, s1 = hits[r.e]!.s;
+      const part = s0 <= s1 ? sliceLine(bl, s0, s1) : sliceLine(bl, s1, s0).reverse();
+      if (r.k > 0) junctions.push({ node: lane.a, x: r1(part[0][0]), y: r1(part[0][1]) });
+      if (r.e < samples.length - 1) junctions.push({ node: lane.a, x: r1(part[part.length - 1][0]), y: r1(part[part.length - 1][1]) });
+      seaPart.push(...part);
+      k = r.e + 1;
+    }
+    for (; k < samples.length; k++) seaPart.push(samples[k].p);
     // Anfang und Ende des Seeteils exakt erhalten
     const start = lane.pts[lane.fixed], end = lane.pts[lane.pts.length - 1];
     if (seaPart[0][0] !== start[0] || seaPart[0][1] !== start[1]) seaPart.unshift(start);

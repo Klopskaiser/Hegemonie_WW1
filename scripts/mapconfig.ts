@@ -43,4 +43,8 @@ export interface MapConfig {
   renames: Record<string, string>;
   /** Inseln (Punkt [lon, lat] auf der Insel), die unabhängig von ihrer Größe genau eine Provinz bilden */
   ownIslands?: [number, number][];
+  /** Stadt (Mittelpunkt) einer Provinz an eine andere Stelle [lon, lat] verlegen */
+  cityAt?: Record<string, [number, number]>;
+  /** Wasserwege je Provinz fest vorgeben (Namen der Seegebiete) */
+  seaLinks?: Record<string, string[]>;
 }

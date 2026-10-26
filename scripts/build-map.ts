@@ -620,7 +620,9 @@ const provinces: MapProvince[] = provs.map((pr, i) => {
     name = best.name;
   }
   biggestPop[i] = place?.pop ?? 0;
-  const center: Pt = place && pointInMulti(place.pos[0], place.pos[1], shape) ? place.pos : pr.seed.pos;
+  let center: Pt = place && pointInMulti(place.pos[0], place.pos[1], shape) ? place.pos : pr.seed.pos;
+  const moved = place ? config.cityAt?.[place.name] : undefined;
+  if (moved) center = snapInside(project(moved), shape, 80) ?? center;
   const lonlat = unproject(center);
   // Küste = grenzt an ein befahrbares Seegebiet (Binnenseen zählen nicht)
   const coastal = provSeas[i].length > 0;
@@ -958,6 +960,92 @@ function routeOnLand(u: number, v: number, via: Pt, wide = false): { a: number; 
     }
   }
   console.log(`Landwege mit eigenem Verlauf (sonst übers Wasser): ${roads.length}`);
+
+  // Wege, die trotz eigener Führung durch eine dritte Provinz laufen, entfallen (sofern jede Provinz
+  // mindestens 2 behält); dafür kommen kurze, saubere Wege anderswo hinzu – innerhalb der Grenzen
+  // (höchstens 5 je Provinz, 5 selten). Insgesamt sinkt die Zahl der Wege dabei um höchstens 10.
+  const routePts = (u: number, v: number): Pt[] => {
+    const r = roads.find((x) => (x.a === u && x.b === v) || (x.a === v && x.b === u));
+    if (!r) return [provinces[u].center as Pt, edgeInfo.get(key(u, v))!.via, provinces[v].center as Pt];
+    const pts: Pt[] = [];
+    for (let k = 0; k < r.pts.length; k += 2) pts.push([r.pts[k], r.pts[k + 1]]);
+    return r.a === u ? pts : pts.reverse();
+  };
+  const thirdShare = (pts: Pt[], u: number, v: number) => {
+    let bad = 0, total = 0;
+    for (let k = 0; k + 1 < pts.length; k++) {
+      const n = Math.max(2, Math.ceil(dist(pts[k], pts[k + 1]) / 4));
+      for (let s = 1; s < n; s++) {
+        const x = pts[k][0] + ((pts[k + 1][0] - pts[k][0]) * s) / n, y = pts[k][1] + ((pts[k + 1][1] - pts[k][1]) * s) / n;
+        total++;
+        const at = provinceIndexAt(x, y);
+        if (at >= 0 && at !== u && at !== v) bad++;
+      }
+    }
+    return total ? bad / total : 0;
+  };
+  const countLinks = () => provinces.reduce((t, p) => t + links[p.id].size, 0) / 2;
+  const startCount = countLinks();
+  let dropped = 0, added = 0;
+  const badLinks: [number, number, number][] = [];
+  for (const p of provinces) for (const n of links[p.id]) if (n > p.id) {
+    const sh = thirdShare(routePts(p.id, n), p.id, n);
+    if (sh > 0.03) badLinks.push([p.id, n, sh]);
+  }
+  badLinks.sort((a, b) => b[2] - a[2]);
+  console.log('Wege durch dritte Provinzen:', badLinks.map(([u, v, sh]) => `${provinces[u].name}–${provinces[v].name} ${Math.round(sh * 100)} % (${links[u].size}/${links[v].size})`).join(', ') || 'keine');
+  for (const [u, v] of badLinks) {
+    if (!removable(u, v)) continue;
+    remove(u, v);
+    const i = roads.findIndex((x) => (x.a === u && x.b === v) || (x.a === v && x.b === u));
+    if (i >= 0) roads.splice(i, 1);
+    dropped++;
+  }
+  const fives = () => provinces.filter((p) => links[p.id].size >= 5).length;
+  /** sauberen Weg u–v anlegen (ohne Wasser und dritte Provinzen, innerhalb der Grenzen); true bei Erfolg */
+  const tryAdd = (u: number, v: number): boolean => {
+    if (links[u].has(v) || links[u].size >= 5 || links[v].size >= 5) return false;
+    if ((links[u].size === 4 || links[v].size === 4) && fives() + 1 > provinces.length * 0.08) return false;
+    const via = edgeInfo.get(key(u, v))!.via;
+    const straight: Pt[] = [provinces[u].center as Pt, via, provinces[v].center as Pt];
+    let r: ReturnType<typeof routeOnLand> = null;
+    if (!segmentOnLand(straight[0], via, anyLand) || !segmentOnLand(via, straight[2], anyLand) || thirdShare(straight, u, v) > 0.03) {
+      r = routeOnLand(u, v, via);
+      if (!r) return false;
+      const pts: Pt[] = [];
+      for (let k = 0; k < r.pts.length; k += 2) pts.push([r.pts[k], r.pts[k + 1]]);
+      if (thirdShare(pts, u, v) > 0.03) return false;
+    }
+    links[u].add(v);
+    links[v].add(u);
+    if (r) roads.push(r);
+    added++;
+    return true;
+  };
+  // Provinzen mit nur 2 Wegen erst einen sauberen Ersatz geben, damit der schlechte Weg entfallen kann
+  for (const [u, v] of badLinks) {
+    if (!links[u].has(v) || removable(u, v)) continue;
+    for (const w of [u, v]) {
+      if (links[w].size > 2) continue;
+      const opts = provinces[w].neighbors.filter((x) => !links[w].has(x)).sort((a, b) => score(w, a) - score(w, b));
+      for (const x of opts) if (tryAdd(w, x)) break;
+    }
+    if (removable(u, v)) {
+      remove(u, v);
+      const i = roads.findIndex((x) => (x.a === u && x.b === v) || (x.a === v && x.b === u));
+      if (i >= 0) roads.splice(i, 1);
+      dropped++;
+    }
+  }
+  const cands: [number, number][] = [];
+  for (const p of provinces) for (const n of p.neighbors) if (n > p.id && !links[p.id].has(n)) cands.push([p.id, n]);
+  cands.sort((a, b) => score(a[0], a[1]) - score(b[0], b[1]));
+  for (const [u, v] of cands) {
+    if (countLinks() >= startCount) break;
+    tryAdd(u, v);
+  }
+  provinces.forEach((p, i) => (p.links = [...links[i]].sort((a, b) => a - b)));
+  console.log(`Wege durch dritte Provinzen gestrichen: ${dropped}, als Ersatz angelegt: ${added}, Wege jetzt: ${countLinks()} (vorher ${startCount})`);
   // Wasserwege: jede Küstenprovinz mindestens einer (dort liegt der Hafen), höchstens 2 – Inseln ohne
   // Landnachbarn bis 4. Behalten werden die Seegebiete, die der Stadt am nächsten liegen.
   const seaDist = (p: MapProvince, z: number) => {
@@ -968,6 +1056,9 @@ function routeOnLand(u: number, v: number, via: Pt, wide = false): { a: number; 
   for (const p of provinces) {
     const max = p.neighbors.length === 0 ? 4 : 2;
     p.seaLinks = [...p.seas].sort((a, b) => seaDist(p, a) - seaDist(p, b)).slice(0, max).sort((a, b) => a - b);
+    // feste Vorgabe aus der Konfiguration
+    const fixed = config.seaLinks?.[p.name];
+    if (fixed) p.seaLinks = fixed.map((n) => seaZones.findIndex((z) => z.name === n)).filter((z) => z >= 0 && p.seas.includes(z));
   }
   const seaTotal = provinces.reduce((t, p) => t + p.seas.length, 0), seaKept = provinces.reduce((t, p) => t + p.seaLinks!.length, 0);
   console.log(`Wasserwege: ${seaKept} von ${seaTotal} Küstenanbindungen`);

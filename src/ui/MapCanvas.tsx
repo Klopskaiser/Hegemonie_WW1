@@ -2,8 +2,9 @@
 // Provinzgrenzen, kräftige Staatsgrenzen, Städte- und Armeesymbole.
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import type { Sight } from '../game/visibility.ts';
 import type { Res } from '../game/balance.ts';
-import { closestOnEdge, edgeParts, edgePoints, edgeSlice, edgeVia, harborSea, isSea, nodeCount, nodeNeighbors, nodePos } from '../game/graph.ts';
+import { closestOnEdge, edgeParts, edgePoints, edgeSlice, harborSea, isSea, nodeCount, nodeNeighbors, nodePos } from '../game/graph.ts';
 import type { MapData } from '../game/mapdata.ts';
 import { armyPosition, isNaval, normalizeTarget, remainingRoute, unitCount, type MoveTarget } from '../game/military.ts';
 import { makeRng } from '../game/rng.ts';
@@ -44,8 +45,8 @@ interface Props {
   time?: number;
   /** eigene Nation: deren Marschwege werden gezeichnet */
   nation?: string;
-  /** sichtbare Knoten; übrige Provinzen liegen im Nebel */
-  visible?: Set<number> | null;
+  /** Sicht des Spielers: ganz einsehbare Provinzen und Sichtkreise; alles andere liegt im Nebel */
+  visible?: Sight | null;
   /** Provinzzustände für Gebäudesymbole (Schienen, Hafen, Festung); nur in sichtbaren Provinzen gezeichnet */
   provinces?: readonly ProvinceState[];
   selected?: number | null;
@@ -230,7 +231,7 @@ export function MapCanvas(props: Props) {
       if (node === null) return null;
       const c = map.seas[node - map.provinces.length].center;
       // Hafen am Knickpunkt des Wasserwegs (Küstenpunkt zum vorgelagerten Seegebiet)
-      const best = edgeVia(map, i, node) ?? mp.center;
+      const best = edgePoints(map, i, node)[1] ?? mp.center;
       const len = Math.hypot(c[0] - best[0], c[1] - best[1]) || 1;
       return { x: best[0], y: best[1], dx: (c[0] - best[0]) / len, dy: (c[1] - best[1]) / len };
     });
@@ -268,6 +269,7 @@ export function MapCanvas(props: Props) {
     view.current = { s, ox: w / 2 - ((x0 + x1) / 2) * s, oy: h / 2 - ((y0 + y1) / 2) * s };
   };
 
+  const fogRef = useRef<HTMLCanvasElement | null>(null);
   const draw = () => {
     frame.current = 0;
     const canvas = canvasRef.current, el = wrapRef.current;
@@ -307,10 +309,32 @@ export function MapCanvas(props: Props) {
         ctx.fill(prepared.paths[i]);
       }
     }
-    // Nebel des Krieges: nicht einsehbare Provinzen abdunkeln
+    // Nebel des Krieges: fremde Provinzen abdunkeln, ausgenommen die Sichtkreise der eigenen Armeen
     if (p.visible) {
-      ctx.fillStyle = 'rgba(105, 95, 80, 0.32)';
-      for (let i = 0; i < map.provinces.length; i++) if (!p.visible.has(i)) ctx.fill(prepared.paths[i]);
+      const fog = (fogRef.current ??= document.createElement('canvas'));
+      if (fog.width !== canvas.width || fog.height !== canvas.height) {
+        fog.width = canvas.width;
+        fog.height = canvas.height;
+      }
+      const f = fog.getContext('2d')!;
+      f.setTransform(1, 0, 0, 1, 0, 0);
+      f.clearRect(0, 0, fog.width, fog.height);
+      f.setTransform(dpr * s, 0, 0, dpr * s, dpr * ox, dpr * oy);
+      f.globalCompositeOperation = 'source-over';
+      f.fillStyle = 'rgba(105, 95, 80, 0.32)';
+      for (let i = 0; i < map.provinces.length; i++) if (!p.visible.full.has(i)) f.fill(prepared.paths[i]);
+      f.globalCompositeOperation = 'destination-out';
+      f.fillStyle = '#000';
+      f.beginPath();
+      for (const [cx, cy, r] of p.visible.circles) {
+        f.moveTo(cx + r, cy);
+        f.arc(cx, cy, r, 0, Math.PI * 2);
+      }
+      f.fill();
+      ctx.save();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.drawImage(fog, 0, 0);
+      ctx.restore();
     }
     if (hoverRef.current !== null && !compact && hoverRef.current < map.provinces.length) {
       ctx.fillStyle = 'rgba(255, 250, 230, 0.28)';
@@ -428,17 +452,20 @@ export function MapCanvas(props: Props) {
       drawRails(ctx, rails, s);
     }
 
+    // Symbole wachsen beim Hineinzoomen mit, höchstens um 40 % (bei größter Zoomstufe); kleiner als bisher werden sie nie
+    const Z = 1 + 0.4 * Math.max(0, Math.min(1, Math.log(s / 0.6) / Math.log(4 / 0.6)));
+
     // Rohstoffsymbole: immer sichtbar in der Mitte der Provinz, in der Rohstoffansicht größer
     if (s > 0.1 && !compact) {
       const big = p.mode === 'resources';
-      const size = (big ? (s > 0.5 ? 20 : 16) : s > 0.5 ? 15 : 12) * 1.1;
+      const size = (big ? (s > 0.5 ? 20 : 16) : s > 0.5 ? 15 : 12) * 1.1 * Z;
       for (const mp of map.provinces) {
         const n = mp.double ? 2 : 1;
         const mx = X(mp.mid[0]);
         let my = Y(mp.mid[1]);
         // liegt die Mitte auf Stadt/Armee, etwas nach unten ausweichen
         const cx = X(mp.center[0]), cy = Y(mp.center[1]);
-        if (Math.abs(mx - cx) < 24 && Math.abs(my - cy) < 18) my = cy + 20;
+        if (Math.abs(mx - cx) < 24 * Z && Math.abs(my - cy) < 18 * Z) my = cy + 20 * Z;
         const x = mx - (n * size) / 2, y = my - size / 2;
         if (!visible(x, y)) continue;
         const img = iconImage(mp.resource, schedule);
@@ -457,8 +484,8 @@ export function MapCanvas(props: Props) {
     if (p.morale && !compact && s > 0.12) {
       map.provinces.forEach((mp, i) => {
         if (p.morale![i] >= DEFECTION.threshold || (p.visible && !p.visible.has(i))) return;
-        const x = X(mp.center[0]) + 14, y = Y(mp.center[1]) - 14;
-        if (visible(x, y)) drawFist(ctx, x, y);
+        const x = X(mp.center[0]) + 14 * Z, y = Y(mp.center[1]) - 14 * Z;
+        if (visible(x, y)) drawFist(ctx, x, y, Z);
       });
     }
 
@@ -468,7 +495,7 @@ export function MapCanvas(props: Props) {
         const spot = prepared.harborSpots[i];
         if (!spot || !shown(i) || p.provinces![i].buildings.harbor <= 0) return;
         const x = X(spot.x) + spot.dx * 5, y = Y(spot.y) + spot.dy * 5;
-        if (visible(x, y)) drawAnchor(ctx, x, y);
+        if (visible(x, y)) drawAnchor(ctx, x, y, Z);
       });
     }
 
@@ -482,18 +509,18 @@ export function MapCanvas(props: Props) {
           ctx.strokeStyle = INK;
           ctx.lineWidth = 1.2;
           ctx.beginPath();
-          ctx.arc(x, y, 5.5, 0, Math.PI * 2);
+          ctx.arc(x, y, 5.5 * Z, 0, Math.PI * 2);
           ctx.fill();
           ctx.stroke();
-          star(ctx, x, y, 4.2, '#7a1f12');
+          star(ctx, x, y, 4.2 * Z, '#7a1f12');
         } else {
           ctx.fillStyle = '#f3e5bf';
           ctx.strokeStyle = INK;
           ctx.lineWidth = 1.1;
-          ctx.fillRect(x - 3.5, y - 3.5, 7, 7);
-          ctx.strokeRect(x - 3.5, y - 3.5, 7, 7);
+          ctx.fillRect(x - 3.5 * Z, y - 3.5 * Z, 7 * Z, 7 * Z);
+          ctx.strokeRect(x - 3.5 * Z, y - 3.5 * Z, 7 * Z, 7 * Z);
           ctx.fillStyle = INK;
-          ctx.fillRect(x - 1.5, y - 1.5, 3, 3);
+          ctx.fillRect(x - 1.5 * Z, y - 1.5 * Z, 3 * Z, 3 * Z);
         }
       }
 
@@ -502,8 +529,8 @@ export function MapCanvas(props: Props) {
         map.provinces.forEach((mp, i) => {
           const lvl = p.provinces![i].buildings.fortress;
           if (lvl <= 0 || !shown(i)) return;
-          const x = X(mp.center[0]) - 13, y = Y(mp.center[1]) + 1;
-          if (visible(x, y)) drawFortress(ctx, x, y, lvl);
+          const x = X(mp.center[0]) - 13 * Z, y = Y(mp.center[1]) + 1;
+          if (visible(x, y)) drawFortress(ctx, x, y, lvl, Z);
         });
       }
 
@@ -647,7 +674,7 @@ export function MapCanvas(props: Props) {
         const small = s < 0.35;
         const pins = p.armies.filter((a) => unitCount(a) > 0).map((a) => {
           const [px, py] = armyPosition(map, a, time);
-          return { a, x: X(px), y: Y(py), angle: -80, len: small ? 20 : 28 };
+          return { a, x: X(px), y: Y(py), angle: -80, len: (small ? 20 : 28) * Z };
         }).filter((q) => visible(q.x, q.y, 60));
         // Gruppen naher Nadeln bilden und Winkel verteilen
         const done = new Set<number>();
@@ -663,10 +690,10 @@ export function MapCanvas(props: Props) {
           // Köpfe auf einem Bogen verteilen; Radius so, dass benachbarte Köpfe sich nicht überdecken
           const n = group.length;
           const spread = Math.min(150, 40 * (n - 1));
-          const radius = Math.max(pins[i].len, (small ? 22 : 30) * (n - 1) / ((spread * Math.PI) / 180));
+          const radius = Math.max(pins[i].len, (small ? 22 : 30) * Z * (n - 1) / ((spread * Math.PI) / 180));
           group.forEach((g, k) => {
             pins[g].angle = -90 - spread / 2 + (k * spread) / (n - 1);
-            pins[g].len = radius + (k % 2 ? (small ? 4 : 7) : 0);
+            pins[g].len = radius + (k % 2 ? (small ? 4 : 7) * Z : 0);
           });
         }
         for (const q of pins) drawNeedle(ctx, q.x, q.y, q.angle, q.len);
@@ -676,7 +703,7 @@ export function MapCanvas(props: Props) {
           heads.set(q.a.id, [hx, hy]);
           pinList.push({ id: q.a.id, owner: q.a.owner, tx: q.x, ty: q.y, hx, hy });
           const t = drawPinHead(ctx, hx, hy, pinShapes(q.a), prepared.colors.get(q.a.owner) ?? '#888', unitCount(q.a), small,
-            chosenSet.has(q.a.id) || lassoSel.has(q.a.id));
+            chosenSet.has(q.a.id) || lassoSel.has(q.a.id), Z);
           hits.push({ id: q.a.id, ...t });
         }
       }
@@ -1063,8 +1090,11 @@ function drawRails(ctx: CanvasRenderingContext2D, segs: [number, number, number,
 }
 
 /** Rebellionsfaust: erhobene Faust auf rotem Grund */
-function drawFist(ctx: CanvasRenderingContext2D, x: number, y: number) {
+function drawFist(ctx: CanvasRenderingContext2D, x0: number, y0: number, k = 1) {
   ctx.save();
+  ctx.translate(x0, y0);
+  ctx.scale(k, k);
+  const x = 0, y = 0;
   ctx.fillStyle = '#8f1d14';
   ctx.strokeStyle = '#f3e5bf';
   ctx.lineWidth = 1.2;
@@ -1090,8 +1120,11 @@ function drawFist(ctx: CanvasRenderingContext2D, x: number, y: number) {
 }
 
 /** Hafen: Anker auf blauem Grund */
-function drawAnchor(ctx: CanvasRenderingContext2D, x: number, y: number) {
+function drawAnchor(ctx: CanvasRenderingContext2D, x0: number, y0: number, k = 1) {
   ctx.save();
+  ctx.translate(x0, y0);
+  ctx.scale(k, k);
+  const x = 0, y = 0;
   ctx.fillStyle = '#2f4f6b';
   ctx.strokeStyle = '#f3e5bf';
   ctx.lineWidth = 1.2;
@@ -1116,8 +1149,11 @@ function drawAnchor(ctx: CanvasRenderingContext2D, x: number, y: number) {
 }
 
 /** Festung: Turm mit Zinnen, darunter die Stufe */
-function drawFortress(ctx: CanvasRenderingContext2D, x: number, y: number, level: number) {
+function drawFortress(ctx: CanvasRenderingContext2D, x0: number, y0: number, level: number, k = 1) {
   ctx.save();
+  ctx.translate(x0, y0);
+  ctx.scale(k, k);
+  const x = 0, y = 0;
   ctx.fillStyle = '#8a8378';
   ctx.strokeStyle = INK;
   ctx.lineWidth = 1;
@@ -1199,8 +1235,9 @@ function shapeSize(sh: PinShape, k: number): [number, number] {
 /** Ein Nadelkopf je Armee: die Formen aller Einheitentypen übereinander, daneben die Zahl der Einheiten. */
 function drawPinHead(
   ctx: CanvasRenderingContext2D, cx: number, cy: number, shapes: PinShape[], color: string, count: number, small: boolean, selected: boolean,
+  zoom = 1,
 ): { x: number; y: number; w: number; h: number } {
-  const k = small ? 0.75 : 1;
+  const k = (small ? 0.75 : 1) * zoom;
   let hw = 0, hh = 0;
   for (const sh of shapes) {
     const [w, h] = shapeSize(sh, k);
@@ -1237,10 +1274,10 @@ function drawPinHead(
     ctx.stroke();
   }
   // Zahl der Einheiten
-  ctx.font = `bold ${small ? 8 : 10}px Georgia, serif`;
+  ctx.font = `bold ${Math.round((small ? 8 : 10) * zoom)}px Georgia, serif`;
   const label = String(count);
-  const lw = ctx.measureText(label).width + 6;
-  const lh = small ? 12 : 14;
+  const lw = ctx.measureText(label).width + 6 * zoom;
+  const lh = (small ? 12 : 14) * zoom;
   const bx = cx + hw + 3, by = cy - lh / 2;
   ctx.fillStyle = 'rgba(245, 235, 210, 0.95)';
   ctx.strokeStyle = 'rgba(40, 28, 16, 0.8)';

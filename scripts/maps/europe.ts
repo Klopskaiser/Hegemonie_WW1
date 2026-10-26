@@ -101,7 +101,7 @@ const config: MapConfig = {
     { id: 'BE', name: 'Belgien', color: '#c6b25f', major: false, capital: 'Brussels' },
     { id: 'CH', name: 'Schweiz', color: '#e3c7c3', major: false, capital: 'Bern' },
     { id: 'DK', name: 'Dänemark', color: '#d88f8a', major: false, capital: 'Kobenhavn' },
-    { id: 'NO', name: 'Norwegen', color: '#a3b9d6', major: false, capital: 'Oslo' },
+    { id: 'NO', name: 'Norwegen', color: '#a3b9d6', major: true, capital: 'Oslo' },
     { id: 'PT', name: 'Portugal', color: '#a7c69a', major: false, capital: 'Lisbon' },
     { id: 'SR', name: 'Serbien', color: '#a8866e', major: false, capital: 'Belgrade' },
     { id: 'MN', name: 'Montenegro', color: '#937d9c', major: false, capital: 'Podgorica' },
@@ -115,12 +115,19 @@ const config: MapConfig = {
       'Ajaccio': 'lumber', // Korsika: Wald statt Eisen
       'Palermo': 'oil', 'Ploiești': 'oil', 'Bukarest': 'grain', // Öl Sizilien, Rumänien am echten Ölfeld
       'Cork': 'fish', 'Bari': 'fish', 'Vlora': 'fish', // mehr Fisch
-      // sechs Küsten-Getreideprovinzen werden Fischfang, zwei Gasprovinzen Eisen
-      'Danzig': 'fish', 'Barcelona': 'fish', 'Valencia': 'fish', 'Alexandria': 'fish', 'Montpellier': 'fish', 'Jaffa': 'fish',
+      'Danzig': 'fish', 'Barcelona': 'fish', 'Alexandria': 'fish', // Küsten-Getreide wird Fischfang
       'Mailand': 'iron', 'Agadir': 'iron',
+      // Ausgleich (Ziel: Getreide 45, Fisch 22, Eisen 33, Holz 33, Kohle 34, Gas 27, Öl 16 Symbole)
+      'Hamburg': 'fish', 'Turm Severin': 'coal', 'Samsun': 'lumber', 'Agram': 'lumber', 'Bergen': 'fish',
+      'Montpellier': 'grain', 'Valencia': 'grain', 'Jaffa': 'grain',
+      'Glasgow': 'iron', 'Dresden': 'iron', 'Bilbao': 'iron', 'Athen': 'iron',
+      'Konstanza': 'gas', 'Niš': 'lumber', 'Kragujevac': 'coal', 'Tromsø': 'iron', 'Mo i Rana': 'gas',
     },
-    // Doppel-Öl im Sirte-Becken und im Kaukasus; die Nationen behalten je 2 Doppelprovinzen
-    doubles: { add: ['Sirte', 'Jerewan'], remove: ['Bani Walid', 'Samara'] },
+    // Doppel-Öl im Sirte-Becken und im Kaukasus; jede Großmacht hat genau 2 Doppelprovinzen
+    doubles: {
+      add: ['Sirte', 'Jerewan', 'Hamburg', 'Turm Severin', 'Samsun', 'Agram', 'Bergen', 'Tromsø', 'Kragujevac'],
+      remove: ['Bani Walid', 'Samara', 'Niš'],
+    },
   },
   oilLimit: { MG: 2, LY: 2, EG: 2, RU: 2, NO: 1, AL: 1 },
   hotspots: [
@@ -173,6 +180,10 @@ const config: MapConfig = {
   ],
   // Sizilien ist eine Provinz (Palermo); die zweite süditalienische Provinz liegt auf dem Festland
   ownIslands: [[13.36, 38.12]],
+  // Patras auf die Peloponnes, damit der Weg nach Kalamata im eigenen Gebiet bleibt
+  cityAt: { Patras: [21.74, 38.24] },
+  // Samsun: ein Hafen nahe der Stadt zum Schwarzen Meer II
+  seaLinks: { Samsun: ['Schwarzes Meer II'] },
   renames: {
     'Istanbul': 'Konstantinopel', 'Saint Petersburg': 'St. Petersburg', 'Kaliningrad': 'Königsberg',
     'Wroclaw': 'Breslau', 'Gdansk': 'Danzig', 'Szczecin': 'Stettin', 'Poznan': 'Posen',

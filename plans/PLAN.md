@@ -43,9 +43,9 @@
   (Quellen: Fan-Wikis, offizielles Forum/Hilfecenter, Guides – teils widersprüchlich).
 - Stärkeskala der Einheiten nach älterer Version: Infanterie ≈ 1, Panzerwagen 2, Panzer 4.
 - Nahrung wird anteilig zur Produktion aus Getreide und Fisch verbraucht.
-- Europakarte: 13 Spielernationen + 11 neutrale Kleinstaaten, 176 Provinzen (Wunsch: 160–180).
+- Europakarte: 14 Spielernationen + 10 neutrale Kleinstaaten, 177 Provinzen (Wunsch: 160–180).
   Spielernationen: Deutsches Reich, Österreich-Ungarn, Frankreich, Großbritannien, Italien,
-  Russland, Osmanisches Reich, Spanien, Schweden, Rumänien sowie in Afrika Marokko (Marokko +
+  Russland, Osmanisches Reich, Spanien, Schweden, Norwegen, Rumänien sowie in Afrika Marokko (Marokko +
   Algerien, Hauptstadt Rabat), Libyen (Libyen + Tunesien) und Ägypten. Frankreich, Italien und GB haben keine
   Kolonien mehr auf der Karte; Malta → Italien, Zypern → Osmanisches Reich, Island → Dänemark.
   Nicht streng historisch, wo es dem Spiel dient. Persien gibt es nicht.
@@ -70,7 +70,12 @@
   - Feste Vorgaben danach (`adjust` in `scripts/maps/europe.ts`): Schweden Luleå/Sundsvall Holz,
     Korsika Holz, Öl in Palermo und Ploiești, Doppel-Öl in Sirte (Libyen) und Jerewan (Kaukasus),
     Fisch in Cork, Bari und Vlora. Das Skript prüft, dass jede Spielernation weiter genau 2 Doppelprovinzen hat.
+  - Ausgleich (Symbole, Doppel = 2): Getreide 45, Fisch 22, Eisen 33, Holz 33, Kohle 34, Gas 27, Öl 16.
+    Norwegen: Doppel-Fisch Bergen, Doppel-Eisen Tromsø. Serbien verliert Doppel-Holz Niš, bekommt
+    Doppel-Kohle in Kragujevac.
 - Rohstoffsymbole stehen in der Mitte der Provinz (Punkt mit größtem Randabstand).
+- Symbole (Rohstoffe, Nadelköpfe, Hauptstadt, Stadt, Festung, Hafen, Aufstand) wachsen beim
+  Hineinzoomen bis +40 % bei größter Zoomstufe; kleiner als die Grundgröße werden sie nie.
 - M3: Beziehungen Krieg < Embargo < Frieden < Durchmarschrecht < geteilte Karte, für beide Seiten
   gleich; verschlechtern einseitig, verbessern per Angebot. Durchmarsch: Betreten erlaubt, Häfen
   befreundet. Geteilte Karte: gemeinsame Sicht. Börse: Angebote je Rohstoff mit Rücklage, 3 Tage
@@ -116,8 +121,9 @@
   Verteidiger in eigener Provinz Verteidigung, Festung mindert Schaden, Moral wirkt mit.
   Fernkampfeinheiten feuern selbständig auf Feinde in Reichweite. Eroberung bei Ankunft ohne
   Gegner; Hauptstadtfall: Moral +10 % Sieger / −15 % Verlierer. Aufständische ab Moral < 25 %.
-- Nebel: Sicht auf eigene Provinzen, Nachbarn und 120 km um eigene Armeen; Festung ab Stufe 2
-  verbirgt die Truppen ihres Besitzers.
+- Nebel: eigene Provinzen (und die von Partnern mit geteilter Karte) sind ganz einsehbar, sonst nur
+  ein Kreis von 100 km um jede eigene Armee (Eisenbahngeschütz und Schlachtschiff 200 km). Festung ab
+  Stufe 2 verbirgt die Truppen ihres Besitzers in dessen Provinz.
 - KI (M2): Kriege erst nach 3 Tagen Friedenszeit, Großmächte gegen deutlich schwächere Nachbarn,
   5 Tage Waffenstillstand nach Frieden. Kleinstaaten starten mit Besatzung in jeder Provinz und
   Festung 2 in der Hauptstadt. Flotten bewegt die KI noch nicht (M4).
@@ -147,7 +153,7 @@
   eingestellten derselben Kategorie ein, Rohstoffe auf 0 % werden nur durch festen Unterhalt
   (Einheiten, Gebäude) verbraucht. Startwerte anteilig zur eigenen Produktion; die KI verteilt
   nach Vorrat plus fünf Tagen Bilanz und schont Öl. Eisenbahn-Unterhalt 500 Kohle/Tag.
-  Infanterie verbraucht ihre 20 Getreide jetzt fest (nicht mehr als frei verteilbare Nahrung).
+  Infanterie verbraucht ihre Getreideration (jetzt 18 je Tag) fest (nicht mehr als frei verteilbare Nahrung).
 - Karte: Eisenbahnen als Schienen von der Stadt zum nächstgelegenen Punkt jeder Nachbargrenze,
   Hafen als Anker am Küstenpunkt zum vorgelagerten Seegebiet, Festung als Turm mit Stufe neben der
   Stadt; Gebäude nur in einsehbaren Provinzen.
@@ -234,3 +240,12 @@
   Grenze (z. B. Archangelsk → Kiruna/Luleå/Tromsø/Vadsø). Seewege werden global zusammengelegt: längere Wege
   sind Rückgrat, kürzere übernehmen deren Verlauf, wo sie ihm über ≥ 40 km auf ≤ 25 km nahekommen
   (Kreuzungspunkte unter 20 km Abstand zusammengefasst).
+- Seewege verlassen ein gemeinsames Rückgrat nicht mehr, um später ohne Zwischenziel wieder einzumünden
+  (Läufe auf demselben Rückgrat werden verbunden). Hafenwege, die vom üblichen Einschiffpunkt nicht durchs
+  Wasser führen, bekommen einen anderen Küstenpunkt zu diesem Seegebiet (der stadtnächste, der passt);
+  das Hafensymbol sitzt am tatsächlichen Einschiffpunkt.
+- Landwege durch eine dritte Provinz werden gestrichen, sofern beide Provinzen mindestens 2 Wege behalten
+  (Provinzen mit 2 Wegen bekommen vorher einen sauberen Ersatz); als Ausgleich entstehen kurze, saubere
+  Wege anderswo (Gesamtzahl gleich). Gebündelte Wege und Abkürzungen durch dritte Provinzen entfallen.
+  Patras liegt auf der Peloponnes (`cityAt`), damit Patras–Kalamata im eigenen Gebiet bleibt.
+- Samsun hat genau einen Hafen nahe der Stadt zum Schwarzen Meer II (`seaLinks`).

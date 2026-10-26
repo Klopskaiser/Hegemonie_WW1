@@ -8,7 +8,7 @@ export interface MapInfo {
 }
 
 export const MAPS: MapInfo[] = [
-  { id: 'europe', name: 'Europa 1914', description: '13 Spielernationen mit je 10 Provinzen und elf neutrale Kleinstaaten, 176 Provinzen.', available: true },
+  { id: 'europe', name: 'Europa 1914', description: '14 Spielernationen mit je 10 Provinzen und zehn neutrale Kleinstaaten, 177 Provinzen.', available: true },
   { id: 'world', name: 'Weltkarte', description: 'Alle Kontinente, rund dreißig Nationen. Folgt mit Meilenstein M5.', available: false },
   { id: 'asia', name: 'Asien', description: 'Von Persien bis Japan. Folgt mit Meilenstein M5.', available: false },
 ];

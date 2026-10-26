@@ -44,7 +44,8 @@ Kartenbau nötig, nicht zur Laufzeit.
   - `military.ts` Wegfindung (`planRoute`, Ziele auch auf Wegen), Marsch, Nah-/Fernkampf, Truppenmoral,
     Eroberung, Überlaufen von Provinzen. `names.ts` Armeenamen und -nummern.
   - `graph.ts` Bewegungsnetz: Knoten 0..P-1 Provinzen, P.. Seegebiete; Landwege knicken an der Grenze
-    (`edgePoints`, `edgePoint`). `visibility.ts` Nebel des Krieges.
+    (`edgePoints`, `edgePoint`). `visibility.ts` Nebel des Krieges (`Sight`: ganz einsehbare
+    Provinzen + Sichtkreise um Armeen).
   - `diplomacy.ts` Beziehungsstufen (Krieg, Embargo, Frieden, Durchmarsch, geteilte Karte).
   - `market.ts` Börse (Angebote mit Rücklage), `newspaper.ts` Tageszeitung; Sieg in `sim.ts`.
   - `economy.ts` Produktion, Verbrauch, Moral, Siegpunkte.

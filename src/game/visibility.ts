@@ -1,83 +1,65 @@
 // Nebel des Krieges: was eine Nation sieht.
+// Eigene Provinzen sind immer ganz einsehbar; dazu sieht jede eigene Armee in einem Umkreis um sich
+// (100 km, Eisenbahngeschütze und Schlachtschiffe 200 km). Partner mit geteilter Karte zählen mit.
 
-import { MILITARY } from './balance.ts';
-import { isSea, nodeCount, nodeNeighbors, nodePos } from './graph.ts';
+import { MILITARY, UNITS } from './balance.ts';
+import { isSea, nodeCount, nodePos } from './graph.ts';
 import type { MapData } from './mapdata.ts';
 import { sharesMap } from './diplomacy.ts';
-import { armyPosition } from './military.ts';
+import { armyPosition, unitTypes } from './military.ts';
 import type { Army, GameState } from './types.ts';
 
-/** Sichtbare Knoten (Provinzen und Seegebiete), einschließlich der Sicht von Partnern mit geteilter Karte. */
-export function visibleNodes(state: GameState, map: MapData, nation: string): Set<number> {
-  const vis = new Set<number>();
-  for (const n of [nation, ...mapPartners(state, nation)]) addOwnSight(state, map, n, vis);
-  return vis;
+/**
+ * Sicht einer Nation. Als Menge enthält sie alle Knoten, deren Mittelpunkt einsehbar ist (für Anzeigen
+ * und die KI); `full` sind die ganz einsehbaren Provinzen, `circles` die Sichtkreise der Armeen [x, y, r].
+ */
+export class Sight extends Set<number> {
+  full = new Set<number>();
+  circles: [number, number, number][] = [];
+
+  /** Liegt ein Punkt in Sicht (ganz einsehbare Provinz oder Sichtkreis)? */
+  sees(x: number, y: number, province?: number): boolean {
+    if (province !== undefined && this.full.has(province)) return true;
+    return this.circles.some(([cx, cy, r]) => Math.hypot(cx - x, cy - y) <= r);
+  }
 }
 
-function mapPartners(state: GameState, nation: string): string[] {
-  return Object.keys(state.nations).filter((n) => sharesMap(state, nation, n));
+/** Sichtweite einer Armee (km): die größte ihrer Einheiten */
+export function sightRange(a: Army): number {
+  return Math.max(MILITARY.viewRange, ...unitTypes(a).map((u) => UNITS[u].sight ?? 0));
 }
 
-function addOwnSight(state: GameState, map: MapData, nation: string, vis: Set<number>): void {
+/** Sicht einer Nation einschließlich der Partner mit geteilter Karte. */
+export function visibleNodes(state: GameState, map: MapData, nation: string): Sight {
+  const sight = new Sight();
+  const who = new Set([nation, ...Object.keys(state.nations).filter((n) => n !== nation && sharesMap(state, nation, n))]);
   state.provinces.forEach((ps, i) => {
-    if (ps.owner !== nation) return;
-    vis.add(i);
-    for (const n of nodeNeighbors(map, i)) vis.add(n);
+    if (who.has(ps.owner)) sight.full.add(i);
   });
-  const n = nodeCount(map);
-  const done = new Set<number>();
   for (const a of state.armies) {
-    if (a.owner !== nation) continue;
-    const here = a.move ? [a.move.path[a.move.seg], a.move.path[a.move.seg + 1]] : [a.node];
-    for (const h of here) {
-      vis.add(h);
-      for (const nb of nodeNeighbors(map, h)) vis.add(nb);
-    }
-    // stehende Armeen am Knoten: vorberechnete Sichtweite, je Knoten nur einmal
-    if (!a.move && !a.pos) {
-      if (done.has(a.node)) continue;
-      done.add(a.node);
-      for (const i of inSight(map)[a.node]) vis.add(i);
-      continue;
-    }
-    const pos = armyPosition(map, a, state.time);
-    for (let i = 0; i < n; i++) {
-      const p = nodePos(map, i);
-      if (Math.hypot(p[0] - pos[0], p[1] - pos[1]) <= MILITARY.viewRange) vis.add(i);
-    }
+    if (!who.has(a.owner)) continue;
+    const [x, y] = armyPosition(map, a, state.time);
+    sight.circles.push([x, y, sightRange(a)]);
   }
+  for (let i = 0; i < nodeCount(map); i++) {
+    const [x, y] = nodePos(map, i);
+    if (sight.sees(x, y, isSea(map, i) ? undefined : i)) sight.add(i);
+  }
+  return sight;
 }
 
-const sightCache = new WeakMap<MapData, number[][]>();
-
-/** Je Knoten alle Knoten in Sichtweite (Abstand der Mittelpunkte) */
-function inSight(map: MapData): number[][] {
-  let s = sightCache.get(map);
-  if (!s) {
-    const n = nodeCount(map);
-    s = [];
-    for (let k = 0; k < n; k++) {
-      const q = nodePos(map, k);
-      const list: number[] = [];
-      for (let i = 0; i < n; i++) {
-        const p = nodePos(map, i);
-        if (Math.hypot(p[0] - q[0], p[1] - q[1]) <= MILITARY.viewRange) list.push(i);
-      }
-      s.push(list);
-    }
-    sightCache.set(map, s);
-  }
-  return s;
-}
-
-/** Ist eine Armee für `nation` sichtbar? Festungen ab Stufe 2 verbergen die Truppen ihres Besitzers. */
-export function armyVisible(state: GameState, map: MapData, nation: string, a: Army, vis: Set<number>): boolean {
+/**
+ * Ist eine Armee für `nation` sichtbar? In eigenen Provinzen immer, sonst innerhalb eines Sichtkreises.
+ * Festungen ab Stufe 2 verbergen die Truppen ihres Besitzers in dessen eigener Provinz.
+ */
+export function armyVisible(state: GameState, map: MapData, nation: string, a: Army, vis: Sight): boolean {
   if (a.owner === nation || sharesMap(state, nation, a.owner)) return true;
-  const at = a.move ? [a.move.path[a.move.seg], a.move.path[a.move.seg + 1]] : [a.node];
-  if (!at.some((n) => vis.has(n))) return false;
-  if (!a.move && !isSea(map, a.node)) {
-    const ps = state.provinces[a.node];
-    if (ps.owner === a.owner && ps.buildings.fortress >= 2 && ps.owner !== nation) return false;
+  const [x, y] = armyPosition(map, a, state.time);
+  const province = !isSea(map, a.node) ? a.node : undefined;
+  if (!vis.sees(x, y, province)) return false;
+  if (!a.move && province !== undefined) {
+    const ps = state.provinces[province];
+    if (ps.owner === a.owner && ps.buildings.fortress >= 2 && !vis.full.has(province)) return false;
   }
   return true;
 }

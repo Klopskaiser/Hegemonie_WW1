@@ -3,14 +3,14 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { DAY, HOUR, MINUTE } from '../src/game/balance.ts';
 import { atWar } from '../src/game/diplomacy.ts';
-import { edgeLength, isSea } from '../src/game/graph.ts';
+import { edgeLength, isSea, nodePos } from '../src/game/graph.ts';
 import type { MapData } from '../src/game/mapdata.ts';
 import { findPath, meleeOutput, segmentHours, unitCount } from '../src/game/military.ts';
 import { MILITARY } from '../src/game/balance.ts';
 import { Simulation } from '../src/game/sim.ts';
 import { createGame } from '../src/game/state.ts';
 import type { Army } from '../src/game/types.ts';
-import { armyVisible, visibleNodes } from '../src/game/visibility.ts';
+import { armyVisible, sightRange, visibleNodes } from '../src/game/visibility.ts';
 
 const map: MapData = JSON.parse(fs.readFileSync(path.join(import.meta.dirname, '..', 'public', 'maps', 'europe.json'), 'utf8'));
 
@@ -234,6 +234,19 @@ describe('Nebel des Krieges', () => {
     const berlin = garrison(sim, 'DE', prov('Berlin'))!;
     expect(armyVisible(sim.state, map, 'DE', berlin, vis)).toBe(true);
     expect(armyVisible(sim.state, map, 'DE', madrid, vis)).toBe(false);
+  });
+
+  it('eigene Provinzen ganz, sonst Sichtkreis von 100 km (Eisenbahngeschütz 200 km) um die Armeen', () => {
+    const sim = newSim();
+    const vis = visibleNodes(sim.state, map, 'DE');
+    sim.state.provinces.forEach((ps, i) => expect(vis.full.has(i)).toBe(ps.owner === 'DE'));
+    const berlin = garrison(sim, 'DE', prov('Berlin'))!;
+    expect(sightRange(berlin)).toBe(100);
+    expect(sightRange({ ...berlin, units: { infantry: 5, railgun: 1 } })).toBe(200);
+    const [x, y] = nodePos(map, prov('Berlin'));
+    const here = vis.circles.filter(([cx, cy]) => Math.hypot(cx - x, cy - y) < 1);
+    expect(here.length).toBeGreaterThan(0);
+    expect(vis.sees(x + 99, y)).toBe(true);
   });
 });
 

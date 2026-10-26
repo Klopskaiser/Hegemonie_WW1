@@ -32,7 +32,7 @@ describe('Geld und Unterhalt', () => {
     expect(BUILDINGS.railroad.upkeep?.coal).toBe(500);
     // Infanterie verbraucht fest Getreide
     const infantry = sim.state.armies.filter((a) => a.owner === 'DE').reduce((t, a) => t + (a.units.infantry ?? 0), 0);
-    expect(r.cons.grain).toBe(infantry * 20);
+    expect(r.cons.grain).toBe(infantry * 18);
   });
 });
 
