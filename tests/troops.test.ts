@@ -130,10 +130,10 @@ describe('Truppenmoral', () => {
     expect(nextTroopMorale(0.5, { ...t, hungry: false })).toBeCloseTo(0.6, 9);
     // unter dem Ziel fällt nichts, der Anstieg ist bei Getreidemangel nur +5 %
     expect(nextTroopMorale(0.5, t)).toBeCloseTo(0.55, 9);
-    // Kampfkraft linear: 10 % → 0,4, 77,5 % → 1,0, 100 % → 1,2
-    expect(infantryStrength({ ...a, morale: 0.1 })).toBeCloseTo(0.4, 9);
-    expect(infantryStrength({ ...a, morale: 0.3 })).toBeCloseTo(0.4 + (0.2 * 0.8) / 0.9, 9);
-    expect(infantryStrength({ ...a, morale: 0.775 })).toBeCloseTo(1, 9);
+    // Kampfkraft = 1,2 × Moral: 10 % → 0,12, 83,3 % → 1,0, 100 % → 1,2
+    expect(infantryStrength({ ...a, morale: 0.1 })).toBeCloseTo(0.12, 9);
+    expect(infantryStrength({ ...a, morale: 0.3 })).toBeCloseTo(0.36, 9);
+    expect(infantryStrength({ ...a, morale: 1 / 1.2 })).toBeCloseTo(1, 9);
     expect(infantryStrength({ ...a, morale: 1 })).toBeCloseTo(1.2, 9);
     // nie unter 10 %
     a.morale = TROOP_MORALE.min + 0.02;

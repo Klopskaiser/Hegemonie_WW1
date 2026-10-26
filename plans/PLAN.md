@@ -187,7 +187,7 @@
 - Truppenmoral (nur Infanterie, je Armee): Stärke 0,8 + 0,4 × Moral (50 % = 1,0, 100 % = 1,2).
   Tageswechsel: Annäherung an das Ziel (eigene Provinz: deren Moral; See, Weg, fremdes Gebiet: 50 %;
   ohne Getreide: 10 %), steigen 30 % der Lücke (2–10 Punkte), sinken 25 % (2–8 Punkte). Je
-  Nahkampfrunde −3 Punkte, je Beschuss −1,5, je vernichteter feindlicher Einheit +1 (höchstens +5
+  Nahkampfrunde −2 Punkte, je Beschuss −1,5, je vernichteter feindlicher Einheit +1 (höchstens +5
   je Runde). Neue Rekruten bringen die Provinzmoral mit (gewichtetes Mittel). Maschinen: keine Moral,
   Zustand ohne Einfluss auf die Kampfkraft; Infanterie zeigt keinen Zustand.
 - Überlaufen statt Aufständischer: Provinzen unter 33 % Moral zeigen eine Rebellionsfaust und laufen
@@ -286,9 +286,9 @@
   verlorene Hauptstadt in ihre wertvollste sichere Provinz. Der Stern auf der Karte zeigt die aktive Hauptstadt.
 - Truppenmoral (nur Infanterie): 10–100 %. Ziel = Provinzmoral (stehend in eigener Provinz) bzw. 50 %
   (sonst), bei Getreidemangel −20 %. Zum Tageswechsel geht sie auf das Ziel zu, nie darüber hinaus:
-  höchstens +10 %/−8 %, bei Getreidemangel +5 %/−13 %. Kampfeffekte (Nahkampf −3 %, Beschuss −1,5 %,
+  höchstens +10 %/−8 %, bei Getreidemangel +5 %/−13 %. Kampfeffekte (Nahkampf −2 %, Beschuss −1,5 %,
   Abschüsse +1 % bis +5 % je Runde) wirken sofort und unabhängig davon. Kampfkraft je Moral linear:
-  10 % → 0,4 bis 100 % → 1,2 (1,0 bei 77,5 %). Das Armeefenster zeigt Ziel und Gründe.
+  1,2 × Moral: 10 % → 0,12 bis 100 % → 1,2 (1,0 bei 83,3 %). Das Armeefenster zeigt Ziel und Gründe.
 - Spielbeginn: alle Provinzen und Truppen haben 70 % Moral (Startgeld 100.000).
 - Kämpfe und Eroberungen gelten je Ort: Armeen auf einem Weg kämpfen nur mit Armeen am selben Wegpunkt
   (nicht mit der Besatzung der nächsten Stadt); erobern kann nur, wer in der Stadt steht. Läuft eine
@@ -320,8 +320,8 @@
   Treffer (Nah- und Fernkampf) werden je Einheit ausgewürfelt (jede Einheit gleich wahrscheinlich), ein
   Treffer trifft die Einheit, bis sie fällt; Infanterie schützt so teure Technik. Kämpfe auf Wegen
   beschädigen Gebäude der Provinz, in deren Gebiet gekämpft wird.
-- Lebenspunkte der Infanterie hängen wie ihre Kampfkraft von der Moral ab: 20 × (0,4 bei 10 % … 1,2 bei 100 %),
-  also 8 bis 24 (20 bei 77,5 %). Angeschlagene Einheiten, deren Wunde nach einem Moralverlust über den
+- Lebenspunkte der Infanterie hängen wie ihre Kampfkraft von der Moral ab: 20 × 1,2 × Moral,
+  also 2,4 bis 24 (20 bei 83,3 %). Angeschlagene Einheiten, deren Wunde nach einem Moralverlust über den
   Lebenspunkten liegt, fallen beim nächsten Treffer.
 - Maschinen (alle Einheiten außer Infanterie) reparieren sich zum Tageswechsel um 1/7 ihrer fehlenden
   Lebenspunkte, mindestens aber 5 % der vollen, sofern sie nicht im Nahkampf stehen – so werden sie ganz heil.

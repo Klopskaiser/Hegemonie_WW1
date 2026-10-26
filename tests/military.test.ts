@@ -150,9 +150,9 @@ describe('See', () => {
   it('Landtruppen kämpfen auf See mit halber Stärke, Schlachtschiffe voll', () => {
     const sim = newSim();
     const sea = map.provinces.length;
-    const troops: Army = { id: 999, owner: 'DE', node: sea, units: { infantry: 10 }, morale: 0.775 };
+    const troops: Army = { id: 999, owner: 'DE', node: sea, units: { infantry: 10 }, morale: 1 / 1.2 };
     const fleet: Army = { id: 998, owner: 'DE', node: sea, units: { battleship: 1 } };
-    // Infanterie auf See: Angriffswert × halbe Stärke × Moralfaktor (77,5 % Moral = 1,0)
+    // Infanterie auf See: Angriffswert × halbe Stärke × Moralfaktor (83,3 % Moral = 1,0)
     expect(meleeOutput(sim.state, map, troops)).toBeCloseTo(10 * 1 * 0.5 * 1);
     // Schlachtschiff: keine Moral, im Nahkampf als Fernkampfeinheit halbe Wirkung
     expect(meleeOutput(sim.state, map, fleet)).toBeCloseTo(1 * 5 * 0.5);
@@ -209,7 +209,7 @@ describe('Nahkampf und Fernkampf', () => {
     expect(i1).toBeCloseTo(2 * 1.5 * 1.2);
     tanks.morale = 0.1;
     tanks.wounds = { tank: 40 };
-    inf.morale = 0.775;
+    inf.morale = 1 / 1.2;
     expect(meleeOutput(sim.state, map, tanks)).toBeCloseTo(t1);
     expect(meleeOutput(sim.state, map, inf)).toBeCloseTo(2 * 1.5 * 1.0);
   });

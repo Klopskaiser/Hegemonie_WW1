@@ -154,7 +154,7 @@ export function ArmyPanel({ map, state, army: a, armies, act, onSelectArmy, onSp
       </table>
       {(a.units.infantry ?? 0) > 0 && (
         <>
-          <div className="morale-row" title="Kampfkraft und Lebenspunkte der Infanterie: linear von 0,4-fach bei 10 % Moral bis 1,2-fach bei 100 % (normal 1,0 bei 77,5 %). Sinkt im Kampf, unter Beschuss, bei Getreidemangel und in Provinzen mit niedriger Moral; steigt bei Siegen und in Provinzen mit hoher Moral.">
+          <div className="morale-row" title="Kampfkraft und Lebenspunkte der Infanterie: 1,2 × Moral, also 0,12-fach bei 10 % bis 1,2-fach bei 100 % (normal 1,0 bei 83 %). Sinkt im Kampf, unter Beschuss, bei Getreidemangel und in Provinzen mit niedriger Moral; steigt bei Siegen und in Provinzen mit hoher Moral.">
             <span className="small">Moral der Infanterie</span>
             <Bar value={troopMorale(a)} marker={tt.target} color={troopMorale(a) < 0.33 ? '#a33' : troopMorale(a) < 0.5 ? '#c9952f' : '#5d8a3a'} />
             <span className="small">{Math.round(troopMorale(a) * 100)} % · Stärke ×{infantryStrength(a).toFixed(2)}</span>

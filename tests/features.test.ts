@@ -369,17 +369,17 @@ describe('Nahkampfbegrenzung und zufällige Treffer', () => {
 });
 
 describe('Lebenspunkte der Infanterie nach Moral', () => {
-  it('8 bei 10 % Moral, 20 bei 77,5 %, 24 bei 100 %', () => {
+  it('2,4 bei 10 % Moral, 20 bei 83,3 %, 24 bei 100 %', () => {
     const rnd = makeRng(1);
     const inf = (morale: number): Army => ({ id: 1, owner: 'DE', node: 0, units: { infantry: 1 }, morale });
-    expect(unitHp(inf(0.1), 'infantry')).toBeCloseTo(8, 9);
-    expect(unitHp(inf(0.775), 'infantry')).toBeCloseTo(20, 9);
+    expect(unitHp(inf(0.1), 'infantry')).toBeCloseTo(2.4, 9);
+    expect(unitHp(inf(1 / 1.2), 'infantry')).toBeCloseTo(20, 9);
     expect(unitHp(inf(1), 'infantry')).toBeCloseTo(24, 9);
     const strong = inf(1);
     applyDamage(strong, 23, rnd);
     expect(strong.units.infantry).toBe(1);
     const weak = inf(0.1);
-    applyDamage(weak, 8, rnd);
+    applyDamage(weak, 2.4, rnd);
     expect(weak.units.infantry ?? 0).toBe(0);
     // Panzer: unabhängig von der Moral
     expect(unitHp({ id: 2, owner: 'DE', node: 0, units: { tank: 1 }, morale: 0.1 }, 'tank')).toBe(50);

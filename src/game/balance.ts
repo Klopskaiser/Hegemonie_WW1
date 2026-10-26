@@ -307,13 +307,13 @@ export const TROOP_MORALE = {
   rise: { max: 0.1 },
   fall: { max: 0.08 },
   /** Abzug je Nahkampfrunde bzw. je Fernkampfrunde als Ziel */
-  melee: 0.03,
+  melee: 0.02,
   shelled: 0.015,
   /** Zuwachs je vernichteter feindlicher Einheit, höchstens je Runde */
   perKill: 0.01,
   killMax: 0.05,
-  /** Kampfkraft der Infanterie je Moral, linear: 10 % → 0,4, 100 % → 1,2 (1,0 bei 77,5 %) */
-  strength: [[0.1, 0.4], [1, 1.2]] as [number, number][],
+  /** Kampfkraft (und Lebenspunkte) der Infanterie: 1,2 × Moral – 10 % → 0,12, 100 % → 1,2 (1,0 bei 83,3 %) */
+  strength: [[0, 0], [1, 1.2]] as [number, number][],
   min: 0.1,
 };
 

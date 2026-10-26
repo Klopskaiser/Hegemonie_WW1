@@ -883,7 +883,7 @@ export function applyDamage(a: Army, dmg: number, random: () => number): void {
   }
 }
 
-/** Lebenspunkte einer Einheit: Infanterie nach Moral wie ihre Kampfkraft (10 % → 0,4-fach … 100 % → 1,2-fach) */
+/** Lebenspunkte einer Einheit: Infanterie nach Moral wie ihre Kampfkraft (1,2 × Moral: 10 % → 0,12-fach … 100 % → 1,2-fach) */
 export function unitHp(a: Army, u: UnitType): number {
   return UNITS[u].hp * (u === 'infantry' ? infantryStrength(a) : 1);
 }
