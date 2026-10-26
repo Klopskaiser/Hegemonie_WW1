@@ -87,7 +87,7 @@
 - Kartendaten: Natural Earth (Public Domain), Grenzen von 1914 per Regionszuordnung.
 - Spielstart: jede Provinz mit Wehramt und 10 Infanterie an der Stadt, sonst keine Gebäude.
   Vorräte für alle gleich: 6000 je Rohstoff, +1000 beim häufigsten eigenen Rohstoff (Gleichstand
-  per Zufall), 10.000 Geld. Wählbares Testszenario mit ausgebauten Provinzen und 50.000 je Wert.
+  per Zufall), 100.000 Geld. Wählbares Testszenario mit ausgebauten Provinzen und 50.000 je Wert.
 - Infanterie entsteht nur automatisch: Wehramt 16 h je Infanterie bei 100 % Moral, Kaserne 1: 8 h,
   Kaserne 2: 4 h, Kaserne kostet 1000 Getreide je Stufe und Tag; Kaserne braucht Wehramt, ohne Wehramt halbes Tempo;
   ohne beide keine Infanterie. Fertigung nur für Fabrikeinheiten: Artillerie/Panzerwagen Fabrik 1,
@@ -163,7 +163,7 @@
   geplante Gebäude mit. Nicht mehr mögliche Einträge entfallen mit Meldung. Eroberung leert sie.
 - Bauamt (Vorgabe): 2 Tage, 30000 Geld + 500 Holz, Unterhalt 2000 Geld/Tag, Gebäudebauzeiten
   in seiner Provinz −25 % (bestätigt: nur Gebäude, nur eigene Provinz; Einheiten unverändert).
-- Manufaktur (Vorgabe): 4 Stufen, Rohstoffproduktion +10 % je Stufe (nicht Geld), schließt sich
+- Manufaktur (Vorgabe): 4 Stufen, Rohstoffproduktion +10 % je Stufe (nicht Geld), Moral +2,5 % je Stufe wie die Fabrik, schließt sich
   mit der Fabrik aus, keine Einheiten.
 - Gebäudekosten (Vorgabe, je Stufe gleich; nur die Festung dauert je Stufe länger): Fabrik 10000 Geld,
   2500 Eisen/Holz/Öl, 48 h; Manufaktur 10000 Geld, 2000 Eisen/Holz, 3000 Gas, 50 h; Wehramt 2000 Geld, 500 Holz, 2 h;

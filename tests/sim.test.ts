@@ -163,7 +163,7 @@ describe('Simulation', () => {
       const raw = (['grain', 'fish', 'iron', 'lumber', 'coal', 'oil', 'gas'] as const).map((r) => n.stock[r]);
       expect(raw.filter((v) => v === 7000).length).toBe(1);
       expect(raw.filter((v) => v === 6000).length).toBe(6);
-      expect(n.stock.money).toBe(10000);
+      expect(n.stock.money).toBe(100000);
     }
   });
 

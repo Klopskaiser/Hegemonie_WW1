@@ -7,7 +7,7 @@ import { targetOwners, type Action } from '../game/actions.ts';
 import { MultiArmyPanel } from './MultiArmyPanel.tsx';
 import { UNITS, type UnitType } from '../game/balance.ts';
 import type { Army } from '../game/types.ts';
-import { activeCapital } from '../game/economy.ts';
+import { capitalOf } from '../game/economy.ts';
 import { armyVisible, visibleNodes } from '../game/visibility.ts';
 import { ArmyPanel } from './ArmyPanel.tsx';
 import { Bar } from './common.tsx';
@@ -55,7 +55,10 @@ export function GameView({ start, onExit }: { start: SessionStart; onExit(): voi
 
   const owners = useMemo(() => state?.provinces.map((p) => p.owner) ?? [], [state]);
   const morale = useMemo(() => state?.provinces.map((p) => p.morale) ?? [], [state]);
-  const capitals = useMemo(() => (state && map ? map.nations.map((n) => activeCapital(state, map, n.id)).filter((c) => c >= 0) : []), [state, map]);
+  // Stern nur für Hauptstädte, die ihre Nation noch hält (eroberte zeigen sich als gewöhnliche Stadt)
+  const capitals = useMemo(() => (state && map
+    ? map.nations.map((n) => capitalOf(state, map, n.id)).filter((c): c is number => c !== null)
+    : []), [state, map]);
   const visible = useMemo(() => (state && map ? visibleNodes(state, map, state.playerNation) : null), [state, map]);
   const armies = useMemo<Army[]>(
     () => (state && map && visible ? state.armies.filter((a) => armyVisible(state, map, state.playerNation, a, visible)) : []),

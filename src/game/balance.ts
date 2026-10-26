@@ -99,9 +99,9 @@ export const BUILDINGS: Record<Building, BuildingDef> = {
     cost: () => ({ money: 10000, iron: 2000, lumber: 2000, gas: 3000 }),
     hours: () => 50,
     prodBonus: (l) => 0.1 * l,
-    morale: () => 0,
+    morale: (l) => 0.025 * l,
     excludes: ['factory'],
-    describe: (l) => `Rohstoffproduktion +${10 * l} % (nicht Geld). Keine Fabrik: stellt keine Einheiten her; nicht zusammen mit einer Fabrik.`,
+    describe: (l) => `Rohstoffproduktion +${10 * l} % (nicht Geld), Moral +${(2.5 * l).toLocaleString('de-DE')} %. Keine Fabrik: stellt keine Einheiten her; nicht zusammen mit einer Fabrik.`,
   },
   barracks: {
     name: 'Kaserne', maxLevel: 2,
@@ -330,7 +330,7 @@ export const POINTS = { rural: 1, city: 3, capital: 5, perBuildingLevel: 0.2 };
 
 /** Startvorrat für alle Nationen gleich; +START_BONUS beim häufigsten eigenen Rohstoff */
 export const START_STOCK: Record<Res, number> = {
-  money: 10000, grain: 6000, fish: 6000, iron: 6000, lumber: 6000, coal: 6000, oil: 6000, gas: 6000,
+  money: 100000, grain: 6000, fish: 6000, iron: 6000, lumber: 6000, coal: 6000, oil: 6000, gas: 6000,
 };
 export const START_BONUS = 1000;
 export const START_INFANTRY = 10;
