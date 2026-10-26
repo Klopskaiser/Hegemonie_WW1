@@ -56,6 +56,10 @@ export interface BuildingDef {
   upkeep?: Cost;
   /** kann abgeschaltet werden (spart den Unterhalt, wirkt dann aber auch nicht) */
   switchable?: boolean;
+  /** erst ab diesem Spieltag baubar (Tag 1 = Spielbeginn) */
+  fromDay?: number;
+  /** Leben je Stufe: so viele Treffer im Kampf, bis die oberste Stufe zerstört ist (Standard 2) */
+  lives?: number;
   /** andere Gebäude als Bauvoraussetzung */
   requires?: Partial<Record<Building, number>>;
   /** schließt sich mit diesen Gebäuden in derselben Provinz aus */
@@ -75,10 +79,12 @@ export const BUILDINGS: Record<Building, BuildingDef> = {
     morale: (l) => (l >= 1 ? 0.07 : 0),
     upkeep: { coal: 500 },
     switchable: true,
+    fromDay: 3,
+    lives: 3,
     describe: () => 'Produktion +33 %, Truppen ×2,5 schneller, Moral +7 %. Unterhalt 500 Kohle/Tag.',
   },
   harbor: {
-    name: 'Hafen', maxLevel: 1, coastal: true,
+    name: 'Hafen', maxLevel: 1, coastal: true, fromDay: 3, lives: 3,
     cost: () => ({ money: 10000, lumber: 10000 }),
     hours: () => 72,
     prodBonus: (l) => (l >= 1 ? 0.25 : 0),
@@ -86,7 +92,7 @@ export const BUILDINGS: Record<Building, BuildingDef> = {
     describe: () => 'Produktion +25 %, Moral +7 %, ermöglicht Schiffe und Einschiffen.',
   },
   factory: {
-    name: 'Fabrik', maxLevel: 4,
+    name: 'Fabrik', maxLevel: 4, fromDay: 3,
     cost: () => ({ money: 10000, iron: 2500, lumber: 2500, oil: 2500 }),
     hours: () => 48,
     prodBonus: (l) => FACTORY_BONUS[l],
@@ -132,7 +138,7 @@ export const BUILDINGS: Record<Building, BuildingDef> = {
     describe: () => `Bauzeiten von Gebäuden in dieser Provinz −${Math.round(OFFICE_SPEEDUP * 100)} %. Unterhalt 2000 Geld/Tag.`,
   },
   fortress: {
-    name: 'Festung', maxLevel: 5,
+    name: 'Festung', maxLevel: 5, lives: 1,
     cost: () => ({ money: 4000, iron: 2000 }),
     hours: (l) => 8 * l,
     prodBonus: () => 0,
@@ -140,6 +146,11 @@ export const BUILDINGS: Record<Building, BuildingDef> = {
     describe: (l) => `Schadensminderung ${Math.round(FORTRESS_REDUCTION[l] * 100)} %, Moral +${5 * l} %${l >= 2 ? ', Truppen verborgen' : ''}.`,
   },
 };
+
+/** Leben je Stufe eines Gebäudes */
+export function buildingLives(b: Building): number {
+  return BUILDINGS[b].lives ?? 2;
+}
 
 /** Bauamt: verkürzt Gebäudebauzeiten in seiner Provinz um diesen Anteil */
 export const OFFICE_SPEEDUP = 0.25;
@@ -262,13 +273,14 @@ export const FACTORY_SPEEDUP = 0.25;
 // ---------------------------------------------------------------- Moral
 
 export const MORALE = {
-  base: 1,
+  base: 0.8,
   /** Abzug je 100 km Entfernung zur Hauptstadt ab `distanceFree` km; ohne Hauptstadt der volle Abzug */
   distancePer100: 0.01,
   distanceFree: 300,
   distanceMax: 0.35,
-  /** Kämpfe in der Provinz seit dem letzten Tageswechsel */
+  /** Kämpfe in der Provinz: je Tag in Folge mit Kampf dieser Abzug, höchstens battleMax */
   battle: 0.1,
+  battleMax: 0.3,
   /** je angrenzende eigene Provinz mit Moral unter DEFECTION.threshold */
   unrestNeighbor: 0.02,
   warEach: 0.05,
@@ -356,7 +368,8 @@ export const MARKET = {
   aiRefresh: 3 * 24 * 3600_000,
   /** Preisgrenzen relativ zum Richtpreis */
   minFactor: 0.2,
-  maxFactor: 5,
+  /** Höchstpreis je Einheit (Geld), für alle Rohstoffe */
+  maxPrice: 1000,
   /** Mindestmenge eines Angebots */
   minAmount: 100,
   maxOffersPerNation: 8,

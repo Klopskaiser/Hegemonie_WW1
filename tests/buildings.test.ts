@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { checkBuild } from '../src/game/actions.ts';
-import { BUILDINGS, HOUR } from '../src/game/balance.ts';
+import { BUILDINGS, DAY, HOUR } from '../src/game/balance.ts';
 import { allRates, provinceOutput } from '../src/game/economy.ts';
 import type { MapData } from '../src/game/mapdata.ts';
 import { Simulation } from '../src/game/sim.ts';
@@ -15,6 +15,8 @@ function newSim() {
   const state = createGame(map, { id: 't', name: 'T', playerNation: 'DE', speed: 1, seed: 3, now: 0 });
   for (const n of Object.values(state.nations)) n.controller = 'human';
   for (const r of Object.keys(state.nations.DE.stock) as (keyof typeof state.nations.DE.stock)[]) state.nations.DE.stock[r] = 200000;
+  // Eisenbahn, Fabrik und Hafen sind erst ab Tag 3 baubar
+  state.time = 2 * DAY;
   return new Simulation(state, map);
 }
 

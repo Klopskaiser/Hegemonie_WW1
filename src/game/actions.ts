@@ -2,16 +2,16 @@
 // ausschließlich über diese Aktionen.
 
 import {
-CAPITAL_MOVE,   ALL_RES, BUILD_QUEUE_LIMIT, BUILD_REFUND, BUILDINGS, CATEGORY_RES, FACTORY_SPEEDUP, HOUR, OFFICE_SPEEDUP, QUEUE_LIMIT, RES_NAMES, UNITS,
+CAPITAL_MOVE, DAY, buildingLives,   ALL_RES, BUILD_QUEUE_LIMIT, BUILD_REFUND, BUILDINGS, CATEGORY_RES, FACTORY_SPEEDUP, HOUR, OFFICE_SPEEDUP, QUEUE_LIMIT, RES_NAMES, UNITS,
   type Building, type Category, type Cost, type Res, type UnitType,
 } from './balance.ts';
-import { validShares, activeCapital } from './economy.ts';
+import { validShares, activeCapital, activeLevel } from './economy.ts';
 import { atWar, hasRightOfWay, relation, relationRank, RELATION_NAMES, setRelation } from './diplomacy.ts';
 import { isSea, nodeNeighbors } from './graph.ts';
 import type { MapData, Resource } from './mapdata.ts';
 import { acceptOffer, cancelOffer, postOffer } from './market.ts';
 import {
-  armyPower, halt, inMelee, isNaval, mergeArmies, nearestNode, planRoute, rejoinSplits, samePlace, startMove, unitCount, unitTypes,
+  armyPower, boardingWait, halt, inMelee, isNaval, mergeArmies, nearestNode, planRoute, rejoinSplits, samePlace, startMove, unitCount, unitTypes,
   type MilitaryContext, type MoveTarget,
 } from './military.ts';
 import type { Army, GameState, ProvinceState, Relation, Stock } from './types.ts';
@@ -27,6 +27,8 @@ export type ProvinceAction =
   | { type: 'setRepeat'; province: number; repeat: boolean }
   /** Kaserne oder Eisenbahn ab- bzw. wieder einschalten (kein Unterhalt, keine Wirkung) */
   | { type: 'switchBuilding'; province: number; building: Building; on: boolean }
+  /** beschädigtes Gebäude reparieren (Kosten: Anteil der fehlenden Leben an den Kosten der obersten Stufe) */
+  | { type: 'repair'; province: number; building: Building }
   /** Hauptstadt in diese Provinz verlegen (CAPITAL_MOVE: Kosten, 48 h; je Nation eine Verlegung gleichzeitig) */
   | { type: 'moveCapital'; province: number };
 
@@ -119,7 +121,7 @@ export function plannedBuildings(ps: ProvinceState): Record<Building, number> {
 /** Bauzeit in Stunden; ein Bauamt in der Provinz verkürzt sie */
 export function buildHours(ps: ProvinceState, building: Building, level: number): number {
   const h = BUILDINGS[building].hours(level);
-  return building !== 'office' && ps.buildings.office > 0 ? h * (1 - OFFICE_SPEEDUP) : h;
+  return building !== 'office' && activeLevel(ps, 'office') > 0 ? h * (1 - OFFICE_SPEEDUP) : h;
 }
 
 /** Hindernis für den Bau der nächsten Stufe auf Grundlage der angegebenen Stufen (null = möglich) */
@@ -151,6 +153,9 @@ export function checkBuild(state: GameState, map: MapData, nation: string, provi
     hours: ps && level <= def.maxLevel ? buildHours(ps, building, level) : 0,
   });
   if (!ps || ps.owner !== nation) return res('Provinz gehört nicht dir');
+  const day = Math.floor(state.time / DAY) + 1;
+  if (def.fromDay && day < def.fromDay) return res(`Erst ab Tag ${def.fromDay} baubar`);
+  if (ps.damage?.[building]) return res('Beschädigt – erst reparieren');
   const blocker = buildBlocker(map, province, building, planned!);
   if (blocker) return res(blocker);
   if (queued) {
@@ -160,6 +165,23 @@ export function checkBuild(state: GameState, map: MapData, nation: string, provi
   const cost = def.cost(level);
   if (!canAfford(state.nations[nation].stock, cost)) return res(`Zu wenig ${missing(state.nations[nation].stock, cost)}`);
   return res();
+}
+
+/** Reparatur eines beschädigten Gebäudes: Kosten anteilig zu den fehlenden Leben der obersten Stufe */
+export function checkRepair(state: GameState, nation: string, province: number, building: Building): { ok: boolean; error?: string; cost: Cost } {
+  const ps = state.provinces[province];
+  const lost = ps?.damage?.[building] ?? 0;
+  const full = BUILDINGS[building].cost(Math.max(1, ps?.buildings[building] ?? 1));
+  const share = lost / buildingLives(building);
+  const cost: Cost = {};
+  for (const r of Object.keys(full) as Res[]) cost[r] = Math.ceil((full[r] ?? 0) * share);
+  if (!ps || ps.owner !== nation) return { ok: false, error: 'Provinz gehört nicht dir', cost };
+  if (!lost) return { ok: false, error: 'Nicht beschädigt', cost };
+  if (state.armies.some((a) => a.node === province && !a.pos && !a.move && atWar(state, nation, a.owner) && unitCount(a) > 0)) {
+    return { ok: false, error: 'Feinde in der Stadt – erst nach dem Kampf', cost };
+  }
+  if (!canAfford(state.nations[nation].stock, cost)) return { ok: false, error: `Zu wenig ${missing(state.nations[nation].stock, cost)}`, cost };
+  return { ok: true, cost };
 }
 
 /** Kann die Hauptstadt in diese Provinz verlegt werden? */
@@ -183,7 +205,8 @@ export interface ProduceCheck {
 /** Bauzeit: Startwert auf der Mindest-Fabrikstufe, je weitere Stufe −25 % des Startwerts */
 export function unitHours(state: GameState, province: number, unit: UnitType): number {
   const min = UNITS[unit].requires.factory ?? 1;
-  const level = state.provinces[province]?.buildings.factory ?? min;
+  const ps = state.provinces[province];
+  const level = ps ? activeLevel(ps, 'factory') : min;
   const extra = Math.max(0, level - min);
   return UNITS[unit].hours * Math.max(FACTORY_SPEEDUP, 1 - FACTORY_SPEEDUP * extra);
 }
@@ -192,6 +215,7 @@ export function requirementsMet(state: GameState, map: MapData, province: number
   const ps = state.provinces[province];
   const req = UNITS[unit].requires;
   for (const b of Object.keys(req) as Building[]) {
+    if (ps.buildings[b] >= req[b]! && activeLevel(ps, b) < req[b]!) return `${BUILDINGS[b].name} ${ps.damage?.[b] ? 'beschädigt – erst reparieren' : 'abgeschaltet'}`;
     if (ps.buildings[b] < req[b]!) return `Benötigt ${BUILDINGS[b].name}${BUILDINGS[b].maxLevel > 1 ? ' Stufe ' + req[b] : ''}`;
   }
   if (UNITS[unit].naval && !map.provinces[province].coastal) return 'Nur in Küstenprovinzen';
@@ -286,6 +310,15 @@ export function applyAction(ctx: ActionContext, nation: string, action: Action):
       state.nations[nation].capitalMove = { province: action.province, start: state.time, end: state.time + Math.round(CAPITAL_MOVE.hours * HOUR) };
       return { ok: true };
     }
+    case 'repair': {
+      const chk = checkRepair(state, nation, action.province, action.building);
+      if (!chk.ok) return { ok: false, error: chk.error! };
+      pay(stock, chk.cost);
+      delete ps.damage![action.building];
+      if (!Object.keys(ps.damage!).length) delete ps.damage;
+      ctx.invalidate();
+      return { ok: true };
+    }
     case 'switchBuilding': {
       const def = BUILDINGS[action.building];
       if (!def?.switchable) return { ok: false, error: 'Dieses Gebäude lässt sich nicht abschalten' };
@@ -368,6 +401,15 @@ function applyArmyAction(ctx: ActionContext, nation: string, action: ArmyAction)
       const mover = { ...a, units: keep ? without(a.units, keep) : a.units, warOn };
       const plan = planRoute(state, map, mover, state.time, target);
       if (!plan) return { ok: false, error: 'Kein Weg dorthin' };
+      // mitten im Ein-/Ausschiffen: weiter in dieselbe Richtung nur noch die Restzeit,
+      // zurück (Umkehr) so lange, wie schon vergangen ist
+      let wait: number | undefined;
+      const bw = boardingWait(map, a, state.time);
+      if (bw && a.move && plan.path.length >= 2) {
+        const u = a.move.path[a.move.seg], v = a.move.path[a.move.seg + 1];
+        if (plan.path[0] === u && plan.path[1] === v) wait = bw.remaining;
+        else if (plan.path[0] === v && plan.path[1] === u) wait = bw.elapsed;
+      }
       if (keep) {
         a.units = without(a.units, keep);
         state.armies.push({ id: ctx.newArmyId(), owner: nation, node: a.node, units: { [keep]: 1 }, morale: a.morale });
@@ -378,7 +420,7 @@ function applyArmyAction(ctx: ActionContext, nation: string, action: ArmyAction)
       a.autoTarget = false;
       a.split = null;
       a.warOn = warOn.length ? warOn : null;
-      startMove(ctx, a, plan.path, plan.then, plan);
+      startMove(ctx, a, plan.path, plan.then, { ...plan, wait });
       ctx.invalidate();
       return { ok: true };
     }

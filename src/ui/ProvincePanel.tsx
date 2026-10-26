@@ -1,8 +1,7 @@
 import { useState } from 'react';
-import { checkBuild, checkCapitalMove, checkProduce, missing, plannedBuildings, requirementsMet, type Action, type ActionResult } from '../game/actions.ts';
+import { checkBuild, checkCapitalMove, checkProduce, missing, plannedBuildings, requirementsMet, type Action, type ActionResult, checkRepair } from '../game/actions.ts';
 import {
-  BUILDING_ORDER, BUILDINGS, CAPITAL_MOVE, DEFECTION, MILITARY, RES_NAMES, UNIT_ORDER, UNITS, type UnitType,
-} from '../game/balance.ts';
+  BUILDING_ORDER, BUILDINGS, CAPITAL_MOVE, DEFECTION, MILITARY, RES_NAMES, UNIT_ORDER, UNITS, type UnitType, buildingLives } from '../game/balance.ts';
 import { activeCapital, moraleTarget, provinceOutput, provincePoints, recruitHours } from '../game/economy.ts';
 import type { MapData } from '../game/mapdata.ts';
 import { defectionChance, garrisonStrength } from '../game/military.ts';
@@ -141,6 +140,7 @@ export function ProvincePanel({ map, state, id, armies: visibleArmies, act, onSe
                       {def.maxLevel > 1 ? `Stufe ${level}/${def.maxLevel}` : level ? 'vorhanden' : '—'}
                       {waiting > 0 ? ` · ${waiting} geplant` : ''}
                       {level > 0 && ps.off?.[b] ? ' · abgeschaltet' : ''}
+                      {ps.damage?.[b] ? ` · beschädigt (${buildingLives(b) - ps.damage[b]!}/${buildingLives(b)} Leben)` : ''}
                     </span>
                     {def.switchable && level > 0 && (
                       <button className={'btn small' + (ps.off?.[b] ? ' active' : '')}
@@ -151,6 +151,16 @@ export function ProvincePanel({ map, state, id, armies: visibleArmies, act, onSe
                     )}
                   </div>
                   <div className="muted small">{def.describe(Math.min(def.maxLevel, Math.max(1, plannedLevel < def.maxLevel ? plannedLevel + 1 : plannedLevel)))}</div>
+                  {ps.damage?.[b] ? (() => {
+                    const rep = checkRepair(state, state.playerNation, id, b);
+                    return (
+                      <div className="progress-row">
+                        <CostList cost={rep.cost} stock={stock} />
+                        <button className="btn small" disabled={!rep.ok} title={rep.error ?? 'Sofort reparieren – das Gebäude wirkt wieder'}
+                          onClick={() => run({ type: 'repair', province: id, building: b })}>Reparieren</button>
+                      </div>
+                    );
+                  })() : null}
                   {c && (
                     <div className="progress-row">
                       <Bar value={(state.time - c.start) / (c.end - c.start)} />

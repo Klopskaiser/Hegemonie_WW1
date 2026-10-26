@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, useRef } from 'react';
 import { ALL_RES, DAY, HOUR, RES_NAMES, SPEEDS } from '../game/balance.ts';
 import { atWar } from '../game/diplomacy.ts';
 import { nodeName } from '../game/graph.ts';
-import { armyLocation, engagedTarget, isRangedOnly, planRoute, routePoints, type MoveTarget } from '../game/military.ts';
+import { armyLocation, engagedTarget, isRangedOnly, planRoute, routePoints, type MoveTarget, samePlace } from '../game/military.ts';
 import { requiredWars, type Action } from '../game/actions.ts';
 import { MultiArmyPanel } from './MultiArmyPanel.tsx';
 import { UNITS, type UnitType } from '../game/balance.ts';
@@ -69,7 +69,7 @@ export function GameView({ start, onExit }: { start: SessionStart; onExit(): voi
     const out = new Set<number>();
     for (const a of armies) {
       if (a.move) continue;
-      if (armies.some((b) => b !== a && !b.move && b.node === a.node && atWar(state, a.owner, b.owner))) out.add(a.node);
+      if (armies.some((b) => b !== a && !b.move && samePlace(a, b) && atWar(state, a.owner, b.owner))) out.add(a.node);
     }
     return [...out];
   }, [armies, state]);

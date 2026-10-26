@@ -1,13 +1,13 @@
 // Militär: Wegfindung, Marsch, Nah- und Fernkampf, Eroberung, Aufständische.
 
 import {
-  BUILDING_DAMAGE_CHANCE, BUILDINGS, DAY, DEFECTION, FORTRESS_REDUCTION, HOUR, MILITARY, MINUTE, MORALE, SPLIT_REJOIN, TROOP_MORALE, UNITS,
+  BUILDING_DAMAGE_CHANCE, BUILDINGS, buildingLives, DAY, DEFECTION, FORTRESS_REDUCTION, HOUR, MILITARY, MINUTE, MORALE, SPLIT_REJOIN, TROOP_MORALE, UNITS,
   type Building, type UnitType,
 } from './balance.ts';
 import { atWar, hasRightOfWay, setRelation } from './diplomacy.ts';
 import { edgeParts, edgePoint, edgePoints, edgeSlice, edgeThrough, isSea, nodeCount, nodeName, nodeNeighbors, nodePos } from './graph.ts';
 import type { MapData } from './mapdata.ts';
-import { activeCapital } from './economy.ts';
+import { activeCapital, activeLevel } from './economy.ts';
 import { armyName } from './names.ts';
 import { REBELS, type Army, type GameState, type NewsInfo, type RoadPos } from './types.ts';
 
@@ -93,7 +93,7 @@ export function canEnter(state: GameState, map: MapData, a: Army, node: number):
   // Schiffe (auch mit Truppen an Bord) gehen nie an Land
   if (isNaval(a)) return false;
   const owner = state.provinces[node].owner;
-  if (isRailOnly(a)) return owner === a.owner && state.provinces[node].buildings.railroad > 0 && !state.provinces[node].off?.railroad;
+  if (isRailOnly(a)) return owner === a.owner && activeLevel(state.provinces[node], 'railroad') > 0;
   return owner === a.owner || atWar(state, a.owner, owner) || hasRightOfWay(state, a.owner, owner) || !!a.warOn?.includes(owner);
 }
 
@@ -111,14 +111,14 @@ function landSpeed(state: GameState, a: Army, province: number): number {
   const own = ps.owner === a.owner;
   // halbes Tempo auf feindlichem Land und überall ohne Durchmarschrecht oder Bündnis
   const terr = own ? MILITARY.territory.own : hasRightOfWay(state, a.owner, ps.owner) ? MILITARY.territory.foreign : MILITARY.territory.enemy;
-  return base * terr * (own && ps.buildings.railroad > 0 && !ps.off?.railroad ? MILITARY.railFactor : 1);
+  return base * terr * (own && activeLevel(ps, 'railroad') > 0 ? MILITARY.railFactor : 1);
 }
 
 /** Dauer eines Abschnitts in Stunden. */
 /** Befreundeter Hafen: eigener oder einer Nation mit Durchmarschrecht/geteilter Karte */
 export function friendlyHarbor(state: GameState, province: number, nation: string): boolean {
   const ps = state.provinces[province];
-  return ps.buildings.harbor > 0 && hasRightOfWay(state, nation, ps.owner);
+  return activeLevel(ps, 'harbor') > 0 && hasRightOfWay(state, nation, ps.owner);
 }
 
 /** Dauer des Ein- bzw. Ausschiffens in einer Küstenprovinz (Stunden). */
@@ -168,6 +168,40 @@ export function segmentProfile(state: GameState, map: MapData, a: Army, u: numbe
   // Landweg: bis zur Grenze im Tempo von u, danach im Tempo von v
   const h0 = l1 / landSpeed(state, a, u);
   return [0, 0, d > 0 ? l1 / d : 0, h0, 1, h0 + (d - l1) / landSpeed(state, a, v)];
+}
+
+/** Index der Pause (Ein-/Ausschiffen) im Tempoverlauf: gleicher Anteil, steigende Stunden; -1 ohne */
+function pauseIndex(p: number[]): number {
+  for (let k = 0; k + 3 < p.length; k += 2) if (p[k] === p[k + 2] && p[k + 3] > p[k + 1]) return k;
+  return -1;
+}
+
+/** Tempoverlauf mit anderer Pausenlänge (Stunden) */
+function withPause(p: number[], wait: number): number[] {
+  const i = pauseIndex(p);
+  if (i < 0) return p;
+  const delta = Math.max(0, wait) - (p[i + 3] - p[i + 1]);
+  return p.map((v, j) => (j % 2 === 1 && j >= i + 3 ? v + delta : v));
+}
+
+/**
+ * Ein- bzw. Ausschiffen im Gange (Armee wartet am Hafenpunkt): wie lange schon und wie lange noch
+ * (Spielstunden); null sonst.
+ */
+export function boardingWait(map: MapData, a: Army, time: number): { landing: boolean; elapsed: number; remaining: number } | null {
+  const m = a.move;
+  if (!m?.prof || isNaval(a)) return null;
+  const u = m.path[m.seg], v = m.path[m.seg + 1];
+  if (isSea(map, u) === isSea(map, v)) return null;
+  const pr = m.prof, i = pauseIndex(pr);
+  if (i < 0) return null;
+  const p = Math.max(0, Math.min(1, (time - m.segStart) / Math.max(1, m.segEnd - m.segStart)));
+  const s = m.seg === 0 ? m.startFrac ?? 0 : 0;
+  const e = m.seg === m.path.length - 2 ? m.endFrac ?? 1 : 1;
+  const hs = profileHours(pr, s), he = profileHours(pr, e);
+  const h = hs + (he - hs) * p;
+  if (h < pr[i + 1] - 1e-9 || h >= pr[i + 3]) return null;
+  return { landing: isSea(map, u), elapsed: h - pr[i + 1], remaining: pr[i + 3] - h };
 }
 
 /** Stunden im Tempoverlauf bis zum Anteil f */
@@ -408,7 +442,7 @@ export function planMove(state: GameState, map: MapData, a: Army, from: number, 
   return r ? { path: r.path, hours: r.hours } : null;
 }
 
-export function startMove(ctx: MilitaryContext, a: Army, path: number[], then?: number[], frac?: { startFrac?: number; endFrac?: number }): void {
+export function startMove(ctx: MilitaryContext, a: Army, path: number[], then?: number[], frac?: { startFrac?: number; endFrac?: number; wait?: number }): void {
   if (path.length < 2) {
     a.move = null;
     if (then) disembark(ctx, a, then);
@@ -420,6 +454,7 @@ export function startMove(ctx: MilitaryContext, a: Army, path: number[], then?: 
   a.move = { path, seg: 0, segStart: t, segEnd: t, then };
   if (frac?.startFrac !== undefined) a.move.startFrac = frac.startFrac;
   if (frac?.endFrac !== undefined) a.move.endFrac = frac.endFrac;
+  if (frac?.wait !== undefined) a.move.wait = frac.wait;
   a.move.segEnd = t + segmentDuration(ctx.state, ctx.map, a, 0);
 }
 
@@ -429,6 +464,7 @@ function segmentDuration(state: GameState, map: MapData, a: Army, k: number): nu
   const s = k === 0 ? m.startFrac ?? 0 : 0;
   const e = k === m.path.length - 2 ? m.endFrac ?? 1 : 1;
   m.prof = segmentProfile(state, map, a, m.path[k], m.path[k + 1]);
+  if (k === 0 && m.wait !== undefined) m.prof = withPause(m.prof, m.wait);
   return minuteRound(Math.max(0, profileHours(m.prof, e) - profileHours(m.prof, s)) * HOUR);
 }
 
@@ -782,10 +818,12 @@ export interface TroopTarget {
 export function troopTarget(state: GameState, map: MapData, a: Army): TroopTarget {
   const n = state.nations[a.owner];
   const hungry = !n || n.stock.grain < 1 || n.shortage.food;
-  const home = !a.move && !a.pos && !isSea(map, a.node) && state.provinces[a.node].owner === a.owner;
+  // maßgeblich ist das Gebiet, in dem die Armee gerade ist (auch unterwegs): eigenes → dessen Moral
+  const prov = currentProvince(map, a, state.time);
+  const home = prov >= 0 && state.provinces[prov].owner === a.owner;
   const parts = [home
-    ? { label: 'Moral der Provinz', value: state.provinces[a.node].morale }
-    : { label: 'Unterwegs / fremdes Gebiet / See', value: TROOP_MORALE.neutral }];
+    ? { label: `Moral der Provinz ${map.provinces[prov].name}`, value: state.provinces[prov].morale }
+    : { label: prov >= 0 ? 'Fremdes Gebiet' : 'Auf See', value: TROOP_MORALE.neutral }];
   if (hungry) parts.push({ label: 'Getreidemangel', value: -TROOP_MORALE.hungerTarget });
   const sum = parts.reduce((s, p) => s + p.value, 0);
   return { target: Math.max(TROOP_MORALE.min, Math.min(1, sum)), parts, hungry };
@@ -1104,6 +1142,13 @@ function cleanup(ctx: MilitaryContext, node: number, names?: Map<Army, string>, 
   conquer(ctx, node, winner);
 }
 
+/** Provinz, in deren Gebiet die Armee gerade steht oder marschiert; -1 auf See */
+export function currentProvince(map: MapData, a: Army, time: number): number {
+  const loc = armyLocation(a, time);
+  if ('road' in loc) return roadProvince(map, loc.road);
+  return isSea(map, loc.node) ? -1 : loc.node;
+}
+
 /** Provinz, in deren Gebiet ein Wegpunkt liegt (vor oder hinter der Grenze); -1 auf dem Wasser */
 function roadProvince(map: MapData, p: RoadPos): number {
   const [l1, len] = edgeParts(map, p.a, p.b);
@@ -1113,15 +1158,22 @@ function roadProvince(map: MapData, p: RoadPos): number {
 }
 
 /** Kämpfe in einer Provinz beschädigen Gebäude: je Stunde und Gebäude eine Chance, eine Stufe zu verlieren. */
-function damageBuildings(ctx: MilitaryContext, node: number): void {
+export function damageBuildings(ctx: MilitaryContext, node: number): void {
   const ps = ctx.state.provinces[node];
   for (const b of Object.keys(ps.buildings) as Building[]) {
     if (ps.buildings[b] <= 0 || ctx.random() >= BUILDING_DAMAGE_CHANCE) continue;
-    ps.buildings[b]--;
-    const name = BUILDINGS[b].name;
-    ctx.log(ps.buildings[b] === 0
-      ? `${name} in ${ctx.map.provinces[node].name} im Kampf zerstört.`
-      : `${name} in ${ctx.map.provinces[node].name} beschädigt (Stufe ${ps.buildings[b]}).`, ps.owner, node);
+    // ein Treffer kostet ein Leben der obersten Stufe; ohne Leben fällt die Stufe weg (die darunter ist heil)
+    const name = BUILDINGS[b].name, place = ctx.map.provinces[node].name;
+    const lost = (ps.damage?.[b] ?? 0) + 1;
+    if (lost >= buildingLives(b)) {
+      ps.buildings[b]--;
+      if (ps.damage) delete ps.damage[b];
+      ctx.log(ps.buildings[b] === 0 ? `${name} in ${place} im Kampf zerstört.`
+        : `${name} in ${place}: Stufe ${ps.buildings[b] + 1} zerstört, jetzt Stufe ${ps.buildings[b]}.`, ps.owner, node);
+    } else {
+      (ps.damage ??= {})[b] = lost;
+      ctx.log(`${name} in ${place} beschädigt (${buildingLives(b) - lost}/${buildingLives(b)} Leben) – ohne Wirkung, bis repariert.`, ps.owner, node);
+    }
     ctx.invalidate();
   }
 }

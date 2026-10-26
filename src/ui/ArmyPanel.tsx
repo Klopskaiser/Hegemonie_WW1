@@ -5,7 +5,7 @@ import { atWar } from '../game/diplomacy.ts';
 import { isSea, nodeName } from '../game/graph.ts';
 import type { MapData } from '../game/mapdata.ts';
 import {
-  armyPosition, armyPower, armySpeed, infantryStrength, isNaval, maxRange, samePlace, segmentHours, troopMorale, troopTarget, unitCount, unitHp,
+  armyPosition, armyPower, armySpeed, boardingWait, infantryStrength, isNaval, maxRange, samePlace, segmentHours, troopMorale, troopTarget, unitCount, unitHp,
 } from '../game/military.ts';
 import { armyName } from '../game/names.ts';
 import { Flag } from './Flag.tsx';
@@ -55,7 +55,7 @@ export function ArmyPanel({ map, state, army: a, armies, act, onSelectArmy, onSp
   const real = (gameHours: number) => (state.paused ? 'pausiert' : fmtDuration((gameHours * HOUR) / state.speed));
 
   const here = a.move ? null : a.node;
-  const hostileHere = here === null ? [] : armies.filter((b) => b.node === here && !b.move && atWar(state, a.owner, b.owner));
+  const hostileHere = here === null ? [] : armies.filter((b) => b !== a && !b.move && samePlace(a, b) && atWar(state, a.owner, b.owner));
   const target = a.target != null ? armies.find((b) => b.id === a.target) : undefined;
   const range = maxRange(a, map);
   const pos = armyPosition(map, a, state.time);
@@ -75,7 +75,9 @@ export function ArmyPanel({ map, state, army: a, armies, act, onSelectArmy, onSp
   const carrying = isNaval(a) && UNIT_ORDER.some((u) => !UNITS[u].naval && a.units[u]);
 
   let status: string;
-  if (a.move) {
+  const bw = boardingWait(map, a, state.time);
+  if (bw) status = `${bw.landing ? 'Schifft aus' : 'Schifft ein'} – noch ${real(bw.remaining)}`;
+  else if (a.move) {
     const m = a.move;
     const last = m.path[m.path.length - 1];
     const dest = m.endFrac !== undefined && m.endFrac < 1

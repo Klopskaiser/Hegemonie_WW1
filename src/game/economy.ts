@@ -28,8 +28,13 @@ export interface NationRates {
 
 const zero = (): Record<Res, number> => Object.fromEntries(ALL_RES.map((r) => [r, 0])) as Record<Res, number>;
 
-/** Wirksame Stufe eines Gebäudes: abgeschaltete zählen wie nicht gebaut */
+/** Wirksame Stufe eines Gebäudes: abgeschaltete und beschädigte zählen wie nicht gebaut */
 export function activeLevel(ps: ProvinceState, b: Building): number {
+  return ps.off?.[b] || ps.damage?.[b] ? 0 : ps.buildings[b];
+}
+
+/** Stufe für den Unterhalt: abgeschaltete kosten nichts, beschädigte weiter */
+export function upkeepLevel(ps: ProvinceState, b: Building): number {
   return ps.off?.[b] ? 0 : ps.buildings[b];
 }
 
@@ -64,7 +69,7 @@ export function allRates(state: GameState, map: MapData): Record<string, NationR
     r.upkeep += PROVINCE.upkeep;
     for (const b of Object.keys(ps.buildings) as Building[]) {
       const up = BUILDINGS[b].upkeep;
-      const lvl = activeLevel(ps, b);
+      const lvl = upkeepLevel(ps, b);
       if (up && lvl > 0) for (const k of Object.keys(up) as Res[]) r.cons[k] += up[k]! * lvl;
     }
   });
@@ -192,7 +197,7 @@ export function validShares(cat: Category, shares: Partial<Record<Resource, numb
 
 /** Spielstunden je Infanterie in einer Provinz, null = es entsteht keine Infanterie. */
 export function recruitHours(ps: ProvinceState): number | null {
-  const office = ps.buildings.recruitment > 0;
+  const office = activeLevel(ps, 'recruitment') > 0;
   const barracks = activeLevel(ps, 'barracks');
   if ((!office && barracks === 0) || ps.revolt || ps.morale <= 0) return null;
   const rate = (2 ** barracks * (office ? 1 : RECRUIT_WITHOUT_OFFICE) * ps.morale) / RECRUIT_BASE_HOURS;
@@ -248,7 +253,11 @@ export function moraleTarget(state: GameState, map: MapData, id: number): Morale
     const v = BUILDINGS[k].morale(lvl);
     if (v > 0) parts.push({ label: BUILDINGS[k].maxLevel > 1 ? `${BUILDINGS[k].name} Stufe ${lvl}` : BUILDINGS[k].name, value: v });
   }
-  if (ps.fought) parts.push({ label: 'Kämpfe in der Provinz', value: -MORALE.battle });
+  // Kämpfe: je Tag in Folge −10 %, höchstens −30 %; ohne Kampf bis zum Tageswechsel fällt der Abzug weg
+  if (ps.fought) {
+    const days = (ps.battleDays ?? 0) + 1;
+    parts.push({ label: `Kämpfe in der Provinz (${days}. Tag)`, value: -Math.min(MORALE.battleMax, days * MORALE.battle) });
+  }
   const unrest = mp.neighbors.filter((n) => state.provinces[n].owner === ps.owner && state.provinces[n].morale < DEFECTION.threshold).length;
   if (unrest > 0) parts.push({ label: `Unruhe in ${unrest} Nachbarprovinz${unrest > 1 ? 'en' : ''}`, value: -unrest * MORALE.unrestNeighbor });
   const wars = warsOf(state, ps.owner);

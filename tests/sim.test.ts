@@ -83,6 +83,9 @@ describe('Simulation', () => {
   it('stellt Gebäude nach der Bauzeit fertig', () => {
     const sim = newSim();
     const target = map.provinces.find((p) => p.nation === 'DE' && !p.city)!.id;
+    // Eisenbahn erst ab Tag 3
+    expect(sim.apply('DE', { type: 'build', province: target, building: 'railroad' }).ok).toBe(false);
+    sim.advance(2 * DAY);
     const r = sim.apply('DE', { type: 'build', province: target, building: 'railroad' });
     expect(r.ok).toBe(true);
     sim.advance(71 * HOUR);

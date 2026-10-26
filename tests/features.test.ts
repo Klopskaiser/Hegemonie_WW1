@@ -1,12 +1,14 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { ALL_RES, DAY, HOUR, MINUTE, MORALE, UNITS } from '../src/game/balance.ts';
-import { applyDamage, armyLocation, combatRound, conquer, defections, harborLeg, inMelee, maxRange, meleeOutput, repairMachines, unitHp } from '../src/game/military.ts';
-import { capitalOf, moraleTarget, nationRates, recruitHours, totalUse, useSources } from '../src/game/economy.ts';
+import { ALL_RES, DAY, HOUR, MILITARY, MINUTE, MORALE, UNITS } from '../src/game/balance.ts';
+import { applyDamage, armyLocation, boardingWait, combatRound, conquer, damageBuildings, defections, harborLeg, inMelee, maxRange, meleeOutput, repairMachines, troopTarget, unitHp } from '../src/game/military.ts';
+import { activeLevel, capitalOf, moraleTarget, nationRates, recruitHours, totalUse, useSources } from '../src/game/economy.ts';
 import type { MapData } from '../src/game/mapdata.ts';
+import { edgeParts } from '../src/game/graph.ts';
 import { segmentHours } from '../src/game/military.ts';
-import { requiredWars } from '../src/game/actions.ts';
+import { checkRepair, requiredWars } from '../src/game/actions.ts';
+import { priceBounds } from '../src/game/market.ts';
 import { atWar } from '../src/game/diplomacy.ts';
 import { armyName } from '../src/game/names.ts';
 import { makeRng } from '../src/game/rng.ts';
@@ -73,12 +75,24 @@ describe('Moral, Abschüsse, Namen', () => {
     const sim = newSim();
     const berlin = prov('Berlin');
     const before = moraleTarget(sim.state, map, berlin).target;
-    sim.state.provinces[berlin].fought = true;
-    const mt = moraleTarget(sim.state, map, berlin);
-    expect(mt.parts.some((p) => p.label === 'Kämpfe in der Provinz')).toBe(true);
-    expect(mt.target).toBeCloseTo(Math.max(MORALE.min, before - MORALE.battle), 6);
+    const ps = sim.state.provinces[berlin];
+    const penalty = () => moraleTarget(sim.state, map, berlin).parts.find((p) => p.label.startsWith('Kämpfe'))?.value ?? 0;
+    ps.fought = true;
+    expect(penalty()).toBeCloseTo(-0.1, 9);
+    expect(moraleTarget(sim.state, map, berlin).target).toBeCloseTo(Math.max(MORALE.min, before - MORALE.battle), 6);
+    // jeden Tag mit Kampf 10 % mehr, höchstens 30 %
+    for (const want of [-0.2, -0.3, -0.3]) {
+      sim.advance(DAY);
+      expect(ps.fought).toBeUndefined();
+      ps.fought = true;
+      expect(penalty()).toBeCloseTo(want, 9);
+    }
+    // ein Tag ohne Kampf setzt zurück
+    ps.fought = false;
     sim.advance(DAY);
-    expect(sim.state.provinces[berlin].fought).toBeUndefined();
+    expect(ps.battleDays).toBeUndefined();
+    ps.fought = true;
+    expect(penalty()).toBeCloseTo(-0.1, 9);
   });
 
   it('Armeen zählen Abschüsse; Schlachtschiffe bekommen Namen und lassen sich umbenennen', () => {
@@ -106,11 +120,11 @@ describe('Moral, Abschüsse, Namen', () => {
 });
 
 describe('Provinzmoral und Hauptstadt', () => {
-  it('Moralziel: Grundwert 100 %, kein Hauptstadtbonus, Entfernung 1 % je 100 km, Unruhe der Nachbarn −2 %', () => {
+  it('Moralziel: Grundwert 80 %, kein Hauptstadtbonus, Entfernung 1 % je 100 km, Unruhe der Nachbarn −2 %', () => {
     const sim = newSim();
     const berlin = prov('Berlin');
     const cap = moraleTarget(sim.state, map, berlin);
-    expect(cap.parts[0]).toEqual({ label: 'Grundwert', value: 1 });
+    expect(cap.parts[0]).toEqual({ label: 'Grundwert', value: 0.8 });
     expect(cap.parts.some((p) => p.label === 'Hauptstadt')).toBe(false);
     const far = map.provinces.filter((p) => p.nation === 'DE' && !p.capital)
       .map((p) => ({ p, d: Math.hypot(p.center[0] - map.provinces[berlin].center[0], p.center[1] - map.provinces[berlin].center[1]) }))
@@ -253,6 +267,7 @@ describe('Kampf am Ort, fortgesetzte Befehle, Besatzung, Bahn zum Hafen', () => 
 describe('Bauabbruch', () => {
   it('ein abgebrochener Bau erstattet die vollen Kosten', () => {
     const sim = newSim();
+    sim.state.time = 2 * DAY;
     const berlin = prov('Berlin');
     const stock = sim.state.nations.DE.stock;
     const before = { ...stock };
@@ -393,5 +408,93 @@ describe('Reparatur', () => {
     const before = a.wounds!.tank!;
     repairMachines(sim.state);
     expect(a.wounds!.tank).toBe(before);
+  });
+});
+
+describe('Ein-/Ausschiffen umkehren', () => {
+  it('zeigt die Restzeit; Umkehr dauert so lange wie schon vergangen, Fortsetzung nur die Restzeit', () => {
+    const setup = () => {
+      const sim = newSim();
+      const mp = map.provinces[prov('Hamburg')];
+      const de: Army = { id: sim.state.nextArmyId++, owner: 'DE', node: mp.id, units: { infantry: 5 } };
+      sim.state.armies.push(de);
+      // erstes Seegebiet auf dem Weg aufs Wasser als Ziel (direkter Hafenweg)
+      sim.apply('DE', { type: 'move', army: de.id, to: map.provinces.length + mp.seaLinks![0] });
+      const sea = de.move!.path[1];
+      sim.apply('DE', { type: 'move', army: de.id, to: sea });
+      expect(de.move!.path).toEqual([mp.id, sea]);
+      const land = harborLeg(map, mp.id, sea) / UNITS.infantry.speed;
+      sim.advance(Math.ceil((land + 0.5) * HOUR));
+      return { sim, de, mp, sea };
+    };
+    // Restzeit
+    let { sim, de, mp, sea } = setup();
+    const bw = boardingWait(map, de, sim.state.time)!;
+    expect(bw.landing).toBe(false);
+    expect(bw.elapsed).toBeGreaterThan(0.4);
+    expect(bw.elapsed + bw.remaining).toBeCloseTo(MILITARY.embarkHours, 1);
+    // Umkehr zurück an Land: Wartezeit = bisher vergangen
+    expect(sim.apply('DE', { type: 'move', army: de.id, to: mp.id }).ok).toBe(true);
+    const back = boardingWait(map, de, sim.state.time)!;
+    expect(back.landing).toBe(true);
+    expect(back.remaining).toBeCloseTo(bw.elapsed, 1);
+    // Fortsetzung aufs Wasser: nur die Restzeit
+    ({ sim, de, mp, sea } = setup());
+    const bw2 = boardingWait(map, de, sim.state.time)!;
+    expect(sim.apply('DE', { type: 'move', army: de.id, to: sea }).ok).toBe(true);
+    expect(boardingWait(map, de, sim.state.time)!.remaining).toBeCloseTo(bw2.remaining, 1);
+  });
+});
+
+describe('Zielmoral unterwegs', () => {
+  it('auf eigenem Gebiet (auch unterwegs) gilt die Provinzmoral, erst hinter der Grenze 50 %', () => {
+    const sim = newSim();
+    const [p, q] = (() => {
+      for (const x of map.provinces) {
+        if (x.nation !== 'DE') continue;
+        const y = (x.links ?? []).find((n) => map.provinces[n].nation === 'FR');
+        if (y !== undefined) return [x.id, y];
+      }
+      throw new Error('kein Grenzweg');
+    })();
+    sim.apply('DE', { type: 'declareWar', nation: 'FR' });
+    sim.state.provinces[p].morale = 0.9;
+    const [l1, len] = edgeParts(map, p, q);
+    const near: Army = { id: 1, owner: 'DE', node: p, pos: { a: p, b: q, f: (l1 / len) * 0.5 }, units: { infantry: 1 } };
+    const far: Army = { id: 2, owner: 'DE', node: q, pos: { a: p, b: q, f: (l1 + (len - l1) * 0.5) / len }, units: { infantry: 1 } };
+    expect(troopTarget(sim.state, map, near).target).toBeCloseTo(0.9, 9);
+    expect(troopTarget(sim.state, map, far).target).toBeCloseTo(0.5, 9);
+  });
+});
+
+describe('Gebäudeleben und Reparatur', () => {
+  it('Treffer zerstören stufenweise von oben; beschädigt wirkt nicht; Reparatur kostet anteilig', () => {
+    const sim = newSim();
+    const berlin = prov('Berlin');
+    const ps = sim.state.provinces[berlin];
+    ps.buildings.factory = 2;
+    ps.buildings.railroad = 1;
+    ps.buildings.fortress = 2;
+    const hit = { ...sim.ctx, random: () => 0 };
+    damageBuildings(hit, berlin);
+    // Fabrik (2 Leben) und Eisenbahn (3) beschädigt, Festung (1 Leben) verliert gleich eine Stufe
+    expect(ps.damage).toMatchObject({ factory: 1, railroad: 1 });
+    expect(ps.buildings.fortress).toBe(1);
+    expect(activeLevel(ps, 'factory')).toBe(0);
+    damageBuildings(hit, berlin);
+    expect(ps.buildings.factory).toBe(1);
+    expect(ps.damage?.factory).toBeUndefined();
+    expect(ps.damage?.railroad).toBe(2);
+    // Eisenbahn mit 1/3 Leben kostet 2/3 des Preises
+    const rep = checkRepair(sim.state, 'DE', berlin, 'railroad');
+    expect(rep.cost.money).toBe(Math.ceil(10000 * 2 / 3));
+    sim.state.nations.DE.stock.money = 100000;
+    expect(sim.apply('DE', { type: 'repair', province: berlin, building: 'railroad' }).ok).toBe(true);
+    expect(activeLevel(ps, 'railroad')).toBe(1);
+  });
+
+  it('Börse: Höchstpreis 1000 je Einheit', () => {
+    expect(priceBounds('grain')[1]).toBe(1000);
+    expect(priceBounds('oil')[1]).toBe(1000);
   });
 });

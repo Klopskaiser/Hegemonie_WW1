@@ -7,7 +7,7 @@ import {
 } from './actions.ts';
 import { BasicAI } from './ai.ts';
 import {
-  ALL_RES, BUILDINGS, CATEGORIES, CATEGORY_OF, CATEGORY_RES, DAY, DEFECTION, DIFFICULTY, HOUR, MINUTE, TICKS_PER_DAY, TROOP_MORALE, UNITS, VICTORY_SHARE,
+  ALL_RES, BUILDINGS, CATEGORIES, CATEGORY_OF, CATEGORY_RES, DAY, DEFECTION, DIFFICULTY, HOUR, MINUTE, MORALE, TICKS_PER_DAY, TROOP_MORALE, UNITS, VICTORY_SHARE,
   type Category, type UnitType,
 } from './balance.ts';
 import { observe, type Controller, type NationView, type Observation } from './controller.ts';
@@ -364,6 +364,9 @@ export class Simulation {
     const targets = s.provinces.map((_, i) => moraleTarget(s, this.map, i).target);
     s.provinces.forEach((ps, i) => {
       ps.morale = stepMorale(ps.morale, targets[i]);
+      // Kampftage zählen (nur so weit, wie der Abzug reicht); ein Tag ohne Kampf setzt zurück
+      if (ps.fought) ps.battleDays = Math.min(Math.round(MORALE.battleMax / MORALE.battle), (ps.battleDays ?? 0) + 1);
+      else delete ps.battleDays;
       delete ps.fought;
       if (ps.morale < DEFECTION.threshold) this.log(`Unruhen in ${this.map.provinces[i].name} (Moral ${Math.round(ps.morale * 100)} %): Die Provinz droht überzulaufen.`, ps.owner, i);
     });

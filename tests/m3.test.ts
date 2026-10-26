@@ -80,7 +80,7 @@ describe('Börse', () => {
   it('Angebote gelten unbegrenzt; Zurückziehen gibt die Rücklage zurück', () => {
     const sim = newSim();
     sim.apply('DE', { type: 'postOffer', side: 'sell', res: 'coal', amount: 1000, price: 2 });
-    sim.advance(10 * MARKET.aiRefresh);
+    sim.advance(MARKET.aiRefresh + DAY);
     const o = sim.state.market.offers.find((x) => x.nation === 'DE')!;
     expect(o).toBeTruthy();
     const before = sim.state.nations.DE.stock.coal;

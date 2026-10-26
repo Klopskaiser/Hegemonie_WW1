@@ -80,7 +80,7 @@
   gleich; verschlechtern einseitig, verbessern per Angebot. Durchmarsch: Betreten erlaubt, Häfen
   befreundet. Geteilte Karte: gemeinsame Sicht. Börse: Angebote je Rohstoff mit Rücklage, gültig bis
   erfüllt, zurückgezogen oder die Nation untergeht (die KI zieht eigene nach 3 Tagen zurück und stellt
-  neu ein), Preis 20–500 % des Richtpreises, kein Handel bei Krieg/Embargo; KI kauft bei Engpässen
+  neu ein), Preis ab 20 % des Richtpreises bis höchstens 1000 je Einheit, kein Handel bei Krieg/Embargo; KI kauft bei Engpässen
   und bietet Überschüsse an. Zeitung täglich (Ereignisse, Eroberungsbilanz, Rangliste, Tageskarte,
   14 Ausgaben). Sieg: 45 % aller Siegpunkte oder letzte Großmacht; Spielende hält das Spiel an.
 - Geldproduktion ×1,5 (375/1350/2700). Offen fürs Balancing: Nahrung wird bei allen knapp,
@@ -274,9 +274,10 @@
   (mindestens halb so weit vom Rand wie der innerste Punkt, nicht direkt am Rohstoffsymbol). Echte Städte
   und Vorgaben (`cityAt`) bleiben. Ergebnis: 33 verlegt, 8 bleiben; Mittelpunkte unter 10 km am Meer
   62 → 29 (davon 19 echte Städte). Je Ortspaar gibt es nur noch eine Abkürzung (die kürzere).
-- Provinzmoral (Vorgabe): Ziel = 100 % − Entfernung zur Hauptstadt (1 % je 100 km ab 300 km, höchstens
+- Provinzmoral (Vorgabe): Ziel = 80 % − Entfernung zur Hauptstadt (1 % je 100 km ab 300 km, höchstens
   35 %; ohne Hauptstadt die vollen 35 %) + Gebäude − 5 % je Krieg (höchstens 25 %) − Mangel (Nahrung 15 %,
-  Baustoffe 5 %, Energie 10 %) − 10 % bei Kämpfen in der Provinz − 2 % je angrenzender eigener Provinz
+  Baustoffe 5 %, Energie 10 %) − Kämpfe in der Provinz (−10 % je Tag in Folge mit Kampf, höchstens −30 %; ein Tag ohne Kampf setzt
+  zurück) − 2 % je angrenzender eigener Provinz
   unter 33 % Moral. Kein Hauptstadtbonus, kein Abzug für besetztes Gebiet. Annäherung je Tag 35 % der
   Lücke, höchstens ±10 Prozentpunkte. Eroberte Provinzen beginnen bei 25 %, Rückeroberung durch den
   Vorbesitzer am selben Spieltag bei 40 % (wie Überlaufen). Hauptstadtfall: Sieger +10 %, Verlierer −15 %.
@@ -324,3 +325,17 @@
   Lebenspunkten liegt, fallen beim nächsten Treffer.
 - Maschinen (alle Einheiten außer Infanterie) reparieren sich zum Tageswechsel um 1/7 ihrer fehlenden
   Lebenspunkte, mindestens aber 5 % der vollen, sofern sie nicht im Nahkampf stehen – so werden sie ganz heil.
+- Ein-/Ausschiffen: Das Armeefenster zeigt die Restzeit. Ein Befehl in die Gegenrichtung wickelt den Vorgang
+  zurück und dauert so lange, wie schon vergangen ist; ein neues Ziel in derselben Richtung braucht nur
+  noch die Restzeit.
+- Eisenbahn, Fabrik und Hafen sind erst ab Tag 3 baubar (`fromDay` je Gebäude in `balance.ts`), für alle Nationen.
+- Zielmoral der Infanterie richtet sich nach dem Gebiet, in dem die Armee gerade ist – auch unterwegs und auf
+  Wegen: im eigenen Gebiet die Moral dieser Provinz, erst nach dem Grenzübertritt in fremdes Gebiet (oder auf
+  See) 50 %.
+- Gebäudeschäden: Jede Stufe hat Leben (Eisenbahn, Hafen 3; Festung 1; sonst 2). Ein Treffer im Kampf (4 % je
+  Gebäude und Stunde, auch bei Kämpfen auf Wegen) kostet ein Leben der obersten Stufe; ohne Leben fällt die
+  Stufe weg, die darunter ist heil. Beschädigte Gebäude wirken nicht (Unterhalt läuft weiter), bis sie
+  repariert sind: sofort, Kosten anteilig zu den fehlenden Leben an den Kosten der obersten Stufe (Eisenbahn
+  mit 1/3 Leben: 2/3 des Preises), nicht solange Feinde in der Stadt stehen. Die KI repariert selbst.
+- Grundmoral der Provinzen 80 %. Börse: Höchstpreis 1000 je Einheit.
+- Kampfanzeige (Karte, Armeefenster) nach dem tatsächlichen Ort, nicht dem nächsten Knoten.

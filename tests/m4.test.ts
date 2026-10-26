@@ -74,7 +74,7 @@ describe('Headless-Umgebung', () => {
     const obs = env.reset();
     expect(Object.keys(obs)).toEqual(['DE']);
     const berlin = prov('Berlin');
-    const r = env.step({ DE: [{ type: 'build', province: berlin, building: 'railroad' }], FR: [{ type: 'declareWar', nation: 'DE' }] });
+    const r = env.step({ DE: [{ type: 'build', province: berlin, building: 'fortress' }], FR: [{ type: 'declareWar', nation: 'DE' }] });
     expect(r.info.results.DE[0].ok).toBe(true);
     expect(r.info.results.FR[0].ok).toBe(false);
     expect(r.reward.DE).toBeTypeOf('number');

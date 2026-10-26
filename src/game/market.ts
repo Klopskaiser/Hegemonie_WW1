@@ -23,7 +23,7 @@ export function priceOf(state: GameState, res: Resource): number {
 
 export function priceBounds(res: Resource): [number, number] {
   const base = MARKET.basePrice[res];
-  return [round2(base * MARKET.minFactor), round2(base * MARKET.maxFactor)];
+  return [round2(base * MARKET.minFactor), MARKET.maxPrice];
 }
 
 function round2(v: number): number {

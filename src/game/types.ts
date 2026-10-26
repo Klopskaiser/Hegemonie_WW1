@@ -33,8 +33,12 @@ export interface ProvinceState {
   revolt?: boolean;
   /** abgeschaltete Gebäude (Kaserne, Eisenbahn): kein Unterhalt, keine Wirkung */
   off?: Partial<Record<Building, boolean>>;
+  /** verlorene Leben der obersten Stufe (beschädigt: keine Wirkung, bis repariert) */
+  damage?: Partial<Record<Building, number>>;
   /** seit dem letzten Tageswechsel wurde in der Provinz gekämpft (senkt das Moralziel) */
   fought?: boolean;
+  /** Tage in Folge mit Kampf (bis zum letzten Tageswechsel); ein Tag ohne Kampf setzt zurück */
+  battleDays?: number;
   /** zuletzt erobert: vorheriger Besitzer und Spieltag (Rückeroberung am selben Tag mit höherer Moral) */
   lost?: { owner: string; day: number } | null;
 }
@@ -54,6 +58,8 @@ export interface Movement {
   endFrac?: number;
   /** Tempoverlauf des laufenden Abschnitts: [Anteil, Stunden, …] aufsteigend (Grenzen wechseln das Tempo) */
   prof?: number[];
+  /** abweichende Dauer (Stunden) des Ein-/Ausschiffens im ersten Abschnitt (Umkehr oder Fortsetzung) */
+  wait?: number;
 }
 
 /** Punkt auf dem Weg zwischen zwei benachbarten Knoten: Anteil f (0..1) von a nach b */

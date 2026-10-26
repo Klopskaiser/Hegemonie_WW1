@@ -2,7 +2,7 @@
 // Truppenführung (Fronten, Reserven, Landungen, Flotten, Eisenbahngeschütze).
 // Persönlichkeit je Nation (state.aiProfiles) und Schwierigkeitsgrad (state.difficulty).
 
-import { checkBuild, checkProduce, canAfford, type Action } from './actions.ts';
+import { checkBuild, checkProduce, canAfford, type Action, checkRepair } from './actions.ts';
 import { BUILDINGS, CATEGORIES, CATEGORY_RES, DAY, DIFFICULTY, MARKET, UNITS, type Building, type UnitType, CAPITAL_MOVE } from './balance.ts';
 import type { Controller, NationView } from './controller.ts';
 import { atWar, enemiesOf, relation, warKey } from './diplomacy.ts';
@@ -98,6 +98,12 @@ export class BasicAI implements Controller {
   private build(view: NationView, sit: Situation, actions: Action[]): void {
     const { state, map, nation, own, major, front } = sit;
     const stock = state.nations[nation].stock;
+    // beschädigte Gebäude zuerst reparieren (sie wirken sonst nicht)
+    for (const i of own) {
+      for (const b of Object.keys(state.provinces[i].damage ?? {}) as Building[]) {
+        if (checkRepair(state, nation, i, b).ok) actions.push({ type: 'repair', province: i, building: b });
+      }
+    }
     // Hauptstadt verloren: in die wertvollste sichere eigene Provinz verlegen
     if (capitalOf(state, map, nation) === null && !state.nations[nation].capitalMove && canAfford(stock, CAPITAL_MOVE.cost)) {
       const safe = own.filter((i) => !front.get(i) && !state.provinces[i].revolt);
