@@ -23,6 +23,7 @@ import {
 import { makeRng } from '../src/game/rng.ts';
 import { assignResources, resourceReport } from './resources.ts';
 import { buildSeas, linkSeas } from './seas.ts';
+import { bundleRoutes, waterRoutes } from './routes.ts';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const RAW = path.join(ROOT, 'data', 'raw');
@@ -570,6 +571,10 @@ const seaZones = buildSeas(rectPoly, [...nationShapes.values()], {
   names: config.seaNames.map((n) => ({ name: n.name, pos: project(n.at) })),
 }, makeRng(hash(config.id + ':see')));
 const seaBorders = linkSeas(seaZones, provs.map((p) => p.shape));
+// Mitte jedes Seegebiets muss im Wasser liegen (bei verwinkelten Gebieten fällt der Schwerpunkt sonst aufs Land)
+for (const z of seaZones) {
+  if (!pointInMulti(z.center[0], z.center[1], z.shape)) z.center = interiorPoint(z.shape);
+}
 const provSeas: number[][] = provs.map(() => []);
 seaZones.forEach((z, zi) => z.coasts.forEach((pi) => provSeas[pi].push(zi)));
 console.log(`${seaZones.length} Seegebiete: ${seaZones.map((z) => z.name).join(', ')}`);
@@ -710,6 +715,17 @@ console.log(resourceReport(provinces));
 
 const roads: { a: number; b: number; pts: number[]; split: number }[] = [];
 
+/** Provinz an einem Punkt (−1 = Wasser) */
+function provinceIndexAt(x: number, y: number): number {
+  for (let i = 0; i < provs.length; i++) {
+    const pr = provs[i];
+    const bb = pr.box ?? (pr.box = bboxOf(pr.shape));
+    if (x < bb[0] || x > bb[2] || y < bb[1] || y > bb[3]) continue;
+    if (pointInMulti(x, y, pr.shape)) return i;
+  }
+  return -1;
+}
+
 /** Liegt der Punkt an Land (in irgendeiner Provinz)? */
 function anyLand(x: number, y: number): boolean {
   for (const pr of provs) {
@@ -738,9 +754,13 @@ function routeOnLand(u: number, v: number, via: Pt, wide = false): { a: number; 
   const inV = (x: number, y: number) => pointInMulti(x, y, sv);
   // zuerst nur durch die beiden Provinzen, notfalls über beliebiges Land (wide)
   const onLand = wide ? anyLand : (x: number, y: number) => inU(x, y) || inV(x, y);
-  // nur wo der übliche Weg wirklich übers Wasser führt (durch eine dritte Provinz ist erlaubt);
+  // eigener Verlauf nur, wo der übliche Weg übers Wasser oder durch eine dritte Provinz führt;
   // gibt es keinen Landweg (z. B. Kopenhagen–Aarhus über den Belt), bleibt es beim geraden Weg
-  if (segmentOnLand(cu, via, anyLand) && segmentOnLand(via, cv, anyLand)) return null;
+  const ownLand = (x: number, y: number) => { const at = provinceIndexAt(x, y); return at < 0 || at === u || at === v; };
+  const overWater = !(segmentOnLand(cu, via, anyLand) && segmentOnLand(via, cv, anyLand));
+  const overThird = !(segmentOnLand(cu, via, ownLand) && segmentOnLand(via, cv, ownLand));
+  if (!overWater && !overThird) return null;
+  if (wide && !overWater) return null;
   // Raster über beide Provinzen
   const [ux0, uy0, ux1, uy1] = bboxOf(su), [vx0, vy0, vx1, vy1] = bboxOf(sv);
   const pad = wide ? 0.3 * Math.hypot(Math.max(ux1, vx1) - Math.min(ux0, vx0), Math.max(uy1, vy1) - Math.min(uy0, vy0)) : 0;
@@ -817,12 +837,26 @@ function routeOnLand(u: number, v: number, via: Pt, wide = false): { a: number; 
 
 // ---------------------------------------------------------------- Wege (Verbindungen zwischen Nachbarn)
 // Nicht jede Nachbarschaft bekommt einen Weg: höchstens 5 je Provinz, mindestens 2 (sofern vorhanden);
-// zusätzlich fallen rund 10 % der Wege weg – bevorzugt dort, wo schon viele bestehen, und Wege mit
-// großem Umweg über die Grenze oder sehr kurzer gemeinsamer Grenze. Das Netz bleibt zusammenhängend.
+// zusätzlich fallen rund 10 % der Wege weg. Wegfallen sollen bevorzugt lange Wege (im Vergleich zu den
+// anderen Wegen der Provinz), Wege durch das Gebiet einer dritten Provinz, mit großem Umweg über die
+// Grenze oder sehr kurzer gemeinsamer Grenze; bei Gleichstand bleiben Wege im eigenen Land eher erhalten.
+// Das Netz bleibt zusammenhängend.
 {
   const links = provinces.map((p) => new Set(p.neighbors));
   const key = (a: number, b: number) => `${Math.min(a, b)}:${Math.max(a, b)}`;
-  const edgeInfo = new Map<string, { detour: number; border: number; via: Pt }>();
+  const edgeInfo = new Map<string, { detour: number; border: number; via: Pt; straight: number; third: boolean }>();
+  /** führt der gerade Weg Stadt → Grenzpunkt → Stadt durch eine dritte Provinz? */
+  const crossesThird = (u: number, v: number, via: Pt) => {
+    for (const [a, b] of [[provinces[u].center as Pt, via], [via, provinces[v].center as Pt]] as [Pt, Pt][]) {
+      const n = Math.max(2, Math.ceil(dist(a, b) / 4));
+      for (let k = 1; k < n; k++) {
+        const x = a[0] + ((b[0] - a[0]) * k) / n, y = a[1] + ((b[1] - a[1]) * k) / n;
+        const at = provinceIndexAt(x, y);
+        if (at >= 0 && at !== u && at !== v) return true;
+      }
+    }
+    return false;
+  };
   for (const p of provinces) {
     for (const n of p.neighbors) {
       if (n < p.id) continue;
@@ -836,7 +870,7 @@ function routeOnLand(u: number, v: number, via: Pt, wide = false): { a: number; 
       }
       const straight = Math.max(1, dist(p.center as Pt, q.center as Pt));
       const detour = (dist(p.center as Pt, via) + dist(via, q.center as Pt)) / straight;
-      edgeInfo.set(key(p.id, n), { detour, border: b?.len ?? 0, via });
+      edgeInfo.set(key(p.id, n), { detour, border: b?.len ?? 0, via, straight, third: crossesThird(p.id, n, via) });
     }
   }
   const total = [...edgeInfo.keys()].length;
@@ -856,10 +890,17 @@ function routeOnLand(u: number, v: number, via: Pt, wide = false): { a: number; 
     }
     return false;
   };
+  /** mittlere Weglänge (Luftlinie) der Nachbarschaften einer Provinz */
+  const avgLen = provinces.map((p) => {
+    const ls = p.neighbors.map((n) => edgeInfo.get(key(p.id, n))!.straight);
+    return ls.length ? ls.reduce((a, b) => a + b, 0) / ls.length : 1;
+  });
   const score = (u: number, v: number) => {
     const e = edgeInfo.get(key(u, v))!;
-    // Provinzen mit 5 Verbindungen zuerst entlasten (5 soll selten sein)
-    return deg(u) + deg(v) + (deg(u) >= 5 ? 6 : 0) + (deg(v) >= 5 ? 6 : 0) + 4 * (e.detour - 1) + (e.border < 25 ? 2 : 0);
+    const rel = e.straight / ((avgLen[u] + avgLen[v]) / 2);
+    // lange Wege zuerst; Provinzen mit 5 Verbindungen entlasten (5 soll selten sein)
+    return 8 * rel + (deg(u) + deg(v)) / 2 + (deg(u) >= 5 ? 4 : 0) + (deg(v) >= 5 ? 4 : 0) + 4 * (e.detour - 1)
+      + (e.border < 25 ? 2 : 0) + (e.third ? 6 : 0) - (provinces[u].nation === provinces[v].nation ? 0.5 : 0);
   };
   /** Wege zwischen zwei Nationen: zwischen Nachbarländern bleiben mindestens 2 (bzw. alle, wenn es weniger gibt) */
   const crossings = (u: number, v: number) => {
@@ -958,6 +999,21 @@ const data: MapData = {
   seaBorders,
   roads,
 };
+
+// Seewege durchs Wasser, danach Wegbündel mit Kreuzungen und Abkürzungen (je auf frischer Geometrie)
+{
+  const sea = waterRoutes({ ...data }, anyLand);
+  data.roads = [...(data.roads ?? []), ...sea];
+  console.log(`Seewege durchs Wasser verlegt: ${sea.length}`);
+  const bundled = bundleRoutes({ ...data }, provs.map((p) => p.shape));
+  const key = (a: number, b: number) => `${Math.min(a, b)}:${Math.max(a, b)}`;
+  const replaced = new Set(bundled.roads.map((r) => key(r.a, r.b)));
+  data.roads = [...data.roads.filter((r) => !replaced.has(key(r.a, r.b))), ...bundled.roads];
+  data.shortcuts = bundled.shortcuts;
+  data.junctions = bundled.junctions;
+  const where = (n: number) => (n < provinces.length ? provinces[n].name : seaZones[n - provinces.length].name);
+  console.log(`Wegkreuzungen: ${bundled.junctions.length} (${bundled.junctions.map((j) => where(j.node)).join(', ')}), Abkürzungen: ${bundled.shortcuts.length}`);
+}
 
 const outDir = path.join(ROOT, 'public', 'maps');
 fs.mkdirSync(outDir, { recursive: true });

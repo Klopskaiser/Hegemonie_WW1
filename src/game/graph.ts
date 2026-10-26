@@ -25,6 +25,11 @@ function graph(map: MapData): Graph {
       adj.push([...z.seas.map((s) => P + s), ...z.coasts.filter((c) => (map.provinces[c].seaLinks ?? map.provinces[c].seas).includes(z.id))]);
       pos.push(z.center);
     }
+    // Abkürzungen über Wegkreuzungen
+    for (const s of map.shortcuts ?? []) {
+      if (!adj[s.a].includes(s.b)) adj[s.a].push(s.b);
+      if (!adj[s.b].includes(s.a)) adj[s.b].push(s.a);
+    }
     // Landwege führen über den Punkt der gemeinsamen Grenze, der der Verbindungslinie am nächsten liegt
     const N = P + map.seas.length;
     const shared = new Map<number, number[]>();
@@ -145,7 +150,7 @@ function road(map: MapData, u: number, v: number) {
   if (!m) {
     m = new Map();
     const N = nodeCount(map);
-    for (const r of map.roads ?? []) {
+    for (const r of [...(map.roads ?? []), ...(map.shortcuts ?? []).map((s) => ({ a: s.a, b: s.b, pts: s.pts, split: s.f0 }))]) {
       const pts: [number, number][] = [];
       for (let k = 0; k < r.pts.length; k += 2) pts.push([r.pts[k], r.pts[k + 1]]);
       m.set(Math.min(r.a, r.b) * N + Math.max(r.a, r.b), { a: r.a, pts, split: r.split });
@@ -183,6 +188,25 @@ function parts(map: MapData, u: number, v: number): Parts {
     c.set(key, r);
   }
   return r;
+}
+
+const throughCache = new WeakMap<MapData, Map<number, { a: number; via: number; f0: number; f1: number }>>();
+
+/**
+ * Abkürzung über eine Wegkreuzung: Gebiet, durch das der Weg u–v führt, und der Anteil des Weges
+ * (von u aus) in diesem Gebiet; null für gewöhnliche Wege.
+ */
+export function edgeThrough(map: MapData, u: number, v: number): { via: number; f0: number; f1: number } | null {
+  let m = throughCache.get(map);
+  if (!m) {
+    m = new Map();
+    const N = nodeCount(map);
+    for (const s of map.shortcuts ?? []) m.set(Math.min(s.a, s.b) * N + Math.max(s.a, s.b), { a: s.a, via: s.via, f0: s.f0, f1: s.f1 });
+    throughCache.set(map, m);
+  }
+  const t = m.get(Math.min(u, v) * nodeCount(map) + Math.max(u, v));
+  if (!t) return null;
+  return t.a === u ? { via: t.via, f0: t.f0, f1: t.f1 } : { via: t.via, f0: 1 - t.f1, f1: 1 - t.f0 };
 }
 
 /** Länge des Teilstücks in u (bis zur Grenze) und des ganzen Weges u–v in km */

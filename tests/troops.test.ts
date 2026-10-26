@@ -276,3 +276,24 @@ describe('Wegenetz', () => {
     }
   });
 });
+
+describe('Wegkreuzungen', () => {
+  it('Abkürzungen über eine Kreuzung verbinden die Ziele und führen durch das Gebiet dazwischen', async () => {
+    const { canTraverse } = await import('../src/game/military.ts');
+    const { nodeNeighbors, edgeThrough } = await import('../src/game/graph.ts');
+    expect((map.junctions ?? []).length).toBeGreaterThan(0);
+    const sc = (map.shortcuts ?? [])[0];
+    expect(sc).toBeTruthy();
+    expect(nodeNeighbors(map, sc.a)).toContain(sc.b);
+    expect(edgeThrough(map, sc.a, sc.b)?.via).toBe(sc.via);
+    // Landabkürzung (künstlich): Durchgangsprovinz einer Nation im Frieden sperrt den Weg
+    const berlin = prov('Berlin'), [x, y] = map.provinces[berlin].neighbors;
+    const fake = { ...map, shortcuts: [{ a: x, b: y, via: berlin, pts: [...map.provinces[x].center, ...map.provinces[y].center], f0: 0.3, f1: 0.7 }] };
+    const sim = newSim();
+    const army: Army = { id: 1, owner: 'DE', node: x, units: { infantry: 5 } };
+    for (const n of [x, y, berlin]) sim.state.provinces[n].owner = 'DE';
+    expect(canTraverse(sim.state, fake, army, x, y)).toBe(true);
+    sim.state.provinces[berlin].owner = 'FR';
+    expect(canTraverse(sim.state, fake, army, x, y)).toBe(false);
+  });
+});

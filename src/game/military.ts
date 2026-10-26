@@ -5,7 +5,7 @@ import {
   type Building, type UnitType,
 } from './balance.ts';
 import { atWar, hasRightOfWay, setRelation } from './diplomacy.ts';
-import { edgeParts, edgePoint, edgeSlice, isSea, nodeCount, nodeName, nodeNeighbors, nodePos } from './graph.ts';
+import { edgeParts, edgePoint, edgeSlice, edgeThrough, isSea, nodeCount, nodeName, nodeNeighbors, nodePos } from './graph.ts';
 import type { MapData } from './mapdata.ts';
 import { armyName } from './names.ts';
 import { REBELS, type Army, type GameState, type NewsInfo, type RoadPos } from './types.ts';
@@ -62,6 +62,13 @@ export function isMoving(a: Army): boolean {
 
 // ---------------------------------------------------------------- Bewegung
 
+/** Darf die Armee den Weg u→v nehmen? Bei Abkürzungen auch durch das Gebiet dazwischen. */
+export function canTraverse(state: GameState, map: MapData, a: Army, u: number, v: number): boolean {
+  if (!canEnter(state, map, a, v)) return false;
+  const t = edgeThrough(map, u, v);
+  return !t || canEnter(state, map, a, t.via);
+}
+
 export function canEnter(state: GameState, map: MapData, a: Army, node: number): boolean {
   if (isSea(map, node)) return !isRailOnly(a);
   // Schiffe (auch mit Truppen an Bord) gehen nie an Land
@@ -103,6 +110,12 @@ export function segmentHours(state: GameState, map: MapData, a: Army, u: number,
     return d / (carrying ? Math.min(ships, MILITARY.transportSpeed) : ships);
   }
   if (su && sv) return d / MILITARY.transportSpeed;
+  // Abkürzung über eine Kreuzung im Gebiet einer dritten Provinz: drei Abschnitte mit eigenem Tempo
+  const through = !su && !sv ? edgeThrough(map, u, v) : null;
+  if (through && !isSea(map, through.via)) {
+    return (d * through.f0) / landSpeed(state, a, u) + (d * (through.f1 - through.f0)) / landSpeed(state, a, through.via)
+      + (d * (1 - through.f1)) / landSpeed(state, a, v);
+  }
   if (sv) return d / MILITARY.transportSpeed + embarkHours(state, u, a.owner); // einschiffen
   if (su) return d / MILITARY.transportSpeed + embarkHours(state, v, a.owner); // anlanden
   // Landweg: bis zur Grenze im Tempo von u, danach im Tempo von v
@@ -158,7 +171,7 @@ export function pathsFrom(state: GameState, map: MapData, a: Army, from: number,
     done[u] = 1;
     if (u === stopAt) break;
     for (const v of nodeNeighbors(map, u)) {
-      if (done[v] || !canEnter(state, map, a, v)) continue;
+      if (done[v] || !canTraverse(state, map, a, u, v)) continue;
       const c = best + segmentHours(state, map, a, u, v);
       if (c < hours[v]) { hours[v] = c; prev[v] = u; push([c, v]); }
     }
@@ -454,7 +467,7 @@ export function processArrivals(ctx: MilitaryContext): void {
         break;
       }
       const next = m.path[m.seg + 1];
-      if (!canEnter(state, map, a, next)) {
+      if (!canTraverse(state, map, a, node, next)) {
         a.move = null;
         break;
       }

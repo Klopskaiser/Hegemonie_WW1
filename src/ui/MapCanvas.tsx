@@ -400,6 +400,16 @@ export function MapCanvas(props: Props) {
         ctx.stroke();
       }
       ctx.setLineDash([]);
+      // Wegkreuzungen
+      for (const j of map.junctions ?? []) {
+        const x = X(j.x), y = Y(j.y);
+        if (!visible(x, y)) continue;
+        const sea = isSea(map, j.node);
+        ctx.fillStyle = sea ? 'rgba(35, 70, 95, 0.75)' : 'rgba(105, 75, 45, 0.9)';
+        ctx.beginPath();
+        ctx.arc(x, y, 2.6, 0, Math.PI * 2);
+        ctx.fill();
+      }
       ctx.restore();
     }
 

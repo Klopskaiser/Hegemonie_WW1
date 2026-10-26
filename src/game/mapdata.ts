@@ -72,6 +72,13 @@ export interface MapData {
    * führen würde: Punkte [x1,y1, …] von a nach b; split = Anteil der Länge in Provinz a.
    */
   roads?: { a: number; b: number; pts: number[]; split: number }[];
+  /**
+   * Abkürzungen über Wegkreuzungen: Verbindung a–b, die durch das Gebiet von `via` führt (Provinz oder
+   * Seegebiet, ohne dessen Stadt/Mitte zu berühren). Punkte von a nach b; f0..f1 = Anteil im Gebiet von via.
+   */
+  shortcuts?: { a: number; b: number; via: number; pts: number[]; f0: number; f1: number }[];
+  /** Wegkreuzungen (für die Darstellung): Knoten, an dem die gebündelten Wege beginnen, und Ort */
+  junctions?: { node: number; x: number; y: number }[];
 }
 
 export function distanceKm(map: MapData, a: number, b: number): number {

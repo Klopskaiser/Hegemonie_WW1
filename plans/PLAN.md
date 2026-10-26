@@ -219,3 +219,13 @@
 - Sizilien ist eine Provinz (Palermo, Konfiguration ownIslands); die frühere Provinz Messina liegt in
   Kalabrien und heißt Catanzaro (Rohstoff Getreide ×2 übernommen). Umbenannte Provinzen erben beim Neubau
   die Rohstoffe ihrer Vorgängerin; die Reihenfolge der Provinzen bleibt stabil.
+- Wegauswahl (Vorgabe): beim Ausdünnen fallen bevorzugt lange Wege (relativ zu den anderen Wegen der beiden
+  Provinzen) und Wege durch eine dritte Provinz weg; bei Gleichstand bleiben Wege im eigenen Land. Verbleibende
+  Wege durch dritte Provinzen werden innerhalb der beiden Provinzen geführt.
+- Seewege, die über Land liefen, verlaufen jetzt durchs Wasser (Rasterwegsuche, eckig; scripts/routes.ts).
+  Seegebietsmitten liegen immer im Wasser.
+- Wegbündel und Kreuzungen: Wege, die von einem Knoten aus lange dicht nebeneinander laufen (Land: ≤ 10 km
+  über ≥ 90 km und ≥ 30 % – selten; See: ≤ 35 km über ≥ 50 km), teilen sich den Abschnitt bis zu einer
+  Wegkreuzung (Punkt auf der Karte). Zwischen Zielen ohne eigene Verbindung entsteht eine Abkürzung über die
+  Kreuzung (map.shortcuts); die Wegsuche nutzt sie, wenn sie schneller ist, und verlangt Zutritt zum Gebiet
+  dazwischen (Landabkürzungen: Tempo je Abschnitt nach Gebiet).
