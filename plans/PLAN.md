@@ -165,7 +165,12 @@
   geplante Gebäude mit. Nicht mehr mögliche Einträge entfallen mit Meldung. Eroberung leert sie.
 - Bauamt (Vorgabe): 2 Tage, 30000 Geld + 500 Holz, Unterhalt 2000 Geld/Tag, Gebäudebauzeiten
   in seiner Provinz −25 % (bestätigt: nur Gebäude, nur eigene Provinz; Einheiten unverändert).
-- Manufaktur (Vorgabe): 4 Stufen, Rohstoffproduktion +10 % je Stufe (nicht Geld), Moral +2,5 % je Stufe wie die Fabrik, schließt sich
+  Abschaltbar wie Kaserne, Wehramt und Eisenbahn (aus: kein Unterhalt, keine Wirkung).
+- Werkstatt (Vorgabe): 1 Stufe, 1 Tag, 5000 Geld, 1500 Eisen, 500 Holz, Moral +2 %, mechanische
+  Einheiten (alles außer Infanterie) in der Provinz +10 % Bautempo (Fertigungszeit ÷ 1,1),
+  Voraussetzung für die Fabrik (geplante Werkstatt zählt mit). Alte Spielstände: Werkstatt 0,
+  bestehende Fabriken bleiben.
+- Manufaktur (Vorgabe): 4 Stufen, Rohstoffproduktion +11 % je Stufe (nicht Geld), Moral +2,5 % je Stufe wie die Fabrik, schließt sich
   mit der Fabrik aus, keine Einheiten.
 - Gebäudekosten (Vorgabe, je Stufe gleich; nur die Festung dauert je Stufe länger): Fabrik 10000 Geld,
   2500 Eisen/Holz/Öl, 48 h; Manufaktur 10000 Geld, 2000 Eisen/Holz, 3000 Gas, 50 h; Wehramt 2000 Geld, 125 Holz, 125 Eisen, 2 h;

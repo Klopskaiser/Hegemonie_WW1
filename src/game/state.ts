@@ -25,7 +25,7 @@ export const SCENARIOS: { id: Scenario; name: string; description: string }[] = 
 ];
 
 const noBuildings = (): Record<Building, number> => ({
-  railroad: 0, harbor: 0, fortress: 0, factory: 0, manufactory: 0, barracks: 0, recruitment: 0, office: 0,
+  railroad: 0, harbor: 0, fortress: 0, workshop: 0, factory: 0, manufactory: 0, barracks: 0, recruitment: 0, office: 0,
 });
 
 export function createGame(map: MapData, opt: NewGameOptions): GameState {

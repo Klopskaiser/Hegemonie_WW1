@@ -283,6 +283,7 @@ describe('Bauabbruch', () => {
     const sim = newSim();
     sim.state.time = 2 * DAY;
     const berlin = prov('Berlin');
+    sim.state.provinces[berlin].buildings.workshop = 1;
     const stock = sim.state.nations.DE.stock;
     const before = { ...stock };
     expect(sim.apply('DE', { type: 'build', province: berlin, building: 'factory' }).ok).toBe(true);

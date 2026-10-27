@@ -2,7 +2,7 @@
 // ausschließlich über diese Aktionen.
 
 import {
-CAPITAL_MOVE, DAY, buildingLives,   ALL_RES, BUILD_QUEUE_LIMIT, BUILD_REFUND, BUILDINGS, CATEGORY_RES, FACTORY_SPEEDUP, HOUR, OFFICE_SPEEDUP, QUEUE_LIMIT, RES_NAMES, UNITS,
+CAPITAL_MOVE, DAY, buildingLives,   ALL_RES, BUILD_QUEUE_LIMIT, BUILD_REFUND, BUILDINGS, CATEGORY_RES, FACTORY_SPEEDUP, HOUR, OFFICE_SPEEDUP, QUEUE_LIMIT, RES_NAMES, UNITS, WORKSHOP_SPEEDUP,
   type Building, type Category, type Cost, type Res, type UnitType,
 } from './balance.ts';
 import { validShares, activeCapital, activeLevel } from './economy.ts';
@@ -208,7 +208,9 @@ export function unitHours(state: GameState, province: number, unit: UnitType): n
   const ps = state.provinces[province];
   const level = ps ? activeLevel(ps, 'factory') : min;
   const extra = Math.max(0, level - min);
-  return UNITS[unit].hours * Math.max(FACTORY_SPEEDUP, 1 - FACTORY_SPEEDUP * extra);
+  // Werkstatt: Bautempo +10 % (gilt für alle gefertigten, also mechanischen Einheiten)
+  const workshop = ps && activeLevel(ps, 'workshop') > 0 ? 1 + WORKSHOP_SPEEDUP : 1;
+  return (UNITS[unit].hours * Math.max(FACTORY_SPEEDUP, 1 - FACTORY_SPEEDUP * extra)) / workshop;
 }
 
 export function requirementsMet(state: GameState, map: MapData, province: number, unit: UnitType): string | null {

@@ -40,8 +40,8 @@ export const PROVINCE = {
 
 // ---------------------------------------------------------------- Gebäude
 
-export type Building = 'railroad' | 'harbor' | 'fortress' | 'factory' | 'manufactory' | 'barracks' | 'recruitment' | 'office';
-export const BUILDING_ORDER: Building[] = ['railroad', 'harbor', 'factory', 'manufactory', 'barracks', 'recruitment', 'office', 'fortress'];
+export type Building = 'railroad' | 'harbor' | 'fortress' | 'workshop' | 'factory' | 'manufactory' | 'barracks' | 'recruitment' | 'office';
+export const BUILDING_ORDER: Building[] = ['railroad', 'harbor', 'workshop', 'factory', 'manufactory', 'barracks', 'recruitment', 'office', 'fortress'];
 
 export interface BuildingDef {
   name: string;
@@ -91,8 +91,17 @@ export const BUILDINGS: Record<Building, BuildingDef> = {
     morale: (l) => (l >= 1 ? 0.07 : 0),
     describe: () => 'Produktion +25 %, Moral +7 %, ermöglicht Schiffe und Einschiffen.',
   },
+  workshop: {
+    name: 'Werkstatt', maxLevel: 1,
+    cost: () => ({ money: 5000, iron: 1500, lumber: 500 }),
+    hours: () => 24,
+    prodBonus: () => 0,
+    morale: (l) => (l >= 1 ? 0.02 : 0),
+    describe: () => `Mechanische Einheiten (alles außer Infanterie) werden ${Math.round(WORKSHOP_SPEEDUP * 100)} % schneller gebaut, Moral +2 %. Voraussetzung für die Fabrik.`,
+  },
   factory: {
     name: 'Fabrik', maxLevel: 4, fromDay: 3,
+    requires: { workshop: 1 },
     cost: () => ({ money: 10000, iron: 2500, lumber: 2500, oil: 2500 }),
     hours: () => 48,
     prodBonus: (l) => FACTORY_BONUS[l],
@@ -104,10 +113,10 @@ export const BUILDINGS: Record<Building, BuildingDef> = {
     name: 'Manufaktur', maxLevel: 4,
     cost: () => ({ money: 10000, iron: 2000, lumber: 2000, gas: 3000 }),
     hours: () => 50,
-    prodBonus: (l) => 0.1 * l,
+    prodBonus: (l) => 0.11 * l,
     morale: (l) => 0.025 * l,
     excludes: ['factory'],
-    describe: (l) => `Rohstoffproduktion +${10 * l} % (nicht Geld), Moral +${(2.5 * l).toLocaleString('de-DE')} %. Keine Fabrik: stellt keine Einheiten her; nicht zusammen mit einer Fabrik.`,
+    describe: (l) => `Rohstoffproduktion +${11 * l} % (nicht Geld), Moral +${(2.5 * l).toLocaleString('de-DE')} %. Keine Fabrik: stellt keine Einheiten her; nicht zusammen mit einer Fabrik.`,
   },
   barracks: {
     name: 'Kaserne', maxLevel: 2,
@@ -130,7 +139,7 @@ export const BUILDINGS: Record<Building, BuildingDef> = {
     describe: () => `Stellt kostenlos Infanterie auf, bei 100 % Moral alle ${RECRUIT_HOURS[0]} h (Doppelprovinz doppelt so schnell). Ohne Wehramt und Kaserne keine Infanterie. Unterhalt 500 Geld/Tag.`,
   },
   office: {
-    name: 'Bauamt', maxLevel: 1,
+    name: 'Bauamt', maxLevel: 1, switchable: true,
     cost: () => ({ money: 30000, lumber: 500 }),
     hours: () => 48,
     prodBonus: () => 0,
@@ -153,6 +162,8 @@ export function buildingLives(b: Building): number {
   return BUILDINGS[b].lives ?? 2;
 }
 
+/** Werkstatt: mechanische Einheiten werden um diesen Anteil schneller gebaut (Bautempo × 1,1) */
+export const WORKSHOP_SPEEDUP = 0.1;
 /** Bauamt: verkürzt Gebäudebauzeiten in seiner Provinz um diesen Anteil */
 export const OFFICE_SPEEDUP = 0.25;
 /** Bauschleife: höchstens so viele geplante Gebäude je Provinz (ohne den laufenden Bau) */

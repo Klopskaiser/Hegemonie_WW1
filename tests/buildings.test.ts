@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { checkBuild } from '../src/game/actions.ts';
+import { checkBuild, unitHours } from '../src/game/actions.ts';
 import { BUILDINGS, DAY, HOUR } from '../src/game/balance.ts';
 import { allRates, provinceOutput } from '../src/game/economy.ts';
 import type { MapData } from '../src/game/mapdata.ts';
@@ -24,6 +24,7 @@ describe('Bauschleife', () => {
   it('plant weitere Gebäude ein und baut sie nacheinander', () => {
     const sim = newSim();
     const ps = sim.state.provinces[berlin];
+    ps.buildings.workshop = 1; // Voraussetzung für die Fabrik
     expect(sim.apply('DE', { type: 'build', province: berlin, building: 'railroad' }).ok).toBe(true);
     expect(sim.apply('DE', { type: 'build', province: berlin, building: 'factory' }).ok).toBe(true);
     expect(sim.apply('DE', { type: 'build', province: berlin, building: 'factory' }).ok).toBe(true);
@@ -86,13 +87,13 @@ describe('Bauamt und Manufaktur', () => {
     expect(BUILDINGS.office.morale(1)).toBeCloseTo(0.02, 9);
   });
 
-  it('Manufaktur: +10 % Rohstoffe je Stufe, nicht Geld; schließt Fabrik aus und stellt keine Einheiten her', () => {
+  it('Manufaktur: +11 % Rohstoffe je Stufe, nicht Geld; schließt Fabrik aus und stellt keine Einheiten her', () => {
     const sim = newSim();
     const ps = sim.state.provinces[berlin];
     const before = provinceOutput(map, ps, berlin);
     ps.buildings.manufactory = 3;
     const after = provinceOutput(map, ps, berlin);
-    expect(after.amount / before.amount).toBeCloseTo(1.3, 6);
+    expect(after.amount / before.amount).toBeCloseTo(1.33, 6);
     expect(after.money).toBe(before.money);
     expect(checkBuild(sim.state, map, 'DE', berlin, 'factory').ok).toBe(false);
     expect(sim.apply('DE', { type: 'enqueue', province: berlin, unit: 'artillery' }).ok).toBe(false);
@@ -101,8 +102,33 @@ describe('Bauamt und Manufaktur', () => {
     expect(checkBuild(sim.state, map, 'DE', berlin, 'manufactory').ok).toBe(false);
   });
 
+  it('Werkstatt: Voraussetzung für die Fabrik, Fertigung 10 % schneller, Moral +2 %; Bauamt abschaltbar', () => {
+    const sim = newSim();
+    const ps = sim.state.provinces[berlin];
+    expect(BUILDINGS.workshop.cost(1)).toEqual({ money: 5000, iron: 1500, lumber: 500 });
+    expect(checkBuild(sim.state, map, 'DE', berlin, 'factory').error).toBe('Benötigt Werkstatt');
+    expect(sim.apply('DE', { type: 'build', province: berlin, building: 'workshop' }).ok).toBe(true);
+    // geplante Werkstatt reicht für die Bauschleife
+    expect(checkBuild(sim.state, map, 'DE', berlin, 'factory').ok).toBe(true);
+    ps.construction = null;
+    ps.buildQueue = [];
+    ps.buildings.factory = 1;
+    const slow = unitHours(sim.state, berlin, 'artillery');
+    ps.buildings.workshop = 1;
+    expect(unitHours(sim.state, berlin, 'artillery')).toBeCloseTo(slow / 1.1, 6);
+    expect(BUILDINGS.workshop.morale(1)).toBeCloseTo(0.02, 9);
+    ps.buildings.office = 1;
+    const on = allRates(sim.state, map).DE.cons.money;
+    expect(sim.apply('DE', { type: 'switchBuilding', province: berlin, building: 'office', on: false }).ok).toBe(true);
+    // abgeschaltet: kein Unterhalt, keine Verkürzung
+    expect(on - allRates(sim.state, map).DE.cons.money).toBe(2000);
+    expect(checkBuild(sim.state, map, 'DE', berlin, 'railroad').hours).toBe(72);
+    expect(BUILDINGS.workshop.hours(1)).toBe(24);
+  });
+
   it('auch geplante Fabriken schließen die Manufaktur aus', () => {
     const sim = newSim();
+    sim.state.provinces[berlin].buildings.workshop = 1;
     sim.apply('DE', { type: 'build', province: berlin, building: 'railroad' });
     sim.apply('DE', { type: 'build', province: berlin, building: 'factory' });
     expect(checkBuild(sim.state, map, 'DE', berlin, 'manufactory').ok).toBe(false);

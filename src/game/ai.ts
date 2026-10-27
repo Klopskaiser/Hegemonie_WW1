@@ -151,6 +151,13 @@ export class BasicAI implements Controller {
         switch (b) {
           case 'railroad': score = base * 0.33 * (net('coal') < BUILDINGS.railroad.upkeep!.coal! && mp.resource !== 'coal' ? 0.3 : 1); break;
           case 'harbor': score = base * 0.25; break;
+          // Werkstatt: Voraussetzung für die Fabrik (bevorzugt in Städten), beschleunigt vorhandene Fabriken
+          case 'workshop': {
+            const wantFactory = factories < (major ? 3 : 1) && ps.buildings.manufactory === 0;
+            score = (wantFactory ? 820 : 0) + (mp.city ? 300 : 0) + (ps.buildings.factory > 0 ? 400 : 0);
+            if (!wantFactory && ps.buildings.factory === 0) score *= 0.2;
+            break;
+          }
           case 'factory': {
             const gain = (BUILDINGS.factory.prodBonus(chk.level) - BUILDINGS.factory.prodBonus(chk.level - 1)) * base;
             // erste Fabriken ermöglichen Artillerie und Fahrzeuge, Stufe 3 die schweren Einheiten
