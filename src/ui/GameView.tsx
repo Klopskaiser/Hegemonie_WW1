@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { ALL_RES, DAY, HOUR, RES_NAMES, SPEEDS } from '../game/balance.ts';
 import { atWar } from '../game/diplomacy.ts';
 import { nodeName } from '../game/graph.ts';
-import { armyLocation, engagedTarget, planRoute, routePoints, type MoveTarget, inMelee, inMeleeRange, unitRange } from '../game/military.ts';
+import { armyLocation, armyPosition, engagedTarget, planRoute, routePoints, type MoveTarget, inMelee, inMeleeRange, unitRange } from '../game/military.ts';
 import { requiredWars, type Action } from '../game/actions.ts';
 import { MultiArmyPanel } from './MultiArmyPanel.tsx';
 import type { UnitType } from '../game/balance.ts';
@@ -79,12 +79,14 @@ export function GameView({ start, onExit }: { start: SessionStart; onExit(): voi
     const out: Shot[] = [];
     for (const a of armies) {
       const t = engagedTarget(state, map, a);
-      if (!t || !armies.includes(t)) continue;
+      if (!t) continue;
+      // verborgenes Ziel (Festung ab Stufe 2): Einschläge trotzdem zeigen, an seinem Ort, ohne Nadel
+      const at = armies.includes(t) ? undefined : armyPosition(map, t, state.time);
       // im Nahkampf gebundene Schützen feuern nicht sichtbar
       if (inMelee(state, map, a)) continue;
       for (const u of Object.keys(a.units) as UnitType[]) {
         if ((a.units[u] ?? 0) > 0 && unitRange(a, u, map) > 0) {
-          out.push({ key: `${a.id}-${t.id}-${u}`, kind: u, shooter: a.id, target: t.id, count: a.units[u]! });
+          out.push({ key: `${a.id}-${t.id}-${u}`, kind: u, shooter: a.id, target: t.id, count: a.units[u]!, ...(at ? { at } : {}) });
         }
       }
     }

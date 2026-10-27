@@ -378,8 +378,12 @@
   Nation im Frieden ist oder der Weg zwingend durch eine ihrer Städte führt. Wege und Wegpunkte in ihrem
   Gebiet und der Abzug von dort sind frei; Begegnungen mit ihren Armeen an Land lösen weiterhin Kampf aus.
   Ein Marsch zu einem Wegpunkt hinter der letzten eigenen Stadt läuft bis dorthin durch (früher blieb die Armee
-  in dieser Stadt stehen). Eisenbahngeschütze fahren nur im eigenen Bahnnetz: ein Wegpunkt jenseits der Grenze
-  wird bis knapp davor angefahren (`roadLimit`).
+  in dieser Stadt stehen). Eisenbahngeschütze fahren nur auf intakten Schienen, sonst nach denselben Regeln wie alle
+  Truppen (Vorgabe): eigene und mit Durchmarschrecht mit vollem Tempo, beim Kriegsgegner und im Frieden (dort mit
+  Kriegserklärung beim Eintreffen) halb so schnell (`enemyRailFactor`); ein Wegpunkt jenseits des befahrbaren
+  Bahnnetzes wird bis knapp vor die Grenze angefahren (`roadLimit`).
+- Fernkampf auf verborgene Ziele (Festung ab Stufe 2): Geschosse und Einschläge sind trotzdem zu sehen, sie
+  schlagen am Ort des Ziels ein, ohne dessen Nadel zu zeigen.
 - Kampfwerte (Vorgabe): Infanterie 1 (× 1,2 × Moral, also höchstens 1,2), in eigenen Provinzen +10 %;
   Maschinen haben in Angriff und Verteidigung denselben Wert: Panzerwagen 2, Artillerie 1,5, Panzer 4,
   Eisenbahngeschütz 3, Schlachtschiff 6 (auch Fernkampfschaden je Einheit). Artillerie und

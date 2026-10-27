@@ -2,8 +2,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { COMBAT_MORALE_V2, DAY, DEFAULT_COMBAT_MORALE, HOUR, MILITARY, MINUTE, SUPERIORITY, UNITS } from '../src/game/balance.ts';
-import { applyCombatMorale, armyHp, armyPosition, combatRound, forcedMarchWear, killPoints2, meleeOutput, meleePower, rangedPower, repairMachines, roadLimit, segmentHours, unitCount } from '../src/game/military.ts';
+import { applyCombatMorale, armyHp, armyPosition, combatRound, forcedMarchWear, killPoints2, meleeOutput, meleePower, planRoute, rangedPower, repairMachines, roadLimit, segmentHours, unitCount } from '../src/game/military.ts';
 import { allRates, netRate, upkeepUse } from '../src/game/economy.ts';
+import { edgeParts } from '../src/game/graph.ts';
 import type { MapData } from '../src/game/mapdata.ts';
 import { Simulation } from '../src/game/sim.ts';
 import { createGame } from '../src/game/state.ts';
@@ -528,5 +529,31 @@ describe('Marsch zu einem Wegpunkt vor einer Grenze', () => {
     march(sim, inf, 0.9);
     expect(inf.pos).toEqual({ a: s, b: n, f: 0.9 });
     expect(roadLimit(sim.state, map, inf, s, n)).toBe(1);
+  });
+});
+
+describe('Eisenbahngeschütze auf feindlichen Schienen', () => {
+  it('fremde Schienen: im Krieg und im Frieden (mit Kriegserklärung) halb so schnell, mit Durchmarschrecht voll; ohne Schienen nicht', () => {
+    const state = createGame(map, { id: 't', name: 'T', playerNation: 'DE', speed: 1, seed: 7, now: 0, scenario: 'test' });
+    for (const n of Object.values(state.nations)) n.controller = 'human';
+    const sim = new Simulation(state, map);
+    const s = prov('Stuttgart'), n = prov('Nancy');
+    const gun: Army = { id: sim.state.nextArmyId++, owner: 'DE', node: s, units: { railgun: 1 }, keepApart: true };
+    sim.state.armies.push(gun);
+    const [l1, len] = edgeParts(map, s, n);
+    const v = UNITS.railgun.speed;
+    // Frieden: nur mit Kriegserklärung beim Eintreffen
+    expect(planRoute(sim.state, map, gun, sim.state.time, { node: n })).toBeNull();
+    expect(planRoute(sim.state, map, { ...gun, warOn: ['FR'] }, sim.state.time, { node: n })?.path).toEqual([s, n]);
+    // Durchmarschrecht: volles Tempo
+    sim.apply('DE', { type: 'propose', nation: 'FR', kind: 'rightOfWay' });
+    sim.apply('FR', { type: 'answer', nation: 'DE', accept: true });
+    expect(planRoute(sim.state, map, gun, sim.state.time, { node: n })?.path).toEqual([s, n]);
+    expect(segmentHours(sim.state, map, gun, s, n)).toBeCloseTo(len / v, 6);
+    sim.apply('DE', { type: 'declareWar', nation: 'FR' });
+    expect(planRoute(sim.state, map, gun, sim.state.time, { node: n })?.path).toEqual([s, n]);
+    expect(segmentHours(sim.state, map, gun, s, n)).toBeCloseTo(l1 / v + (len - l1) / (v * MILITARY.enemyRailFactor), 6);
+    sim.state.provinces[n].buildings.railroad = 0;
+    expect(planRoute(sim.state, map, gun, sim.state.time, { node: n })).toBeNull();
   });
 });

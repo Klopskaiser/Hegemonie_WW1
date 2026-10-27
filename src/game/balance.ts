@@ -269,6 +269,8 @@ export const MILITARY = {
   territory: { own: 1, foreign: 0.7, enemy: 0.5 },
   /** Eisenbahn im eigenen Gebiet */
   railFactor: 2.5,
+  /** Eisenbahngeschütze auf fremden Schienen ohne Durchmarschrecht (Kriegsgegner, Frieden) */
+  enemyRailFactor: 0.5,
   /** eingeschiffte Landtruppen (Transportschiffe) */
   transportSpeed: 21,
   /** Ein- bzw. Ausschiffen; mit befreundetem Hafen am Ort nur halb so lange */

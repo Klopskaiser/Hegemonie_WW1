@@ -94,14 +94,15 @@ export function canEnter(state: GameState, map: MapData, a: Army, node: number):
   // Schiffe (auch mit Truppen an Bord) gehen nie an Land
   if (isNaval(a)) return false;
   const owner = state.provinces[node].owner;
-  if (isRailOnly(a)) return owner === a.owner && activeLevel(state.provinces[node], 'railroad') > 0;
+  // Eisenbahngeschütze nur auf intakten Schienen; sonst dieselben Regeln wie für alle (Frieden: Kriegserklärung beim Eintreffen)
+  if (isRailOnly(a) && activeLevel(state.provinces[node], 'railroad') <= 0) return false;
   return owner === a.owner || atWar(state, a.owner, owner) || hasRightOfWay(state, a.owner, owner) || !!a.warOn?.includes(owner);
 }
 
 /**
  * Wie weit (Anteil des Weges) eine Armee von u aus in Richtung v kommt, ohne v zu betreten. Wege sind frei (auch
  * im Friedensgebiet, nur die fremde Stadt verlangt Krieg); Eisenbahngeschütze fahren nur bis knapp vor die Grenze
- * des eigenen Bahnnetzes.
+ * des befahrbaren Bahnnetzes.
  */
 export function roadLimit(state: GameState, map: MapData, a: Army, u: number, v: number): number {
   if (!isRailOnly(a) || canTraverse(state, map, a, u, v)) return 1;
@@ -125,8 +126,9 @@ export function harborLeg(map: MapData, u: number, v: number): number {
 function landSpeed(state: GameState, a: Army, province: number): number {
   const ps = state.provinces[province];
   const base = armySpeed(a);
-  if (isRailOnly(a)) return base;
   const own = ps.owner === a.owner;
+  // Eisenbahngeschütze: auf eigenen Schienen und mit Durchmarschrecht voll, auf fremden sonst halb so schnell
+  if (isRailOnly(a)) return own || hasRightOfWay(state, a.owner, ps.owner) ? base : base * MILITARY.enemyRailFactor;
   // halbes Tempo auf feindlichem Land und überall ohne Durchmarschrecht oder Bündnis
   const terr = own ? MILITARY.territory.own : hasRightOfWay(state, a.owner, ps.owner) ? MILITARY.territory.foreign : MILITARY.territory.enemy;
   return base * terr * (own && activeLevel(ps, 'railroad') > 0 ? MILITARY.railFactor : 1) * marchFactor(a);

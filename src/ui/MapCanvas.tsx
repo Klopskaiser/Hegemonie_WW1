@@ -22,6 +22,8 @@ export interface Shot {
   target: number;
   /** Anzahl der feuernden Einheiten dieses Typs: je Einheit eine Kugel (Schlachtschiffe: zwei, Doppelkanone) */
   count: number;
+  /** Einschlagsort (Weltkoordinaten), wenn das Ziel nicht sichtbar ist (z. B. hinter einer Festung): ohne Nadel */
+  at?: [number, number];
 }
 
 /** Flugbild je Waffe: Takt je Einheit, Flugzeit (ms), Bogenhöhe relativ zur Entfernung, Kugelgröße */
@@ -806,7 +808,7 @@ export function MapCanvas(props: Props) {
         for (const sh of p.shots) {
           const b = BALLISTICS[sh.kind];
           if (!b) continue;
-          const from = heads.get(sh.shooter), to = tips.get(sh.target);
+          const from = heads.get(sh.shooter), to = tips.get(sh.target) ?? (sh.at ? [X(sh.at[0]), Y(sh.at[1])] as [number, number] : undefined);
           if (!from || !to) continue;
           const [x0, y0] = from, [x1, y1] = to;
           const dist = Math.hypot(x1 - x0, y1 - y0);
