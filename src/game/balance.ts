@@ -298,6 +298,8 @@ export const MILITARY = {
   repairMin: 0.05,
   /** Landtruppen auf See kämpfen mit halber Stärke (Schlachtschiffe voll) */
   seaFactor: 0.5,
+  /** Lebenspunkte der Landtruppen auf See und beim Ein-/Ausschiffen (Schlachtschiffe voll) */
+  seaHpFactor: 0.5,
   /** Zufallsstreuung des Schadens (±) */
   randomSpread: 0.25,
   /** Moral einer frisch eroberten Provinz; Rückeroberung am selben Tag: DEFECTION.morale */

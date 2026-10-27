@@ -310,7 +310,7 @@
 - Provinzmoral (Vorgabe): Ziel = 85 % − Entfernung zur Hauptstadt (1 % je 100 km ab 300 km, höchstens
   30 %; ohne Hauptstadt die vollen 30 %; Werte wie in balance.ts MORALE) + Gebäude − 5 % je Krieg (höchstens 25 %) − Mangel (Nahrung 15 %,
   Baustoffe 5 %, Energie 10 %) − Kämpfe in der Provinz (Vorgabe: fest −15 % am Ziel, solange seit dem letzten Tageswechsel gekämpft wurde,
-  unabhängig von der Dauer; zusätzlich je Kampfrunde in der Provinz, höchstens einmal je Stunde, sofort −0,75 %) − 2 % je angrenzender eigener Provinz
+  unabhängig von der Dauer; zusätzlich je Kampfrunde in der Provinz – Nahkampf oder Beschuss, zusammen höchstens einmal je Stunde – sofort −0,75 %) − 2 % je angrenzender eigener Provinz
   unter 33 % Moral. Kein Hauptstadtbonus, kein Abzug für besetztes Gebiet. Annäherung je Tag 35 % der
   Lücke, mindestens 3 Prozentpunkte (Vorgabe; liegt das Ziel näher, die Restlücke), höchstens ±10 Prozentpunkte. Eroberte Provinzen beginnen bei 25 %, Rückeroberung durch den
   Vorbesitzer am selben Spieltag bei 40 % (wie Überlaufen). Hauptstadtfall: Sieger +10 %, Verlierer −15 %.
@@ -382,6 +382,8 @@
   Truppen (Vorgabe): eigene und mit Durchmarschrecht mit vollem Tempo, beim Kriegsgegner und im Frieden (dort mit
   Kriegserklärung beim Eintreffen) halb so schnell (`enemyRailFactor`); ein Wegpunkt jenseits des befahrbaren
   Bahnnetzes wird bis knapp vor die Grenze angefahren (`roadLimit`).
+  Beschädigte Schienen (Reparatur nötig) sind nicht befahrbar und werden nicht gezeichnet; ein Eisenbahngeschütz
+  in einer Provinz mit beschädigter Eisenbahn (auch mitten auf der Strecke) steht fest, bis sie repariert ist.
 - Fernkampf auf verborgene Ziele (Festung ab Stufe 2): Geschosse und Einschläge sind trotzdem zu sehen, sie
   schlagen am Ort des Ziels ein, ohne dessen Nadel zu zeigen.
 - Kampfwerte (Vorgabe): Infanterie 1 (× 1,2 × Moral, also höchstens 1,2), in eigenen Provinzen +10 %;
@@ -394,6 +396,11 @@
   Treffer (Nah- und Fernkampf) werden je Einheit ausgewürfelt (jede Einheit gleich wahrscheinlich), ein
   Treffer trifft die Einheit, bis sie fällt; Infanterie schützt so teure Technik. Kämpfe auf Wegen
   beschädigen Gebäude der Provinz, in deren Gebiet gekämpft wird.
+- Auf See und beim Ein-/Ausschiffen (Vorgabe): Landtruppen haben halbe Kampfkraft im Nahkampf und halbe
+  Lebenspunkte (`seaFactor`, `seaHpFactor`); Schlachtschiffe sind nicht betroffen. Bestehende Wunden zählen
+  dabei voll weiter (eine an Land halb verwundete Einheit fällt auf See beim nächsten Treffer).
+- Nadeln: liegen Spitzen dicht beieinander, werden sie aufgefächert; Köpfe, die sich danach noch überdecken,
+  werden auseinandergeschoben (die Nadel zeigt dann schräg zum Kopf).
 - Lebenspunkte der Infanterie hängen wie ihre Kampfkraft von der Moral ab: 20 × 1,2 × Moral,
   also 2,4 bis 24 (20 bei 83,3 %). Angeschlagene Einheiten, deren Wunde nach einem Moralverlust über den
   Lebenspunkten liegt, fallen beim nächsten Treffer.

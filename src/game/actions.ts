@@ -11,7 +11,7 @@ import { isSea, nodeNeighbors } from './graph.ts';
 import type { MapData, Resource } from './mapdata.ts';
 import { acceptOffer, cancelOffer, postOffer } from './market.ts';
 import {
-  boardingWait, garrisonKeep, halt, inMelee, isNaval, mergeArmies, nearestNode, planRoute, pursue, rejoinSplits, replan, samePlace, startMove, unitCount, unitTypes,
+  boardingWait, currentProvince, garrisonKeep, halt, inMelee, isNaval, isRailOnly, mergeArmies, nearestNode, planRoute, pursue, rejoinSplits, replan, samePlace, startMove, unitCount, unitTypes,
   type MilitaryContext, type MoveTarget,
 } from './military.ts';
 import type { Army, GameState, ProvinceState, Relation, Stock } from './types.ts';
@@ -411,7 +411,11 @@ function applyArmyAction(ctx: ActionContext, nation: string, action: ArmyAction)
       if (keep === 'last') return { ok: false, error: 'Die letzte Einheit bleibt als Besatzung in der Stadt' };
       const mover = { ...a, units: keep ? without(a.units, keep.unit) : a.units, warOn };
       const plan = planRoute(state, map, mover, state.time, target);
-      if (!plan) return { ok: false, error: 'Kein Weg dorthin' };
+      if (!plan) {
+        const here = currentProvince(map, a, state.time);
+        const broken = isRailOnly(a) && here >= 0 && activeLevel(state.provinces[here], 'railroad') <= 0;
+        return { ok: false, error: broken ? 'Schienen beschädigt – erst nach der Reparatur beweglich' : 'Kein Weg dorthin' };
+      }
       // mitten im Ein-/Ausschiffen: weiter in dieselbe Richtung nur noch die Restzeit,
       // zurück (Umkehr) so lange, wie schon vergangen ist
       let wait: number | undefined;

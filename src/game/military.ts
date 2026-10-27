@@ -85,6 +85,8 @@ export function isMoving(a: Army): boolean {
 /** Darf die Armee den Weg u→v nehmen? Bei Abkürzungen auch durch das Gebiet dazwischen. */
 export function canTraverse(state: GameState, map: MapData, a: Army, u: number, v: number): boolean {
   if (!canEnter(state, map, a, v)) return false;
+  // Eisenbahngeschütze brauchen auch dort intakte Schienen, wo sie losfahren (beschädigte: festgefahren bis zur Reparatur)
+  if (isRailOnly(a) && !isSea(map, u) && activeLevel(state.provinces[u], 'railroad') <= 0) return false;
   const t = edgeThrough(map, u, v);
   return !t || canEnter(state, map, a, t.via);
 }
@@ -396,6 +398,11 @@ export function planRoute(state: GameState, map: MapData, a: Army, time: number,
   const from = armyLocation(a, time);
   const to = normalizeTarget(target);
   const seg = (u: number, v: number) => segmentHours(state, map, a, u, v);
+  // Eisenbahngeschütz auf beschädigten Schienen (auch mitten auf der Strecke): festgefahren bis zur Reparatur
+  if (isRailOnly(a)) {
+    const here = currentProvince(map, a, time);
+    if (here >= 0 && activeLevel(state.provinces[here], 'railroad') <= 0) return null;
+  }
   // Flotte mit Truppen an Land schicken: Landung wie bisher (vom nächsten Knoten aus)
   if ('node' in to && isNaval(a) && !isSea(map, to.node)) {
     const start = 'node' in from ? from.node : from.road.f < 0.5 ? from.road.a : from.road.b;
@@ -1119,7 +1126,7 @@ function spread(ctx: MilitaryContext): number {
  * Einheit (jede Einheit gleich wahrscheinlich, viele Infanteristen schützen also teure Technik) und trifft
  * sie, bis sie fällt oder der Schaden aufgebraucht ist. Angeschlagene Einheiten behalten ihre Wunden.
  */
-export function applyDamage(a: Army, dmg: number, random: () => number, keep = 0): void {
+export function applyDamage(a: Army, dmg: number, random: () => number, keep = 0, map?: MapData): void {
   let rest = dmg;
   while (rest > 1e-9) {
     const types = unitTypes(a);
@@ -1127,7 +1134,7 @@ export function applyDamage(a: Army, dmg: number, random: () => number, keep = 0
     if (total <= 0) return;
     let r = random() * total, u = types[types.length - 1];
     for (const t of types) if ((r -= a.units[t]!) < 0) { u = t; break; }
-    const hp = unitHp(a, u);
+    const hp = unitHp(a, u, map);
     const w = a.wounds?.[u] ?? 0;
     // ist die Moral gefallen, kann die Wunde schon über den Lebenspunkten liegen: dann fällt die Einheit
     const hit = Math.max(0, Math.min(rest, hp - w));
@@ -1145,9 +1152,13 @@ export function applyDamage(a: Army, dmg: number, random: () => number, keep = 0
   }
 }
 
-/** Lebenspunkte einer Einheit: Infanterie nach Moral wie ihre Kampfkraft (1,2 × Moral: 10 % → 0,12-fach … 100 % → 1,2-fach) */
-export function unitHp(a: Army, u: UnitType): number {
-  return UNITS[u].hp * (u === 'infantry' ? infantryStrength(a) : 1);
+/**
+ * Lebenspunkte einer Einheit: Infanterie nach Moral wie ihre Kampfkraft (1,2 × Moral: 10 % → 0,12-fach … 100 % → 1,2-fach);
+ * Landtruppen auf See und beim Ein-/Ausschiffen halb (mit `map`; Schlachtschiffe voll).
+ */
+export function unitHp(a: Army, u: UnitType, map?: MapData): number {
+  const sea = !UNITS[u].naval && (!!a.boarding || (map !== undefined && isSea(map, a.node)));
+  return UNITS[u].hp * (u === 'infantry' ? infantryStrength(a) : 1) * (sea ? MILITARY.seaHpFactor : 1);
 }
 
 /** Tageswechsel: Maschinen außerhalb von Kämpfen bekommen einen Teil ihrer fehlenden Lebenspunkte zurück */
@@ -1350,7 +1361,7 @@ export function combatRound(ctx: MilitaryContext, tally?: CombatTally): void {
   if (dealt.size) {
     const before = new Map([...damage.keys()].map((b) => [b, unitCount(b)]));
     const names = new Map([...dealt.keys(), ...damage.keys()].map((x) => [x, armyName(x)]));
-    for (const [b, dmg] of damage) applyDamage(b, dmg * fortressShield(state, map, b), ctx.random);
+    for (const [b, dmg] of damage) applyDamage(b, dmg * fortressShield(state, map, b), ctx.random, 0, map);
     // vernichtete Gegner stärken die Moral (angewendet mit dem Fernkampf derselben Stunde)
     for (const [a, mine] of dealt) {
       let kills = 0;
@@ -1480,7 +1491,7 @@ export function rangedRound(ctx: MilitaryContext, tally?: CombatTally): void {
     const names = new Map(victims.map((b) => [b, armyName(b)]));
     const hit = out * spread(ctx);
     for (const b of victims) {
-      applyDamage(b, hit * fortressShield(state, map, b), ctx.random, lastInCity(state, map, b) ? 1 : 0);
+      applyDamage(b, hit * fortressShield(state, map, b), ctx.random, lastInCity(state, map, b) ? 1 : 0, map);
       // beschossen werden zehrt an der Moral (einmal je Stunde, egal wie viele Schützen)
       tallyOf(t, b).shelled = true;
       const prov = b.pos ? roadProvince(map, b.pos) : isSea(map, b.node) ? -1 : b.node;
@@ -1992,9 +2003,9 @@ export function rangedPower(a: Army, map: MapData): number {
   return out;
 }
 
-/** Verbleibende Lebenspunkte aller Einheiten (Infanterie nach Moral, abzüglich Verwundungen) */
-export function armyHp(a: Army): number {
-  return unitTypes(a).reduce((t, u) => t + Math.max(0, a.units[u]! * unitHp(a, u) - (a.wounds?.[u] ?? 0)), 0);
+/** Verbleibende Lebenspunkte aller Einheiten (Infanterie nach Moral, abzüglich Verwundungen; auf See siehe unitHp) */
+export function armyHp(a: Army, map?: MapData): number {
+  return unitTypes(a).reduce((t, u) => t + Math.max(0, a.units[u]! * unitHp(a, u, map) - (a.wounds?.[u] ?? 0)), 0);
 }
 
 // ---------------------------------------------------------------- Besatzung

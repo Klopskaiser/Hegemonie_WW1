@@ -4,6 +4,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Sight } from '../game/visibility.ts';
 import { closestOnEdge, edgeParts, edgePoints, edgeSlice, harborSea, isSea, nodeCount, nodeNeighbors, nodePos } from '../game/graph.ts';
+import { activeLevel } from '../game/economy.ts';
 import type { MapData } from '../game/mapdata.ts';
 import { armyPosition, isNaval, normalizeTarget, remainingRoute, unitCount, unitRange, type MoveTarget, boardingWait } from '../game/military.ts';
 import { makeRng } from '../game/rng.ts';
@@ -503,7 +504,8 @@ export function MapCanvas(props: Props) {
         for (let k = 0; k + 1 < pts.length; k++) rails.push([X(pts[k][0]), Y(pts[k][1]), X(pts[k + 1][0]), Y(pts[k + 1][1])]);
       };
       map.provinces.forEach((mp, i) => {
-        if (!shown(i) || p.provinces![i].buildings.railroad <= 0) return;
+        // beschädigte Eisenbahn (Reparatur nötig) wird nicht gezeichnet – sie ist nicht befahrbar
+        if (!shown(i) || activeLevel(p.provinces![i], 'railroad') <= 0) return;
         for (const n of mp.links ?? mp.neighbors) {
           const [l1, len] = edgeParts(map, i, n);
           add(edgeSlice(map, i, n, 0, len > 0 ? l1 / len : 0.5));
@@ -761,6 +763,18 @@ export function MapCanvas(props: Props) {
             pins[g].len = radius + (k % 2 ? (small ? 4 : 7) * Z : 0);
           });
         }
+        // Köpfe, die sich trotzdem überdecken (z. B. eine Nadel knapp neben einer Gruppe), auseinanderschieben;
+        // die Spitze bleibt, die Nadel zeigt dann schräg zum verschobenen Kopf
+        const placed = pins.map((q) => {
+          const rad = (q.angle * Math.PI) / 180;
+          return { x: q.x + Math.cos(rad) * q.len, y: q.y + Math.sin(rad) * q.len, box: pinHeadBox(ctx, pinShapes(q.a), unitCount(q.a), small, Z) };
+        });
+        separateHeads(placed);
+        pins.forEach((q, k) => {
+          const h = placed[k];
+          q.angle = (Math.atan2(h.y - q.y, h.x - q.x) * 180) / Math.PI;
+          q.len = Math.hypot(h.x - q.x, h.y - q.y);
+        });
         for (const q of pins) drawNeedle(ctx, q.x, q.y, q.angle, q.len);
         for (const q of pins) {
           const rad = (q.angle * Math.PI) / 180;
@@ -1333,6 +1347,55 @@ function shapeSize(sh: PinShape, k: number): [number, number] {
     case 'square': return [4.5 * k, 4.5 * k];
     case 'circle': return [4.5 * k, 4.5 * k];
     case 'ship': return [11 * k, 5 * k];
+  }
+}
+
+/** Umriss eines Nadelkopfs relativ zu seiner Mitte (Formen, Zahl daneben, Rand) – wie ihn drawPinHead zeichnet */
+function pinHeadBox(ctx: CanvasRenderingContext2D, shapes: PinShape[], count: number, small: boolean, zoom = 1): { x: number; y: number; w: number; h: number } {
+  const k = (small ? 0.75 : 1) * zoom;
+  let hw = 0, hh = 0;
+  for (const sh of shapes) {
+    const [w, h] = shapeSize(sh, k);
+    hw = Math.max(hw, w); hh = Math.max(hh, h);
+  }
+  ctx.save();
+  ctx.font = `bold ${Math.round((small ? 8 : 10) * zoom)}px Georgia, serif`;
+  const lw = ctx.measureText(String(count)).width + 6 * zoom;
+  ctx.restore();
+  const lh = (small ? 12 : 14) * zoom;
+  return { x: -hw - 4, y: -Math.max(hh, lh / 2) - 4, w: 2 * hw + lw + 11, h: 2 * Math.max(hh, lh / 2) + 8 };
+}
+
+/**
+ * Überdeckte Nadelköpfe auseinanderschieben (wenige Durchgänge, je Paar entlang der kürzeren Überlappung,
+ * bevorzugt senkrecht). Ändert x/y der Köpfe.
+ */
+export function separateHeads(heads: { x: number; y: number; box: { x: number; y: number; w: number; h: number } }[]): void {
+  const GAP = 1;
+  for (let pass = 0; pass < 6; pass++) {
+    let moved = false;
+    const order = heads.map((_, i) => i).sort((i, j) => heads[i].x - heads[j].x);
+    for (let a = 0; a < order.length; a++) {
+      const p = heads[order[a]];
+      for (let b = a + 1; b < order.length; b++) {
+        const q = heads[order[b]];
+        if (q.x + q.box.x > p.x + p.box.x + p.box.w + 60) break;
+        const ox = Math.min(p.x + p.box.x + p.box.w, q.x + q.box.x + q.box.w) - Math.max(p.x + p.box.x, q.x + q.box.x) + GAP;
+        const oy = Math.min(p.y + p.box.y + p.box.h, q.y + q.box.y + q.box.h) - Math.max(p.y + p.box.y, q.y + q.box.y) + GAP;
+        if (ox <= 0 || oy <= 0) continue;
+        if (oy <= ox * 1.5) {
+          const d = p.y <= q.y ? -1 : 1;
+          p.y += (d * oy) / 2;
+          q.y -= (d * oy) / 2;
+        } else {
+          const d = p.x <= q.x ? -1 : 1;
+          p.x += (d * ox) / 2;
+          q.x -= (d * ox) / 2;
+        }
+        moved = true;
+      }
+    }
+    if (!moved) return;
   }
 }
 

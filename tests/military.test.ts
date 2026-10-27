@@ -5,7 +5,7 @@ import { BUILDINGS, DAY, HOUR, MINUTE, UNITS } from '../src/game/balance.ts';
 import { atWar, setRelation } from '../src/game/diplomacy.ts';
 import { edgeLength, edgeParts, edgePoint, edgeThrough, isSea, nodePos } from '../src/game/graph.ts';
 import type { MapData } from '../src/game/mapdata.ts';
-import { armyPosition, findPath, meleeOutput, segmentHours, unitCount, canEnter, harborLeg, isRangedOnly, maxRange } from '../src/game/military.ts';
+import { applyDamage, armyHp, armyPosition, findPath, meleeOutput, segmentHours, unitCount, unitHp, canEnter, harborLeg, isRangedOnly, maxRange } from '../src/game/military.ts';
 import { MILITARY } from '../src/game/balance.ts';
 import { Simulation } from '../src/game/sim.ts';
 import { createGame } from '../src/game/state.ts';
@@ -145,6 +145,28 @@ describe('See', () => {
     expect(canEnter(sim.state, map, rg, n)).toBe(false);
     sim.state.provinces[n].buildings.railroad = 1;
     expect(canEnter(sim.state, map, rg, n)).toBe(true);
+  });
+
+  it('Landtruppen haben auf See und beim Ein-/Ausschiffen halbe Lebenspunkte, Schlachtschiffe volle', () => {
+    const sea = map.provinces.length;
+    const berlin = prov('Berlin');
+    const mixed: Army = { id: 997, owner: 'DE', node: sea, units: { infantry: 10, tank: 1, battleship: 1 }, morale: 1 / 1.2 };
+    expect(unitHp(mixed, 'infantry', map)).toBeCloseTo(UNITS.infantry.hp * MILITARY.seaHpFactor, 9);
+    expect(unitHp(mixed, 'tank', map)).toBeCloseTo(UNITS.tank.hp * MILITARY.seaHpFactor, 9);
+    expect(unitHp(mixed, 'battleship', map)).toBe(UNITS.battleship.hp);
+    expect(armyHp(mixed, map)).toBeCloseTo((10 * UNITS.infantry.hp + UNITS.tank.hp) * MILITARY.seaHpFactor + UNITS.battleship.hp, 9);
+    // an Land voll, beim Ein-/Ausschiffen halb
+    const land: Army = { id: 996, owner: 'DE', node: berlin, units: { infantry: 1 }, morale: 1 / 1.2 };
+    expect(unitHp(land, 'infantry', map)).toBeCloseTo(UNITS.infantry.hp, 9);
+    land.boarding = true;
+    expect(unitHp(land, 'infantry', map)).toBeCloseTo(UNITS.infantry.hp * MILITARY.seaHpFactor, 9);
+    // 10 Schaden: an Land eine Wunde, auf See fällt der Infanterist
+    const a: Army = { id: 995, owner: 'DE', node: berlin, units: { infantry: 1 }, morale: 1 / 1.2 };
+    const b: Army = { ...a, id: 994, node: sea, units: { infantry: 1 } };
+    applyDamage(a, 10, () => 0, 0, map);
+    applyDamage(b, 10, () => 0, 0, map);
+    expect(unitCount(a)).toBe(1);
+    expect(unitCount(b)).toBe(0);
   });
 
   it('Landtruppen kämpfen auf See mit halber Stärke, Schlachtschiffe voll', () => {

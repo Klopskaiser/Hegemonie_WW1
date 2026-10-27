@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { COMBAT_MORALE_V2, DAY, DEFAULT_COMBAT_MORALE, HOUR, MILITARY, MINUTE, SUPERIORITY, UNITS } from '../src/game/balance.ts';
+import { COMBAT_MORALE_V2, DAY, DEFAULT_COMBAT_MORALE, HOUR, MILITARY, MINUTE, MORALE, SUPERIORITY, UNITS } from '../src/game/balance.ts';
 import { applyCombatMorale, armyHp, armyPosition, combatRound, forcedMarchWear, killPoints2, meleeOutput, meleePower, planRoute, rangedPower, repairMachines, roadLimit, segmentHours, unitCount } from '../src/game/military.ts';
 import { allRates, netRate, upkeepUse } from '../src/game/economy.ts';
 import { edgeParts } from '../src/game/graph.ts';
@@ -555,5 +555,50 @@ describe('Eisenbahngeschütze auf feindlichen Schienen', () => {
     expect(segmentHours(sim.state, map, gun, s, n)).toBeCloseTo(l1 / v + (len - l1) / (v * MILITARY.enemyRailFactor), 6);
     sim.state.provinces[n].buildings.railroad = 0;
     expect(planRoute(sim.state, map, gun, sim.state.time, { node: n })).toBeNull();
+  });
+});
+
+describe('Provinzmoral bei Beschuss', () => {
+  it('Beschuss senkt die Moral der Zielprovinz je Stunde um 0,75 %, mit Nahkampf zusammen nur einmal', () => {
+    const { sim, p, q, add } = setup();
+    sim.apply('DE', { type: 'declareWar', nation: 'FR' });
+    const ps = sim.state.provinces[q];
+    const foe = add({ owner: 'FR', node: q, units: { infantry: 40 }, keepApart: true });
+    const c = map.provinces[q].center, o = map.provinces[p].center;
+    const f = Math.min(0.9, 20 / Math.hypot(o[0] - c[0], o[1] - c[1]));
+    add({ owner: 'DE', node: q, units: { artillery: 2 }, pos: { a: q, b: p, f }, target: foe.id, keepApart: true });
+    sim.advance(HOUR);
+    const m0 = ps.morale;
+    sim.advance(HOUR);
+    expect(ps.fought).toBe(true);
+    expect(m0 - ps.morale).toBeCloseTo(MORALE.battleHit, 9);
+    // Nahkampf dazu: weiterhin nur einmal je Stunde
+    add({ owner: 'DE', node: q, units: { infantry: 5 }, keepApart: true });
+    sim.advance(HOUR);
+    const m1 = ps.morale;
+    sim.advance(HOUR);
+    expect(m1 - ps.morale).toBeCloseTo(MORALE.battleHit, 9);
+  });
+});
+
+describe('Eisenbahngeschütze auf beschädigten Schienen', () => {
+  it('stehen fest, bis die Eisenbahn ihrer Provinz repariert ist – auch mitten auf der Strecke und Richtung intakter Nachbar', () => {
+    const state = createGame(map, { id: 't', name: 'T', playerNation: 'DE', speed: 1, seed: 7, now: 0, scenario: 'test' });
+    for (const n of Object.values(state.nations)) n.controller = 'human';
+    const sim = new Simulation(state, map);
+    const s = prov('Stuttgart'), m = prov('München');
+    const gun: Army = { id: sim.state.nextArmyId++, owner: 'DE', node: s, units: { railgun: 1 }, keepApart: true };
+    sim.state.armies.push(gun);
+    expect(planRoute(sim.state, map, gun, sim.state.time, { node: m })).not.toBeNull();
+    sim.state.provinces[s].damage = { railroad: 1 };
+    expect(planRoute(sim.state, map, gun, sim.state.time, { node: m })).toBeNull();
+    const r = sim.apply('DE', { type: 'move', army: gun.id, to: m });
+    expect(r.ok ? '' : r.error).toMatch(/Schienen beschädigt/);
+    // mitten auf der Strecke, noch im Gebiet von Stuttgart
+    const [l1, len] = edgeParts(map, s, m);
+    gun.pos = { a: s, b: m, f: (l1 / len) * 0.5 };
+    expect(planRoute(sim.state, map, gun, sim.state.time, { node: m })).toBeNull();
+    delete sim.state.provinces[s].damage;
+    expect(planRoute(sim.state, map, gun, sim.state.time, { node: m })).not.toBeNull();
   });
 });
