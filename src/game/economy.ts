@@ -255,11 +255,8 @@ export function moraleTarget(state: GameState, map: MapData, id: number): Morale
     const v = BUILDINGS[k].morale(lvl);
     if (v > 0) parts.push({ label: BUILDINGS[k].maxLevel > 1 ? `${BUILDINGS[k].name} Stufe ${lvl}` : BUILDINGS[k].name, value: v });
   }
-  // Kämpfe: je Tag in Folge −10 %, höchstens −30 %; ohne Kampf bis zum Tageswechsel fällt der Abzug weg
-  if (ps.fought) {
-    const days = (ps.battleDays ?? 0) + 1;
-    parts.push({ label: `Kämpfe in der Provinz (${days}. Tag)`, value: -Math.min(MORALE.battleMax, days * MORALE.battle) });
-  }
+  // Kämpfe seit dem letzten Tageswechsel: fester Abzug, egal wie lange; ohne Kampf bis zum Tageswechsel fällt er weg
+  if (ps.fought) parts.push({ label: 'Kämpfe in der Provinz', value: -MORALE.battle });
   const unrest = mp.neighbors.filter((n) => state.provinces[n].owner === ps.owner && state.provinces[n].morale < DEFECTION.threshold).length;
   if (unrest > 0) parts.push({ label: `Unruhe in ${unrest} Nachbarprovinz${unrest > 1 ? 'en' : ''}`, value: -unrest * MORALE.unrestNeighbor });
   const calm = mp.neighbors.filter((n) => state.provinces[n].owner === ps.owner && state.provinces[n].morale >= MORALE.calmMorale).length;
@@ -283,7 +280,8 @@ export function stepMorale(current: number, target: number): number {
   const gap = target - current;
   if (Math.abs(gap) < 0.005) return target;
   let step = gap * MORALE.adapt;
-  if (Math.abs(step) < 0.01) step = Math.sign(gap) * Math.min(0.01, Math.abs(gap));
+  // mindestens minStep je Tag; liegt das Ziel näher, nur noch die Restlücke
+  if (Math.abs(step) < MORALE.minStep) step = Math.sign(gap) * Math.min(MORALE.minStep, Math.abs(gap));
   step = Math.max(-MORALE.maxStep, Math.min(MORALE.maxStep, step));
   return Math.max(MORALE.min, Math.min(1, current + step));
 }
@@ -302,4 +300,11 @@ export function totalPoints(state: GameState, map: MapData): number {
   let s = 0;
   state.provinces.forEach((ps, i) => (s += provincePoints(map, ps, i)));
   return s;
+}
+
+/** Zahl der gehaltenen Provinzen je Nation (Siegbedingung und Rangfolge) */
+export function provinceCounts(state: GameState): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const ps of state.provinces) out[ps.owner] = (out[ps.owner] ?? 0) + 1;
+  return out;
 }

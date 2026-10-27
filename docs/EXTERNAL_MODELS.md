@@ -28,7 +28,7 @@ Typdefinitionen (maßgeblich): `src/game/bridgeProtocol.ts` (Nachrichten, Karten
 | `consumption`, `provinceUpkeep` | Verbrauchsregler (Prozent je Rohstoff, je Kategorie Summe 100); Provinzunterhalt je Kategorie und Tag |
 | `enemies`, `relations` | Kriegsgegner; Beziehung zu jeder Nation (`war`, `embargo`, `peace`, `rightOfWay`, `sharedMap`) |
 | `proposals`, `peaceOffers` | eingegangene Angebote (`{from, kind}`), Friedensangebote |
-| `points`, `alive` | Siegpunkte (Stand letzter Tageswechsel), lebende Nationen |
+| `points`, `alive` | Siegpunkte (Stand letzter Tageswechsel; für den Sieg zählen die Provinzen: 70 % aller Provinzen), lebende Nationen |
 | `offers` | Börsenangebote, mit denen gehandelt werden darf, und die eigenen |
 | `provinces[]` | Besitzer, Sichtbarkeit, Rohstoff, Nachbarn, Seegebiete; nur eigene: Moral, Gebäude, Bau, Bauschleife, Fertigung |
 | `armies[]` | sichtbare Armeen mit Einheiten; eigene zusätzlich `to` (Marschziel) und `target` (Fernkampfziel) |

@@ -100,9 +100,17 @@ describe('Zeitung und Sieg', () => {
     expect(paper.ranking.length).toBeGreaterThan(10);
   });
 
-  it('wer genug Siegpunkte hält, gewinnt; das Spiel hält an', () => {
+  it('wer 70 % aller Provinzen hält, gewinnt; das Spiel hält an', () => {
     const sim = newSim();
-    for (const ps of sim.state.provinces) if (!map.nations.find((n) => n.id === ps.owner)?.major || ps.owner === 'FR' || ps.owner === 'GB' || ps.owner === 'AU' || ps.owner === 'RU' || ps.owner === 'IT') ps.owner = 'DE';
+    const n = sim.state.provinces.length;
+    // knapp darunter: noch kein Sieg
+    const need = Math.ceil(0.7 * n);
+    sim.state.provinces.forEach((ps, i) => { if (i < need - 1) ps.owner = 'DE'; });
+    if (sim.state.provinces.filter((ps) => ps.owner === 'DE').length >= need) throw new Error('Testaufbau');
+    sim.advance(DAY);
+    expect(sim.state.winner).toBeNull();
+    // eine Provinz mehr: Sieg
+    sim.state.provinces.find((ps) => ps.owner !== 'DE')!.owner = 'DE';
     sim.advance(DAY);
     expect(sim.state.winner).toBe('DE');
     expect(sim.state.paused).toBe(true);

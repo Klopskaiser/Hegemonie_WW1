@@ -8,19 +8,19 @@ import type { MapData } from '../game/mapdata.ts';
 import { armyPosition, isNaval, normalizeTarget, remainingRoute, unitCount, unitRange, type MoveTarget, boardingWait } from '../game/military.ts';
 import { makeRng } from '../game/rng.ts';
 import { REBELS, type Army, type ProvinceState } from '../game/types.ts';
-import { DEFECTION, HOUR, UNITS, type UnitType } from '../game/balance.ts';
+import { DEFECTION, HOUR, MILITARY, UNITS, type UnitType } from '../game/balance.ts';
 import { fmtDuration } from './format.ts';
 import { iconImage } from './icons.tsx';
 
 export type MapMode = 'political' | 'resources' | 'morale';
 
-/** Fernkampf zwischen zwei Armeen für die Geschossanimation (von Nadelkopf zu Nadelkopf) */
+/** Fernkampf zwischen zwei Armeen für die Geschossanimation (vom Nadelkopf des Schützen auf die Nadelspitze des Ziels) */
 export interface Shot {
   key: string;
   kind: UnitType;
   shooter: number;
   target: number;
-  /** Anzahl der feuernden Einheiten dieses Typs: je Einheit eine Kugel */
+  /** Anzahl der feuernden Einheiten dieses Typs: je Einheit eine Kugel (Schlachtschiffe: zwei, Doppelkanone) */
   count: number;
 }
 
@@ -267,7 +267,27 @@ export function MapCanvas(props: Props) {
     view.current = { s, ox: w / 2 - ((x0 + x1) / 2) * s, oy: h / 2 - ((y0 + y1) / 2) * s };
   };
 
-  const fogRef = useRef<HTMLCanvasElement | null>(null);
+  /** Zwischengespeicherte Ebenen der Karte (Gerätepixel), je mit dem Schlüssel ihres letzten Zeichnens */
+  const layers = useRef(new Map<string, { c: HTMLCanvasElement; key: string }>());
+  const layer = (name: string, key: string, cw: number, ch: number, paint: (g: CanvasRenderingContext2D) => void): HTMLCanvasElement => {
+    let l = layers.current.get(name);
+    if (!l) layers.current.set(name, (l = { c: document.createElement('canvas'), key: '' }));
+    if (l.c.width !== cw || l.c.height !== ch) {
+      l.c.width = cw;
+      l.c.height = ch;
+      l.key = '';
+    }
+    if (l.key !== key) {
+      const g = l.c.getContext('2d')!;
+      g.setTransform(1, 0, 0, 1, 0, 0);
+      g.globalCompositeOperation = 'source-over';
+      g.clearRect(0, 0, cw, ch);
+      paint(g);
+      l.key = key;
+    }
+    return l.c;
+  };
+
   const draw = () => {
     frame.current = 0;
     const canvas = canvasRef.current, el = wrapRef.current;
@@ -283,107 +303,173 @@ export function MapCanvas(props: Props) {
     const { s, ox, oy } = view.current;
     const owners = p.owners;
 
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    const sea = ctx.createLinearGradient(0, 0, 0, h);
-    sea.addColorStop(0, SEA);
-    sea.addColorStop(1, SEA_DEEP);
-    ctx.fillStyle = sea;
-    ctx.fillRect(0, 0, w, h);
+    // Statische Ebenen werden zwischengespeichert und nur neu gezeichnet, wenn sich ihr Schlüssel ändert
+    // (Ansicht, Besitz, Modus, Sicht); pro Bild bleiben nur bewegliche Teile (Armeen, Symbole, Geschosse).
+    const cw = canvas.width, ch = canvas.height;
+    const viewKey = `${cw}x${ch}@${dpr}|${s}|${ox}|${oy}|${compact ? 1 : 0}`;
+    const ownerKey = owners.join(',');
+    const world = (g: CanvasRenderingContext2D) => g.setTransform(dpr * s, 0, 0, dpr * s, dpr * ox, dpr * oy);
 
-    ctx.setTransform(dpr * s, 0, 0, dpr * s, dpr * ox, dpr * oy);
-    // Küstenschimmer
-    ctx.strokeStyle = 'rgba(235, 240, 225, 0.55)';
-    ctx.lineWidth = 7 / s;
-    ctx.lineJoin = 'round';
-    ctx.stroke(prepared.coast);
-
-    for (let i = 0; i < map.provinces.length; i++) {
-      let color = prepared.colors.get(owners[i]) ?? '#ccc';
-      if (p.mode === 'morale' && p.morale) color = moraleColor(p.morale[i]);
-      ctx.fillStyle = color;
-      ctx.fill(prepared.paths[i]);
-      if (p.highlightNation && owners[i] !== p.highlightNation) {
-        ctx.fillStyle = 'rgba(235, 225, 200, 0.55)';
-        ctx.fill(prepared.paths[i]);
+    // Grund: Meer, Küstenschimmer, Provinzflächen, Papierstruktur, Vignette
+    const baseKey = `${viewKey}|${p.mode}|${ownerKey}|${p.mode === 'morale' && p.morale ? p.morale.map((m) => Math.round(m * 100)).join(',') : ''}|${p.highlightNation ?? ''}`;
+    const base = layer('base', baseKey, cw, ch, (g) => {
+      g.setTransform(dpr, 0, 0, dpr, 0, 0);
+      const sea = g.createLinearGradient(0, 0, 0, h);
+      sea.addColorStop(0, SEA);
+      sea.addColorStop(1, SEA_DEEP);
+      g.fillStyle = sea;
+      g.fillRect(0, 0, w, h);
+      world(g);
+      // Küstenschimmer
+      g.strokeStyle = 'rgba(235, 240, 225, 0.55)';
+      g.lineWidth = 7 / s;
+      g.lineJoin = 'round';
+      g.stroke(prepared.coast);
+      for (let i = 0; i < map.provinces.length; i++) {
+        let color = prepared.colors.get(owners[i]) ?? '#ccc';
+        if (p.mode === 'morale' && p.morale) color = moraleColor(p.morale[i]);
+        g.fillStyle = color;
+        g.fill(prepared.paths[i]);
+        if (p.highlightNation && owners[i] !== p.highlightNation) {
+          g.fillStyle = 'rgba(235, 225, 200, 0.55)';
+          g.fill(prepared.paths[i]);
+        }
       }
-    }
+      // Papierstruktur
+      g.setTransform(dpr, 0, 0, dpr, 0, 0);
+      g.globalCompositeOperation = 'multiply';
+      g.fillStyle = g.createPattern(paperTexture(), 'repeat')!;
+      g.fillRect(0, 0, w, h);
+      g.globalCompositeOperation = 'source-over';
+      const vign = g.createRadialGradient(w / 2, h / 2, Math.min(w, h) * 0.35, w / 2, h / 2, Math.max(w, h) * 0.75);
+      vign.addColorStop(0, 'rgba(90, 60, 30, 0)');
+      vign.addColorStop(1, 'rgba(90, 60, 30, 0.28)');
+      g.fillStyle = vign;
+      g.fillRect(0, 0, w, h);
+    });
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.drawImage(base, 0, 0);
+
     // Nebel des Krieges: fremde Provinzen abdunkeln, ausgenommen die Sichtkreise der eigenen Armeen
     if (p.visible) {
-      const fog = (fogRef.current ??= document.createElement('canvas'));
-      if (fog.width !== canvas.width || fog.height !== canvas.height) {
-        fog.width = canvas.width;
-        fog.height = canvas.height;
-      }
-      const f = fog.getContext('2d')!;
-      f.setTransform(1, 0, 0, 1, 0, 0);
-      f.clearRect(0, 0, fog.width, fog.height);
-      f.setTransform(dpr * s, 0, 0, dpr * s, dpr * ox, dpr * oy);
-      // Meer: eigener, bläulicher Nebel über der ganzen Karte, an Land wieder ausgespart
-      const [bx0, by0, bx1, by1] = map.bounds;
-      f.globalCompositeOperation = 'source-over';
-      f.fillStyle = 'rgba(20, 35, 55, 0.3)';
-      f.fillRect(bx0, by0, bx1 - bx0, by1 - by0);
-      f.globalCompositeOperation = 'destination-out';
-      f.fillStyle = '#000';
-      for (let i = 0; i < map.provinces.length; i++) f.fill(prepared.paths[i]);
-      // Land: nicht ganz einsehbare Provinzen
-      f.globalCompositeOperation = 'source-over';
-      f.fillStyle = 'rgba(105, 95, 80, 0.32)';
-      for (let i = 0; i < map.provinces.length; i++) if (!p.visible.full.has(i)) f.fill(prepared.paths[i]);
-      // Sichtkreise der Armeen (an Land und auf See) freilegen
-      f.globalCompositeOperation = 'destination-out';
-      f.fillStyle = '#000';
-      f.beginPath();
-      for (const [cx, cy, r] of p.visible.circles) {
-        f.moveTo(cx + r, cy);
-        f.arc(cx, cy, r, 0, Math.PI * 2);
-      }
-      f.fill();
-      ctx.save();
-      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      const vis = p.visible;
+      let fogKey = viewKey + '|';
+      for (let i = 0; i < map.provinces.length; i++) fogKey += vis.full.has(i) ? '1' : '0';
+      for (const [cx, cy, r] of vis.circles) fogKey += `|${Math.round(cx)},${Math.round(cy)},${Math.round(r)}`;
+      const fog = layer('fog', fogKey, cw, ch, (f) => {
+        world(f);
+        // Meer: eigener, bläulicher Nebel über der ganzen Karte, an Land wieder ausgespart
+        const [bx0, by0, bx1, by1] = map.bounds;
+        f.globalCompositeOperation = 'source-over';
+        f.fillStyle = 'rgba(20, 35, 55, 0.3)';
+        f.fillRect(bx0, by0, bx1 - bx0, by1 - by0);
+        f.globalCompositeOperation = 'destination-out';
+        f.fillStyle = '#000';
+        for (let i = 0; i < map.provinces.length; i++) f.fill(prepared.paths[i]);
+        // Land: nicht ganz einsehbare Provinzen
+        f.globalCompositeOperation = 'source-over';
+        f.fillStyle = 'rgba(105, 95, 80, 0.32)';
+        for (let i = 0; i < map.provinces.length; i++) if (!vis.full.has(i)) f.fill(prepared.paths[i]);
+        // Sichtkreise der Armeen (an Land und auf See) freilegen
+        f.globalCompositeOperation = 'destination-out';
+        f.fillStyle = '#000';
+        f.beginPath();
+        for (const [cx, cy, r] of vis.circles) {
+          f.moveTo(cx + r, cy);
+          f.arc(cx, cy, r, 0, Math.PI * 2);
+        }
+        f.fill();
+        f.globalCompositeOperation = 'source-over';
+      });
       ctx.drawImage(fog, 0, 0);
-      ctx.restore();
     }
     if (hoverRef.current !== null && !compact && hoverRef.current < map.provinces.length) {
+      world(ctx);
       ctx.fillStyle = 'rgba(255, 250, 230, 0.28)';
       ctx.fill(prepared.paths[hoverRef.current]);
     }
 
-    // Papierstruktur
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.globalCompositeOperation = 'multiply';
-    ctx.fillStyle = ctx.createPattern(paperTexture(), 'repeat')!;
-    ctx.fillRect(0, 0, w, h);
-    ctx.globalCompositeOperation = 'source-over';
-    const vign = ctx.createRadialGradient(w / 2, h / 2, Math.min(w, h) * 0.35, w / 2, h / 2, Math.max(w, h) * 0.75);
-    vign.addColorStop(0, 'rgba(90, 60, 30, 0)');
-    vign.addColorStop(1, 'rgba(90, 60, 30, 0.28)');
-    ctx.fillStyle = vign;
-    ctx.fillRect(0, 0, w, h);
+    const X = (x: number) => ox + x * s, Y = (y: number) => oy + y * s;
+    const visible = (x: number, y: number, m = 40) => x > -m && y > -m && x < w + m && y < h + m;
 
-    ctx.setTransform(dpr * s, 0, 0, dpr * s, dpr * ox, dpr * oy);
-    ctx.lineCap = 'round';
-    if (!compact) {
-      // Seegebiete: feine gestrichelte Grenzen
-      ctx.strokeStyle = 'rgba(60, 85, 95, 0.35)';
-      ctx.lineWidth = 0.9 / s;
-      ctx.setLineDash([4 / s, 4 / s]);
-      ctx.stroke(prepared.seaBorders);
-      ctx.setLineDash([]);
-    }
-    ctx.strokeStyle = 'rgba(55, 36, 20, 0.72)';
-    ctx.lineWidth = 1.3 / s;
-    ctx.setLineDash([3 / s, 2 / s]);
-    ctx.stroke(borderPaths.internal);
-    ctx.setLineDash([]);
-    ctx.strokeStyle = 'rgba(62, 70, 74, 0.75)';
-    ctx.lineWidth = 1.1 / s;
-    ctx.stroke(prepared.coast);
-    ctx.strokeStyle = INK;
-    ctx.lineWidth = 2.2 / s;
-    ctx.stroke(borderPaths.national);
+    // Linien: Seegrenzen, Provinz- und Staatsgrenzen, Küste, Kartenrahmen, Wege und Kreuzungen
+    const lines = layer('lines', `${viewKey}|${ownerKey}`, cw, ch, (g) => {
+      world(g);
+      g.lineCap = 'round';
+      if (!compact) {
+        // Seegebiete: feine gestrichelte Grenzen
+        g.strokeStyle = 'rgba(60, 85, 95, 0.35)';
+        g.lineWidth = 0.9 / s;
+        g.setLineDash([4 / s, 4 / s]);
+        g.stroke(prepared.seaBorders);
+        g.setLineDash([]);
+      }
+      g.strokeStyle = 'rgba(55, 36, 20, 0.72)';
+      g.lineWidth = 1.3 / s;
+      g.setLineDash([3 / s, 2 / s]);
+      g.stroke(borderPaths.internal);
+      g.setLineDash([]);
+      g.strokeStyle = 'rgba(62, 70, 74, 0.75)';
+      g.lineWidth = 1.1 / s;
+      g.stroke(prepared.coast);
+      g.strokeStyle = INK;
+      g.lineWidth = 2.2 / s;
+      g.stroke(borderPaths.national);
+
+      g.setTransform(dpr, 0, 0, dpr, 0, 0);
+      // Kartenrand: außerhalb des Kartenausschnitts dunkler Holzrahmen
+      {
+        const [bx0, by0, bx1, by1] = map.bounds;
+        const fx = ox + bx0 * s, fy = oy + by0 * s, fw = (bx1 - bx0) * s, fh = (by1 - by0) * s;
+        g.beginPath();
+        g.rect(0, 0, w, h);
+        g.rect(fx, fy, fw, fh);
+        g.fillStyle = '#2a1a0d';
+        g.fill('evenodd');
+        g.strokeStyle = '#c9a35a';
+        g.lineWidth = 2;
+        g.strokeRect(fx - 1, fy - 1, fw + 2, fh + 2);
+      }
+      // Wege: Landwege als feine Linien, Seewege gestrichelt
+      if (!compact && s > 0.1) {
+        g.lineCap = 'round';
+        g.lineJoin = 'round';
+        for (const land of [false, true]) {
+          g.beginPath();
+          for (const e of prepared.edges) {
+            if (e.land !== land) continue;
+            // nur Wege, deren Umriss ins Bild ragt (lange Wege können mitten durchs Bild laufen)
+            let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+            for (const [x, y] of e.pts) {
+              if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+            }
+            if (X(x1) < -20 || X(x0) > w + 20 || Y(y1) < -20 || Y(y0) > h + 20) continue;
+            e.pts.forEach(([x, y], k) => (k ? g.lineTo(X(x), Y(y)) : g.moveTo(X(x), Y(y))));
+          }
+          g.strokeStyle = land ? 'rgba(105, 75, 45, 0.6)' : 'rgba(35, 70, 95, 0.5)';
+          g.lineWidth = land ? 1.3 : 1.2;
+          g.setLineDash(land ? [] : [4, 4]);
+          g.stroke();
+        }
+        g.setLineDash([]);
+        // Wegkreuzungen
+        for (const j of map.junctions ?? []) {
+          const x = X(j.x), y = Y(j.y);
+          if (!visible(x, y)) continue;
+          const sea = isSea(map, j.node);
+          g.fillStyle = sea ? 'rgba(35, 70, 95, 0.75)' : 'rgba(105, 75, 45, 0.9)';
+          g.beginPath();
+          g.arc(x, y, 2.6, 0, Math.PI * 2);
+          g.fill();
+        }
+      }
+    });
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.drawImage(lines, 0, 0);
 
     if (p.selected != null) {
+      world(ctx);
+      ctx.lineCap = 'round';
       ctx.strokeStyle = '#f6d36b';
       ctx.lineWidth = 3 / s;
       ctx.stroke(prepared.paths[p.selected]);
@@ -394,60 +480,9 @@ export function MapCanvas(props: Props) {
 
     // ------------------------------------------------ Symbole und Beschriftung (Bildschirmkoordinaten)
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    // Kartenrand: außerhalb des Kartenausschnitts dunkler Holzrahmen
-    {
-      const [bx0, by0, bx1, by1] = map.bounds;
-      const fx = ox + bx0 * s, fy = oy + by0 * s, fw = (bx1 - bx0) * s, fh = (by1 - by0) * s;
-      ctx.beginPath();
-      ctx.rect(0, 0, w, h);
-      ctx.rect(fx, fy, fw, fh);
-      ctx.fillStyle = '#2a1a0d';
-      ctx.fill('evenodd');
-      ctx.strokeStyle = '#c9a35a';
-      ctx.lineWidth = 2;
-      ctx.strokeRect(fx - 1, fy - 1, fw + 2, fh + 2);
-    }
-    const X = (x: number) => ox + x * s, Y = (y: number) => oy + y * s;
-    const visible = (x: number, y: number, m = 40) => x > -m && y > -m && x < w + m && y < h + m;
 
     // Gebäude nur in einsehbaren Provinzen zeigen
     const shown = (i: number) => !!p.provinces && (!p.visible || p.visible.has(i));
-
-    // Wege: Landwege als feine Linien, Seewege gestrichelt
-    if (!compact && s > 0.1) {
-      ctx.save();
-      ctx.lineCap = 'round';
-      ctx.lineJoin = 'round';
-      for (const land of [false, true]) {
-        ctx.beginPath();
-        for (const e of prepared.edges) {
-          if (e.land !== land) continue;
-          // nur Wege, deren Umriss ins Bild ragt (lange Wege können mitten durchs Bild laufen)
-          let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-          for (const [x, y] of e.pts) {
-            if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
-          }
-          if (X(x1) < -20 || X(x0) > w + 20 || Y(y1) < -20 || Y(y0) > h + 20) continue;
-          e.pts.forEach(([x, y], k) => (k ? ctx.lineTo(X(x), Y(y)) : ctx.moveTo(X(x), Y(y))));
-        }
-        ctx.strokeStyle = land ? 'rgba(105, 75, 45, 0.6)' : 'rgba(35, 70, 95, 0.5)';
-        ctx.lineWidth = land ? 1.3 : 1.2;
-        ctx.setLineDash(land ? [] : [4, 4]);
-        ctx.stroke();
-      }
-      ctx.setLineDash([]);
-      // Wegkreuzungen
-      for (const j of map.junctions ?? []) {
-        const x = X(j.x), y = Y(j.y);
-        if (!visible(x, y)) continue;
-        const sea = isSea(map, j.node);
-        ctx.fillStyle = sea ? 'rgba(35, 70, 95, 0.75)' : 'rgba(105, 75, 45, 0.9)';
-        ctx.beginPath();
-        ctx.arc(x, y, 2.6, 0, Math.PI * 2);
-        ctx.fill();
-      }
-      ctx.restore();
-    }
 
     // Eisenbahn: Schienen auf den Wegen von der Stadt bis zur Grenze (treffen sich bei beidseitiger Bahn)
     // und bis zu den Hafenpunkten
@@ -687,6 +722,8 @@ export function MapCanvas(props: Props) {
       // Liegen Armeen dicht beieinander, werden die Nadeln aufgefächert.
       const hits: Token[] = [];
       const heads = new Map<number, [number, number]>();
+      // Nadelspitzen = tatsächliche Position der Armee (dort schlagen Geschosse ein)
+      const tips = new Map<number, [number, number]>();
       const lassoSel = lasso.current?.sel ?? new Set<number>();
       const pinList: PinPoint[] = [];
       if (p.armies) {
@@ -720,6 +757,7 @@ export function MapCanvas(props: Props) {
           const rad = (q.angle * Math.PI) / 180;
           const hx = q.x + Math.cos(rad) * q.len, hy = q.y + Math.sin(rad) * q.len;
           heads.set(q.a.id, [hx, hy]);
+          tips.set(q.a.id, [q.x, q.y]);
           pinList.push({ id: q.a.id, owner: q.a.owner, tx: q.x, ty: q.y, hx, hy });
           const t = drawPinHead(ctx, hx, hy, pinShapes(q.a), prepared.colors.get(q.a.owner) ?? '#888', unitCount(q.a), small,
             chosenSet.has(q.a.id) || lassoSel.has(q.a.id), Z);
@@ -756,52 +794,63 @@ export function MapCanvas(props: Props) {
       // Geschosse: laufen, solange das Gefecht besteht – unabhängig von den Schadensrunden
       if (p.shots?.length) {
         const now = performance.now();
+        // Einschlag: kleine Explosion, der Ring zeigt etwa den Umkreis des Flächenschadens
+        const blast = Math.max(3, Math.min(8, MILITARY.meleeKm * s)) * Z;
         for (const sh of p.shots) {
           const b = BALLISTICS[sh.kind];
           if (!b) continue;
-          const from = heads.get(sh.shooter), to = heads.get(sh.target);
+          const from = heads.get(sh.shooter), to = tips.get(sh.target);
           if (!from || !to) continue;
           const [x0, y0] = from, [x1, y1] = to;
           const dist = Math.hypot(x1 - x0, y1 - y0);
           const height = Math.max(10, Math.min(140, dist * b.arc));
           const base = hashKey(sh.key) % b.period;
+          // quer zur Flugbahn (für die Doppelkanone der Schiffe)
+          const nx = dist > 0 ? -(y1 - y0) / dist : 0, ny = dist > 0 ? (x1 - x0) / dist : 0;
+          const barrels = sh.kind === 'battleship' ? [-1, 1] : [0];
           const shells = Math.min(MAX_SHELLS, Math.max(1, sh.count));
           for (let k = 0; k < shells; k++) {
-            // je Einheit eine Kugel, über den Takt verteilt und leicht gestreut um das Ziel
+            // je Einheit eine Salve, über den Takt verteilt und leicht gestreut um die Nadelspitze
             const t = (now + base + (k * b.period) / shells) % b.period;
             const h = hashKey(`${sh.key}-${k}`);
-            const tx = x1 + ((h % 13) - 6), ty = y1 + (((h >> 4) % 9) - 4);
-            if (t < b.flight) {
-              const f = t / b.flight;
-              const pos = (q: number) => [x0 + (tx - x0) * q, y0 + (ty - y0) * q - height * 4 * q * (1 - q)] as const;
-              // Spur
-              ctx.strokeStyle = 'rgba(60, 45, 30, 0.35)';
-              ctx.lineWidth = 1.2;
-              ctx.beginPath();
-              for (let j = 0; j <= 4; j++) {
-                const [sx, sy] = pos(Math.max(0, f - 0.06 + j * 0.015));
-                if (j) ctx.lineTo(sx, sy); else ctx.moveTo(sx, sy);
+            const jx = ((h % 5) - 2) * Z, jy = (((h >> 4) % 5) - 2) * Z;
+            for (const side of barrels) {
+              const o = side * 2.2 * Z;
+              const sx0 = x0 + nx * o, sy0 = y0 + ny * o;
+              const tx = x1 + jx + nx * o, ty = y1 + jy + ny * o;
+              if (t < b.flight) {
+                const f = t / b.flight;
+                const pos = (q: number) => [sx0 + (tx - sx0) * q, sy0 + (ty - sy0) * q - height * 4 * q * (1 - q)] as const;
+                // Spur
+                ctx.strokeStyle = 'rgba(60, 45, 30, 0.35)';
+                ctx.lineWidth = 1.2;
+                ctx.beginPath();
+                for (let j = 0; j <= 4; j++) {
+                  const [px, py] = pos(Math.max(0, f - 0.06 + j * 0.015));
+                  if (j) ctx.lineTo(px, py); else ctx.moveTo(px, py);
+                }
+                ctx.stroke();
+                const [px, py] = pos(f);
+                ctx.fillStyle = '#1d1712';
+                ctx.strokeStyle = 'rgba(250, 240, 215, 0.8)';
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                ctx.arc(px, py, b.size, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.stroke();
+              } else if (t < b.flight + 300) {
+                // kleine Explosion an der Nadelspitze: heller Kern, dünner Ring bis zum Umkreis
+                const f = (t - b.flight) / 300;
+                ctx.fillStyle = `rgba(255, 210, 90, ${0.9 * (1 - f)})`;
+                ctx.beginPath();
+                ctx.arc(tx, ty, 1 + blast * 0.45 * (1 - f * 0.5), 0, Math.PI * 2);
+                ctx.fill();
+                ctx.strokeStyle = `rgba(200, 90, 30, ${0.8 * (1 - f)})`;
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                ctx.arc(tx, ty, 1 + blast * f, 0, Math.PI * 2);
+                ctx.stroke();
               }
-              ctx.stroke();
-              const [sx, sy] = pos(f);
-              ctx.fillStyle = '#1d1712';
-              ctx.strokeStyle = 'rgba(250, 240, 215, 0.8)';
-              ctx.lineWidth = 1;
-              ctx.beginPath();
-              ctx.arc(sx, sy, b.size, 0, Math.PI * 2);
-              ctx.fill();
-              ctx.stroke();
-            } else if (t < b.flight + 350) {
-              // Einschlag
-              const f = (t - b.flight) / 350;
-              ctx.fillStyle = `rgba(235, 150, 50, ${0.7 * (1 - f)})`;
-              ctx.beginPath();
-              ctx.arc(tx, ty, 2 + 4 * f, 0, Math.PI * 2);
-              ctx.fill();
-              ctx.fillStyle = `rgba(90, 80, 70, ${0.45 * (1 - f)})`;
-              ctx.beginPath();
-              ctx.arc(tx, ty - 2 * f, 4 + 9 * f, 0, Math.PI * 2);
-              ctx.fill();
             }
           }
         }

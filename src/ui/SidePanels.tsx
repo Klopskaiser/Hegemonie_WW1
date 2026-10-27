@@ -68,8 +68,9 @@ export function EconomyPanel({ map, state, rates, act, onClose }: Props & { act(
       <h4>Verbrauchsregler</h4>
       <p className="muted small">
         Provinzunterhalt: {provinces} Provinzen × {PROVINCE.upkeep} = {fmtNum(rates.upkeep)} je Kategorie und Tag.
-        Der Regler legt fest, aus welchen Rohstoffen er gedeckt wird; fehlt einer, springen die anderen
-        eingestellten ein. Rohstoffe auf 0 % verbrauchen nur Einheiten und Gebäude (fester Unterhalt).
+        Der Regler legt stur fest, aus welchen Rohstoffen er gedeckt wird: Fehlt ein eingestellter Rohstoff, springen
+        die anderen nicht ein – es entsteht ein Engpass. So lässt sich ein Rohstoff gezielt aufstapeln (auf 0 % stellen).
+        Rohstoffe auf 0 % verbrauchen nur Einheiten und Gebäude (fester Unterhalt).
       </p>
       <ConsumptionControl state={state} rates={rates} act={act} />
       <p className="muted small">Engpässe senken am Tageswechsel die Moral in allen Provinzen.</p>
@@ -84,27 +85,27 @@ export function EconomyPanel({ map, state, rates, act, onClose }: Props & { act(
 export function RankingPanel({ map, state, onClose }: Props) {
   const rows = map.nations.map((n) => ({
     n,
-    points: state.nations[n.id].points,
     provinces: state.provinces.filter((p) => p.owner === n.id).length,
-  })).sort((a, b) => b.points - a.points);
+  })).sort((a, b) => b.provinces - a.provinces);
+  const total = state.provinces.length;
   return (
     <Window title="Rangliste" onClose={onClose} className="side-panel">
       <table className="table">
-        <thead><tr><th>#</th><th>Nation</th><th>Siegpunkte</th><th>Provinzen</th></tr></thead>
+        <thead><tr><th>#</th><th>Nation</th><th>Provinzen</th><th>Anteil</th></tr></thead>
         <tbody>
           {rows.map((r, i) => (
             <tr key={r.n.id} className={r.n.id === state.playerNation ? 'me' : ''}>
               <td>{i + 1}</td>
               <td><Flag nation={r.n.id} /> {r.n.name}</td>
-              <td>{Math.round(r.points)}</td>
               <td>{r.provinces}</td>
+              <td>{Math.round((r.provinces / total) * 100)} %</td>
             </tr>
           ))}
         </tbody>
       </table>
       <p className="muted small">
-        Siegpunkte werden am Tageswechsel aus Provinzen, Moral und Gebäuden berechnet; Armeen zählen nicht.
-        Wer {Math.round(VICTORY_SHARE * 100)} % aller Siegpunkte hält ({Math.ceil(VICTORY_SHARE * rows.reduce((t, r) => t + r.points, 0))} von {Math.round(rows.reduce((t, r) => t + r.points, 0))}) oder als letzte Großmacht übrig bleibt, gewinnt.
+        Rangfolge nach gehaltenen Provinzen. Wer {Math.round(VICTORY_SHARE * 100)} % aller Provinzen hält
+        ({Math.ceil(VICTORY_SHARE * total)} von {total}), gewinnt (geprüft am Tageswechsel).
       </p>
     </Window>
   );

@@ -51,7 +51,7 @@ export function NewspaperPanel({ map, state, onClose }: { map: MapData; state: G
           </div>
           <div className="np-ranking">
             {paper.ranking.slice(0, 6).map((r, k) => (
-              <span key={r.nation}><Flag nation={r.nation} height={11} /> {k + 1}. {name(r.nation)} {r.points}</span>
+              <span key={r.nation}><Flag nation={r.nation} height={11} /> {k + 1}. {name(r.nation)} {r.provinces}</span>
             ))}
           </div>
         </article>

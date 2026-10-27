@@ -96,7 +96,7 @@ export const BUILDINGS: Record<Building, BuildingDef> = {
   },
   tradepost: {
     name: 'Handelsposten', maxLevel: 1, inland: true,
-    cost: () => ({ money: 12000, iron: 2000, lumber: 3000 }),
+    cost: () => ({ money: 12000, iron: 1500, lumber: 2500 }),
     hours: () => 48,
     prodBonus: (l) => (l >= 1 ? 0.07 : 0),
     morale: (l) => (l >= 1 ? 0.03 : 0),
@@ -321,9 +321,10 @@ export const MORALE = {
   distanceStep: 100,
   distanceFree: 300,
   distanceMax: 0.3,
-  /** Kämpfe in der Provinz: je Tag in Folge mit Kampf dieser Abzug, höchstens battleMax */
-  battle: 0.1,
-  battleMax: 0.3,
+  /** Kämpfe in der Provinz seit dem letzten Tageswechsel: fester Abzug am Moralziel (unabhängig von der Dauer) */
+  battle: 0.15,
+  /** jede Kampfrunde in der Provinz (höchstens einmal je Stunde) senkt die Moral sofort um diesen Wert */
+  battleHit: 0.0075,
   /** je angrenzende eigene Provinz mit Moral unter DEFECTION.threshold */
   unrestNeighbor: 0.02,
   /** je angrenzende eigene Provinz mit mindestens `calmMorale` Moral */
@@ -339,8 +340,9 @@ export const MORALE = {
   warMax: 0.25,
   shortage: { food: 0.15, materials: 0.05, energy: 0.1 } as Record<Category, number>,
   min: 0.05,
-  /** Anteil der Lücke zum Zielwert, der pro Tag geschlossen wird; höchstens maxStep je Tag */
+  /** Anteil der Lücke zum Zielwert, der pro Tag geschlossen wird; mindestens minStep (sonst die Restlücke), höchstens maxStep je Tag */
   adapt: 0.35,
+  minStep: 0.03,
   maxStep: 0.1,
   revolt: 0.25,
 };
@@ -434,5 +436,5 @@ export const MARKET = {
 
 // ---------------------------------------------------------------- Sieg
 
-/** Anteil an den Siegpunkten der Karte, der zum Sieg reicht (geprüft am Tageswechsel) */
-export const VICTORY_SHARE = 0.45;
+/** Anteil aller Provinzen der Karte, der zum Sieg reicht (geprüft am Tageswechsel) */
+export const VICTORY_SHARE = 0.7;

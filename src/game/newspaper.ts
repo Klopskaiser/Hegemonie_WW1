@@ -5,6 +5,7 @@ import { DAY } from './balance.ts';
 import type { MapData } from './mapdata.ts';
 import { nextRandom } from './rng.ts';
 import type { GameState, Newspaper, NewsItem, NewsKind } from './types.ts';
+import { provinceCounts } from './economy.ts';
 
 const KEEP = 14;
 
@@ -55,14 +56,15 @@ export function publishNewspaper(state: GameState, map: MapData): Newspaper {
   };
   items.sort((a, b) => (weight[a.kind ?? 'other'] ?? 9) - (weight[b.kind ?? 'other'] ?? 9));
 
+  const count = provinceCounts(state);
   const ranking = map.nations
     .filter((n) => state.nations[n.id].alive)
-    .map((n) => ({ nation: n.id, points: Math.round(state.nations[n.id].points) }))
-    .sort((a, b) => b.points - a.points);
+    .map((n) => ({ nation: n.id, provinces: count[n.id] ?? 0 }))
+    .sort((a, b) => b.provinces - a.provinces);
   items.push({
     kind: 'ranking',
     title: 'Die Mächte im Vergleich',
-    text: ranking.slice(0, 3).map((r, i) => `${i + 1}. ${name(r.nation)} (${r.points} Siegpunkte)`).join(' · '),
+    text: ranking.slice(0, 3).map((r, i) => `${i + 1}. ${name(r.nation)} (${r.provinces} Provinzen)`).join(' · '),
   });
   if (items.length === 1) items.unshift({ kind: 'quiet', title: 'Ruhige Lage in Europa', text: 'Die Kabinette beraten, die Armeen exerzieren. Größere Ereignisse blieben aus.' });
   // je Meldung eine von drei Bildvarianten

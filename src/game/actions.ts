@@ -11,7 +11,7 @@ import { isSea, nodeNeighbors } from './graph.ts';
 import type { MapData, Resource } from './mapdata.ts';
 import { acceptOffer, cancelOffer, postOffer } from './market.ts';
 import {
-  armyPower, boardingWait, halt, inMelee, isNaval, mergeArmies, nearestNode, planRoute, pursue, rejoinSplits, replan, samePlace, startMove, unitCount, unitTypes,
+  boardingWait, garrisonKeep, halt, inMelee, isNaval, mergeArmies, nearestNode, planRoute, pursue, rejoinSplits, replan, samePlace, startMove, unitCount, unitTypes,
   type MilitaryContext, type MoveTarget,
 } from './military.ts';
 import type { Army, GameState, ProvinceState, Relation, Stock } from './types.ts';
@@ -376,22 +376,6 @@ function without(units: Army['units'], u: UnitType): Army['units'] {
   return out;
 }
 
-/**
- * Besatzungsregel: Steht eine Armee in einer eigenen Stadt (am Provinzknoten) und ist sie die
- * letzte dort, bleibt beim Abmarsch eine Einheit zurück – bevorzugt Infanterie, sonst die
- * schwächste. Besteht sie nur aus einer Einheit, darf sie nicht abziehen ('last').
- */
-export function garrisonKeep(state: GameState, map: MapData, a: Army): UnitType | 'last' | null {
-  if (a.move || a.pos || isNaval(a) || isSea(map, a.node)) return null;
-  if (state.provinces[a.node].owner !== a.owner) return null;
-  const others = state.armies.some((b) => b !== a && b.owner === a.owner && b.node === a.node && !b.move && !b.pos
-    && !isNaval(b) && unitCount(b) > 0);
-  if (others) return null;
-  if (unitCount(a) <= 1) return 'last';
-  if ((a.units.infantry ?? 0) > 0) return 'infantry';
-  return unitTypes(a).sort((x, y) => armyPower({ ...a, units: { [x]: 1 } }) - armyPower({ ...a, units: { [y]: 1 } }))[0];
-}
-
 function applyArmyAction(ctx: ActionContext, nation: string, action: ArmyAction): ActionResult {
   const { state, map } = ctx;
   const a = state.armies.find((x) => x.id === action.army);
@@ -412,7 +396,7 @@ function applyArmyAction(ctx: ActionContext, nation: string, action: ArmyAction)
       // Besatzung: verlässt die letzte Armee eine eigene Stadt, bleibt eine Einheit zurück
       const keep = garrisonKeep(state, map, a);
       if (keep === 'last') return { ok: false, error: 'Die letzte Einheit bleibt als Besatzung in der Stadt' };
-      const mover = { ...a, units: keep ? without(a.units, keep) : a.units, warOn };
+      const mover = { ...a, units: keep ? without(a.units, keep.unit) : a.units, warOn };
       const plan = planRoute(state, map, mover, state.time, target);
       if (!plan) return { ok: false, error: 'Kein Weg dorthin' };
       // mitten im Ein-/Ausschiffen: weiter in dieselbe Richtung nur noch die Restzeit,
@@ -425,8 +409,8 @@ function applyArmyAction(ctx: ActionContext, nation: string, action: ArmyAction)
         else if (plan.path[0] === v && plan.path[1] === u) wait = bw.elapsed;
       }
       if (keep) {
-        a.units = without(a.units, keep);
-        state.armies.push({ id: ctx.newArmyId(), owner: nation, node: a.node, units: { [keep]: 1 }, morale: a.morale });
+        a.units = without(a.units, keep.unit);
+        state.armies.push({ id: ctx.newArmyId(), owner: nation, node: keep.node, units: { [keep.unit]: 1 }, morale: a.morale });
       }
       a.node = nearestNode(map, a, state.time);
       a.resume = null;

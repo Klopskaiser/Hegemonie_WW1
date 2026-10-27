@@ -8,8 +8,8 @@ export function GameOver({ map, state, onMenu, onClose }: { map: MapData; state:
   const won = state.winner === state.playerNation;
   const winner = map.nations.find((n) => n.id === state.winner);
   const ranking = map.nations
-    .map((n) => ({ n, points: Math.round(state.nations[n.id].points), alive: state.nations[n.id].alive }))
-    .sort((a, b) => b.points - a.points);
+    .map((n) => ({ n, provinces: state.provinces.filter((p) => p.owner === n.id).length, alive: state.nations[n.id].alive }))
+    .sort((a, b) => b.provinces - a.provinces);
   return (
     <div className="gameover-backdrop">
       <section className="window gameover">
@@ -23,13 +23,13 @@ export function GameOver({ map, state, onMenu, onClose }: { map: MapData; state:
                 : `Euer Reich ist untergegangen. ${winner?.name} führt die Rangliste an.`}
           </p>
           <table className="table">
-            <thead><tr><th>#</th><th>Nation</th><th>Siegpunkte</th></tr></thead>
+            <thead><tr><th>#</th><th>Nation</th><th>Provinzen</th></tr></thead>
             <tbody>
               {ranking.map((r, i) => (
                 <tr key={r.n.id} className={r.n.id === state.playerNation ? 'me' : ''}>
                   <td>{i + 1}</td>
                   <td><Flag nation={r.n.id} /> {r.n.name}{r.alive ? '' : ' (vernichtet)'}</td>
-                  <td>{r.points}</td>
+                  <td>{r.provinces}</td>
                 </tr>
               ))}
             </tbody>

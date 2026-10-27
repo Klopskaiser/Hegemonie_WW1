@@ -37,7 +37,9 @@ export interface ProvinceState {
   damage?: Partial<Record<Building, number>>;
   /** seit dem letzten Tageswechsel wurde in der Provinz gekämpft (senkt das Moralziel) */
   fought?: boolean;
-  /** Tage in Folge mit Kampf (bis zum letzten Tageswechsel); ein Tag ohne Kampf setzt zurück */
+  /** Spielstunde der letzten Kampfrunde in der Provinz (Sofortabzug höchstens einmal je Stunde) */
+  fightHour?: number;
+  /** veraltet (frühere Kampftage), wird beim Tageswechsel entfernt */
   battleDays?: number;
   /** zuletzt erobert: vorheriger Besitzer und Spieltag (Rückeroberung am selben Tag mit höherer Moral) */
   lost?: { owner: string; day: number } | null;
@@ -191,7 +193,8 @@ export interface Newspaper {
   items: NewsItem[];
   /** Besitzer aller Provinzen zum Erscheinen (Tageskarte) */
   owners: string[];
-  ranking: { nation: string; points: number }[];
+  /** Rangfolge nach gehaltenen Provinzen */
+  ranking: { nation: string; provinces: number }[];
 }
 
 export type ControllerKind = 'human' | 'ai' | 'external';

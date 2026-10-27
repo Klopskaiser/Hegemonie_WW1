@@ -7,11 +7,11 @@ import {
 } from './actions.ts';
 import { BasicAI } from './ai.ts';
 import {
-  ALL_RES, BUILDINGS, CATEGORIES, CATEGORY_OF, CATEGORY_RES, DAY, DEFECTION, DIFFICULTY, HOUR, MINUTE, MORALE, TICKS_PER_DAY, TROOP_MORALE, UNITS, VICTORY_SHARE,
+  ALL_RES, BUILDINGS, CATEGORIES, CATEGORY_OF, CATEGORY_RES, DAY, DEFECTION, DIFFICULTY, HOUR, MINUTE, TICKS_PER_DAY, TROOP_MORALE, UNITS, VICTORY_SHARE,
   type Category, type UnitType,
 } from './balance.ts';
 import { observe, type Controller, type NationView, type Observation } from './controller.ts';
-import { allRates, defaultConsumption, moraleTarget, provincePoints, recruitHours, stepMorale, type NationRates } from './economy.ts';
+import { allRates, defaultConsumption, moraleTarget, provincePoints, recruitHours, stepMorale, type NationRates, provinceCounts } from './economy.ts';
 import type { MapData } from './mapdata.ts';
 import {
   applyCombatMorale, combatRound, type CombatTally, defections, encounters, forcedMarchWear, mergeNearby, pursue, splitParts, engageRanged, isNaval, mixMorale, processArrivals, rangedRound, rejoinSplits, updateRevoltFlags, nextTroopMorale, repairMachines, resumeOrders, troopTarget,
@@ -26,6 +26,9 @@ import { REBELS, type GameState, type NewsInfo } from './types.ts';
 
 const EVENT_LIMIT = 300;
 
+/** Aktionen, die nur Armeen bewegen oder umgruppieren: kein Einfluss auf die Wirtschaftsraten */
+const MOVE_ONLY = new Set<Action['type']>(['move', 'stop', 'attack', 'setMarch', 'split', 'merge', 'rejoin', 'rename']);
+
 export class Simulation {
   rates: Record<string, NationRates> = {};
   private perTick: Record<string, number[]> = {};
@@ -34,6 +37,10 @@ export class Simulation {
   private shareList: Record<string, number[][]> = {};
   controllers = new Map<string, Controller>();
   private dirty = true;
+  /** Wirtschaftsraten neu berechnen (siehe invalidateRates) */
+  private ratesDirty = true;
+  /** KI-Runde läuft: Raten erst danach neu berechnen */
+  private batch = false;
   private nextEvent = 0;
   private carry = 0;
   private readonly defaultAI = new BasicAI();
@@ -57,6 +64,16 @@ export class Simulation {
     this.dirty = true;
   };
 
+  /**
+   * Wirtschaftlich relevante Änderung (Besitz, Gebäude, Einheitenzahl, Moral, Regler): die Raten werden beim
+   * nächsten refresh neu berechnet. Bewegungen, Anhalten oder Zusammenlegen brauchen das nicht (nur invalidate).
+   * Unabhängig davon werden die Raten zu jeder vollen Spielstunde neu berechnet.
+   */
+  invalidateRates = (): void => {
+    this.dirty = true;
+    this.ratesDirty = true;
+  };
+
   log = (text: string, nation?: string, province?: number, news?: NewsInfo): void => {
     this.state.events.push({ time: this.state.time, nation, province, text });
     // öffentliche Meldungen sammeln sich bis zur nächsten Zeitungsausgabe
@@ -72,6 +89,7 @@ export class Simulation {
       get state() { return sim.state; },
       get map() { return sim.map; },
       invalidate: () => sim.invalidate(),
+      invalidateRates: () => sim.invalidateRates(),
       log: (t: string, n?: string, p?: number, news?: NewsInfo) => sim.log(t, n, p, news),
       random: () => nextRandom(sim.state),
       newArmyId: () => sim.state.nextArmyId++,
@@ -80,6 +98,7 @@ export class Simulation {
 
   apply(nation: string, action: Action): ActionResult {
     const r = applyAction(this.ctx, nation, action);
+    if (r.ok && !MOVE_ONLY.has(action.type)) this.ratesDirty = true;
     if (r.ok && action.type === 'enqueue') this.startOrder(action.province);
     if (r.ok && action.type === 'cancelBuild') this.startBuild(action.province);
     this.refresh();
@@ -104,12 +123,16 @@ export class Simulation {
   private refresh(): void {
     if (!this.dirty) return;
     numberArmies(this.state);
-    this.rates = allRates(this.state, this.map);
-    for (const id of this.nationIds) {
-      const r = this.rates[id];
-      this.perTick[id] = ALL_RES.map((res) => (r.prod[res] - r.cons[res]) / TICKS_PER_DAY);
-      this.upkeepPerTick[id] = r.upkeep / TICKS_PER_DAY;
-      this.shareList[id] = CATEGORIES.map((c) => CATEGORY_RES[c].map((res) => r.shares[res]));
+    // während der KI-Runde rechnen die Raten erst am Ende neu (die Befehle einer Nation ändern nur ihre eigenen)
+    if (this.ratesDirty && !this.batch) {
+      this.ratesDirty = false;
+      this.rates = allRates(this.state, this.map);
+      for (const id of this.nationIds) {
+        const r = this.rates[id];
+        this.perTick[id] = ALL_RES.map((res) => (r.prod[res] - r.cons[res]) / TICKS_PER_DAY);
+        this.upkeepPerTick[id] = r.upkeep / TICKS_PER_DAY;
+        this.shareList[id] = CATEGORIES.map((c) => CATEGORY_RES[c].map((res) => r.shares[res]));
+      }
     }
     let next = Infinity;
     for (const ps of this.state.provinces) {
@@ -125,6 +148,7 @@ export class Simulation {
   private tick(): void {
     const s = this.state;
     s.time += MINUTE;
+    if (s.time % HOUR === 0) this.invalidateRates();
     this.refresh();
     this.economy();
     if (s.time >= this.nextEvent) {
@@ -174,8 +198,9 @@ export class Simulation {
           st[res] = 0;
         } else st[res] = v;
       }
-      // Provinzunterhalt nach Verbrauchsregler; fehlt ein Rohstoff, springen die anderen
-      // eingestellten Rohstoffe der Kategorie ein (Rohstoffe mit 0 % nie)
+      // Provinzunterhalt stur nach Verbrauchsregler: jeder Rohstoff zahlt nur seinen eingestellten Anteil.
+      // Fehlt er, springen die anderen nicht ein – es entsteht ein Engpass (Moral sinkt), dafür lässt sich
+      // ein Rohstoff gezielt aufstapeln (z. B. Holz auf 0 % stellen, um bauen zu können).
       const u = this.upkeepPerTick[id];
       const shares = this.shareList[id];
       for (let c = 0; c < CATEGORIES.length; c++) {
@@ -185,12 +210,6 @@ export class Simulation {
         for (let k = 0; k < list.length; k++) {
           if (sh[k] <= 0) continue;
           const take = Math.min(st[list[k]], u * sh[k]);
-          st[list[k]] -= take;
-          need -= take;
-        }
-        for (let k = 0; k < list.length && need > 1e-9; k++) {
-          if (sh[k] <= 0) continue;
-          const take = Math.min(st[list[k]], need);
           st[list[k]] -= take;
           need -= take;
         }
@@ -208,7 +227,7 @@ export class Simulation {
         ps.construction = null;
         const def = BUILDINGS[c.building];
         this.log(`${def.name}${def.maxLevel > 1 ? ' Stufe ' + c.level : ''} in ${this.map.provinces[i].name} fertiggestellt.`, ps.owner, i);
-        this.dirty = true;
+        this.invalidateRates();
         this.startBuild(i);
       }
       const o = ps.queue[0];
@@ -287,7 +306,7 @@ export class Simulation {
     army.units[unit] = (army.units[unit] ?? 0) + count;
     // Schlachtschiffe und Eisenbahngeschütze tragen eigene Namen
     if ((unit === 'battleship' || unit === 'railgun') && !army.name) army.name = unitName(s, this.map, owner, unit);
-    this.dirty = true;
+    this.invalidateRates();
   }
 
   /** Stündlich: Wehramt und Kaserne stellen Infanterie auf (ohne Kosten). */
@@ -323,6 +342,16 @@ export class Simulation {
   }
 
   private runControllers(): void {
+    this.batch = true;
+    try {
+      this.runControllersBatch();
+    } finally {
+      this.batch = false;
+    }
+    this.refresh();
+  }
+
+  private runControllersBatch(): void {
     const hour = Math.floor(this.state.time / HOUR);
     const interval = DIFFICULTY[this.state.difficulty].interval;
     this.nationIds.forEach((id, idx) => {
@@ -355,7 +384,7 @@ export class Simulation {
       n.capital = m.province;
       const name = this.map.nations.find((x) => x.id === id)?.name ?? id;
       this.log(`${name} verlegt die Hauptstadt nach ${this.map.provinces[m.province].name}.`, undefined, m.province);
-      this.dirty = true;
+      this.invalidateRates();
     }
   }
 
@@ -372,10 +401,8 @@ export class Simulation {
     const targets = s.provinces.map((_, i) => moraleTarget(s, this.map, i).target);
     s.provinces.forEach((ps, i) => {
       ps.morale = stepMorale(ps.morale, targets[i]);
-      // Kampftage zählen (nur so weit, wie der Abzug reicht); ein Tag ohne Kampf setzt zurück
-      if (ps.fought) ps.battleDays = Math.min(Math.round(MORALE.battleMax / MORALE.battle), (ps.battleDays ?? 0) + 1);
-      else delete ps.battleDays;
       delete ps.fought;
+      delete ps.battleDays; // aus älteren Spielständen
       if (ps.morale < DEFECTION.threshold) this.log(`Unruhen in ${this.map.provinces[i].name} (Moral ${Math.round(ps.morale * 100)} %): Die Provinz droht überzulaufen.`, ps.owner, i);
     });
     this.troopMorale();
@@ -396,7 +423,7 @@ export class Simulation {
     }
     this.checkVictory();
     publishNewspaper(s, this.map);
-    this.dirty = true;
+    this.invalidateRates();
   }
 
   /**
@@ -406,13 +433,11 @@ export class Simulation {
   private checkVictory(): void {
     const s = this.state;
     if (s.winner) return;
-    const total = Object.values(s.nations).reduce((t, n) => t + n.points, 0);
-    const alive = this.map.nations.filter((n) => s.nations[n.id].alive);
-    const best = [...alive].sort((a, b) => s.nations[b.id].points - s.nations[a.id].points)[0];
-    const majors = alive.filter((n) => n.major);
+    // Sieg: wer VICTORY_SHARE aller Provinzen hält; Rangfolge nach Zahl der Provinzen
+    const count = provinceCounts(s);
+    const best = this.map.nations.filter((n) => s.nations[n.id].alive).sort((a, b) => (count[b.id] ?? 0) - (count[a.id] ?? 0))[0];
     let winner: string | null = null;
-    if (best && s.nations[best.id].points >= VICTORY_SHARE * total) winner = best.id;
-    else if (majors.length === 1) winner = majors[0].id;
+    if (best && (count[best.id] ?? 0) >= VICTORY_SHARE * s.provinces.length) winner = best.id;
     else if (s.nations[s.playerNation].controller === 'human' && !s.nations[s.playerNation].alive && best) winner = best.id;
     if (!winner) return;
     s.winner = winner;

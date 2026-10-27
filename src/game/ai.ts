@@ -123,12 +123,17 @@ export class BasicAI implements Controller {
     const grainNet = netRate(view.rates, 'grain'), fishNet = netRate(view.rates, 'fish');
     const foodShort = grainNet < 0 || fishNet < 0 || stock.grain < 3000;
     // Kasernen (1000 Getreide je Stufe und Tag) und Wehrämter (jede neue Infanterie isst 18 Getreide am Tag):
-    // bei Getreidemangel abschalten, bei Überschuss wieder an
+    // bei Getreidemangel abschalten, bei Überschuss wieder an. Großmächte lassen ihre Wehrämter immer an –
+    // statt die Truppen auszudünnen, greifen sie an und erobern neues Land (siehe military/diplomacy).
     const starving = grainNet < 0 && stock.grain < -grainNet * 5, plenty = grainNet > 1500 && stock.grain > 10000;
     for (const i of own) {
       const ps = state.provinces[i];
       for (const b of ['barracks', 'recruitment'] as const) {
         if (ps.buildings[b] <= 0) continue;
+        if (b === 'recruitment' && major) {
+          if (ps.off?.[b]) actions.push({ type: 'switchBuilding', province: i, building: b, on: true });
+          continue;
+        }
         if (!ps.off?.[b] && starving) actions.push({ type: 'switchBuilding', province: i, building: b, on: false });
         else if (ps.off?.[b] && plenty) actions.push({ type: 'switchBuilding', province: i, building: b, on: true });
       }
@@ -290,8 +295,12 @@ export class BasicAI implements Controller {
       const money = Math.floor(Math.min(stock.money * share, 50000) / 1000) * 1000;
       actions.push({ type: 'propose', nation: e, kind: 'peace', ...(money >= 5000 ? { tribute: { money } } : {}) });
     }
-    // Kriegserklärungen: nur Großmächte, nach der Friedenszeit, höchstens ein Krieg zugleich
-    if (!major || enemies.length > 0 || state.time < PEACE_TIME) return;
+    // Kriegserklärungen: nur Großmächte, nach der Friedenszeit; neben einem laufenden Krieg höchstens ein
+    // zweiter, und der nur gegen einen Kleinstaat (leichte Beute)
+    if (!major || enemies.length > 1 || state.time < PEACE_TIME) return;
+    const onlyMinor = enemies.length === 1;
+    // Nahrungsmangel: Expansion statt Truppenabbau – Krieg wird wahrscheinlicher
+    const hungry = netRate(view.rates, 'grain') < 0 || stock.grain < 3000;
     const neighbors = new Set<string>();
     for (const i of sit.own) {
       for (const n of map.provinces[i].neighbors) {
@@ -302,15 +311,17 @@ export class BasicAI implements Controller {
     let best: { n: string; ratio: number } | null = null;
     for (const n of neighbors) {
       if ((state.truceUntil[warKey(nation, n)] ?? 0) > state.time) continue;
+      if (enemies.includes(n)) continue;
       const ratio = mine / Math.max(1, power(n));
       const isMajor = map.nations.find((x) => x.id === n)?.major;
+      if (onlyMinor && isMajor) continue;
       // vorsichtige Nationen wollen mehr Überlegenheit
       if (ratio < (isMajor ? 1.6 : 2) * profile.caution) continue;
       if (!best || ratio > best.ratio) best = { n, ratio };
     }
     if (!best) return;
     const isMajor = map.nations.find((x) => x.id === best!.n)?.major;
-    const chance = (isMajor ? 0.01 : 0.04) * profile.aggression * diff.war * diff.interval / 3;
+    const chance = (isMajor ? 0.01 : 0.04) * (hungry ? 2 : 1) * profile.aggression * diff.war * diff.interval / 3;
     if (view.random() < chance) actions.push({ type: 'declareWar', nation: best.n });
   }
 
@@ -465,7 +476,10 @@ export class BasicAI implements Controller {
       const border = map.provinces[node].neighbors.some((n) => state.provinces[n].owner !== nation);
       // Besatzung: mindestens 8/4/2 (Front 5), bei sichtbarer Bedrohung 120 % der Feindstärke
       const near = map.provinces[node].neighbors.reduce((t, n) => t + (hostile.get(n) ?? 0), 0);
-      const base = node === capital ? 8 : front.has(node) ? 5 : border ? 4 : 2;
+      // Großmächte halten nur knappe Besatzungen und schicken den Rest in den Angriff
+      const base = major
+        ? node === capital ? 6 : front.has(node) ? 4 : border ? 3 : 1
+        : node === capital ? 8 : front.has(node) ? 5 : border ? 4 : 2;
       const keepCount = Math.ceil(Math.max(base, (near * 1.2) / 1.25) * profile.caution);
       if (total - keepCount < 2) continue;
       const keep: Partial<Record<UnitType, number>> = {};
@@ -476,7 +490,7 @@ export class BasicAI implements Controller {
       }
       const power = land.reduce((s, x) => s + armyPower(x), 0) - armyPower({ ...a, units: keep });
       if (power <= 0) continue;
-      const tree = pathsFrom(state, map, a, node);
+      const tree = pathsFrom(state, map, a, node, undefined, REACH_HOURS);
       const viaSea = (n: number) => pathTo(tree, n)?.some((k) => isSea(map, k)) ?? false;
 
       // 1. Angriff: feindliche Provinzen oder eigene Provinzen mit Eindringlingen
@@ -492,7 +506,10 @@ export class BasicAI implements Controller {
         if (!isFinite(hours) || hours > REACH_HOURS) continue;
         // eigene Provinzen mit Eindringlingen: genug Überlegenheit; feindliche: auch die nicht sichtbare
         // Besatzung und Festung einrechnen und nie mit Kleinsttrupps
-        if (own ? power < threat * superiority : power < Math.max(MIN_STRIKE, defence(n) * superiority)) continue;
+        // Großmächte gegen Kleinstaaten: 20 % weniger Überlegenheit nötig
+        const vsMinor = major && !own && !map.nations.find((x) => x.id === ps.owner)?.major;
+        const need = superiority * (vsMinor ? 0.8 : 1);
+        if (own ? power < threat * superiority : power < Math.max(MIN_STRIKE, defence(n) * need)) continue;
         // Landungen nur für Großmächte und mit spürbarem Aufschlag gegenüber dem Landweg
         const sea = viaSea(n);
         if (sea && !major) continue;
@@ -546,7 +563,7 @@ export class BasicAI implements Controller {
       // Flotten mit Truppen an Bord warten auf den Landungsbefehl
       if (Object.keys(a.units).some((u) => !UNITS[u as UnitType].naval && (a.units[u as UnitType] ?? 0) > 0)) continue;
       const power = armyPower(a);
-      const tree = pathsFrom(state, map, a, a.node);
+      const tree = pathsFrom(state, map, a, a.node, undefined, REACH_HOURS);
       let best: { node: number; score: number } | null = null;
       for (let k = 0; k < map.seas.length; k++) {
         const z = map.seas[k];
@@ -585,7 +602,7 @@ export class BasicAI implements Controller {
     };
     for (const a of state.armies) {
       if (a.owner !== nation || !isRailOnly(a) || a.move || a.target != null || isSea(map, a.node)) continue;
-      const tree = pathsFrom(state, map, a, a.node);
+      const tree = pathsFrom(state, map, a, a.node, undefined, REACH_HOURS);
       const here = inRange(a.node);
       let best: { node: number; score: number } | null = null;
       for (const p of own) {

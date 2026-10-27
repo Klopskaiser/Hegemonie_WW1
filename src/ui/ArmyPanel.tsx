@@ -5,7 +5,7 @@ import { atWar } from '../game/diplomacy.ts';
 import { isSea, nodeName } from '../game/graph.ts';
 import type { MapData } from '../game/mapdata.ts';
 import {
-  armyPosition, armyPower, armySpeed, boardingWait, inMeleeRange, infantryStrength, isNaval, maxRange, samePlace, segmentHours, troopMorale, troopTarget, unitCount, unitHp,
+  armyHp, armyPosition, armySpeed, boardingWait, meleePower, rangedPower, inMeleeRange, infantryStrength, isNaval, maxRange, samePlace, segmentHours, troopMorale, troopTarget, unitCount, unitHp,
 } from '../game/military.ts';
 import { armyName } from '../game/names.ts';
 import { Flag } from './Flag.tsx';
@@ -13,6 +13,8 @@ import { Picture, unitImage } from './Picture.tsx';
 import { REBELS, type Army, type GameState } from '../game/types.ts';
 import { Bar, Swatch, Window } from './common.tsx';
 import { fmtDuration } from './format.ts';
+
+const fmtPower = (v: number) => v.toLocaleString('de-DE', { maximumFractionDigits: 1 });
 
 interface Props {
   map: MapData;
@@ -111,8 +113,7 @@ export function ArmyPanel({ map, state, army: a, armies, act, onSelectArmy, onSp
         <div>
           <div className="prov-owner">{ownerName}</div>
           <div className="muted">
-            {carrying ? 'Flotte mit Truppen an Bord' : isNaval(a) ? 'Flotte' : atSea ? 'Truppen eingeschifft' : 'Landtruppen'} · Stärke {Math.round(armyPower(a))}
-            {' '}· Abschüsse {Math.floor(a.kills ?? 0)}
+            {carrying ? 'Flotte mit Truppen an Bord' : isNaval(a) ? 'Flotte' : atSea ? 'Truppen eingeschifft' : 'Landtruppen'} · Abschüsse {Math.floor(a.kills ?? 0)}
           </div>
         </div>
         {own && renaming === null && (
@@ -131,6 +132,12 @@ export function ArmyPanel({ map, state, army: a, armies, act, onSelectArmy, onSp
         </form>
       )}
       <p className="army-status">{status}</p>
+      <div className="small strength-row" title={'Schaden je Kampfrunde (stündlich), den jede gegnerische Armee im Umkreis von 1 km voll abbekommt – ohne Zufallsstreuung und Festung. '
+        + 'Infanterie nach aktueller Moral; im Nahkampf zählen die vordersten 20 Einheiten voll, bis Platz 50 abnehmend; Fernkampfeinheiten kämpfen dort nur halb. '
+        + 'Verteidigung gilt in eigenen Provinzen, sonst Angriff; auf See kämpfen Landtruppen halb.'}>
+        Kampfkraft: Angriff {fmtPower(meleePower(a, map, false, atSea))} · Verteidigung {fmtPower(meleePower(a, map, !atSea, atSea))}
+        {rangedPower(a, map) > 0 ? ` · Fernkampf ${fmtPower(rangedPower(a, map))}` : ''} · Lebenspunkte {Math.round(armyHp(a))}
+      </div>
       {target && <p className="small">{a.autoTarget ? 'Fernkampf auf' : 'Angriff (Fernkampf) auf'} {armyName(target)} ({nodeName(map, target.node)})</p>}
       {chased && <p className="small">Verfolgt {armyName(chased)} ({nodeName(map, chased.node)}) bis in den Nahkampf</p>}
       {!!a.parts?.length && (

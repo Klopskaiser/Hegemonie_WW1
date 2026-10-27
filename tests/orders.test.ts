@@ -2,7 +2,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { DAY, HOUR, MILITARY, MINUTE, UNITS } from '../src/game/balance.ts';
-import { armyPosition, forcedMarchWear, repairMachines, segmentHours, unitCount } from '../src/game/military.ts';
+import { armyHp, armyPosition, forcedMarchWear, meleeOutput, meleePower, rangedPower, repairMachines, segmentHours, unitCount } from '../src/game/military.ts';
+import { allRates, netRate, upkeepUse } from '../src/game/economy.ts';
 import type { MapData } from '../src/game/mapdata.ts';
 import { Simulation } from '../src/game/sim.ts';
 import { createGame } from '../src/game/state.ts';
@@ -147,5 +148,179 @@ describe('Verbände im Umkreis von 1 km', () => {
     expect(big.parts ?? null).toBeNull();
     // zieht zu seinem Ziel weiter (oder ist schon dort)
     expect(again!.move !== null || again!.node === p).toBe(true);
+  });
+});
+
+describe('Durchmarsch durch einen laufenden Kampf', () => {
+  it('die Truppen am Ort bleiben dort, nur die durchziehende Armee zieht mit ihrem Anteil weiter', () => {
+    const { sim, p, q, add } = setup();
+    sim.apply('DE', { type: 'declareWar', nation: 'FR' });
+    const r = map.provinces[q].links!.find((n) => n !== p && map.provinces[n].nation === 'FR')!;
+    sim.state.armies = sim.state.armies.filter((a) => a.node !== r);
+    sim.state.provinces[q].buildings.fortress = 0;
+    add({ owner: 'FR', node: q, units: { infantry: 12 } });
+    const fighter = add({ owner: 'DE', node: q, units: { infantry: 25 } });
+    // größere Armee etwa 5 km vor der Stadt, Befehl: durch die Stadt zum nächsten Ort
+    const c = map.provinces[q].center;
+    let f = 0;
+    for (; f < 1; f += 0.0005) {
+      const passer: Army = { id: -1, owner: 'DE', node: q, pos: { a: q, b: p, f }, units: { infantry: 1 } };
+      const pt = armyPosition(map, passer, 0);
+      if (Math.hypot(pt[0] - c[0], pt[1] - c[1]) >= 5) break;
+    }
+    const passer = add({ owner: 'DE', node: q, pos: { a: q, b: p, f }, units: { infantry: 40 } });
+    expect(sim.apply('DE', { type: 'move', army: passer.id, to: r }).ok).toBe(true);
+    sim.advance(2 * DAY);
+    expect(sim.state.provinces[q].owner).toBe('DE');
+    // in der eroberten Provinz steht die kämpfende Armee noch (im Umkreis der Stadt)
+    const stay = sim.state.armies.filter((a) => a.owner === 'DE' && !a.move && unitCount(a) > 0 && (() => {
+      const pt = armyPosition(map, a, sim.state.time);
+      return Math.hypot(pt[0] - c[0], pt[1] - c[1]) <= MILITARY.meleeKm;
+    })());
+    expect(stay.length).toBeGreaterThan(0);
+    expect(stay.some((a) => a.id === fighter.id)).toBe(true);
+    // die durchziehende Armee ist weitergezogen (unterwegs oder schon am Ziel)
+    const again = sim.state.armies.find((a) => a.id === passer.id)!;
+    expect(again).toBeDefined();
+    expect(again.move !== null || again.node === r).toBe(true);
+  });
+});
+
+describe('Kampfkraft im Armeefenster', () => {
+  it('entspricht dem Schaden der Kampfrunde und folgt der aktuellen Moral', () => {
+    const { sim, p, add } = setup();
+    const a = add({ owner: 'DE', node: p, units: { infantry: 10 }, morale: 0.7, keepApart: true });
+    // 1,2 × 70 % = 0,84 je Infanterist: Angriff 1, Verteidigung 1,5
+    expect(meleePower(a, map, false)).toBeCloseTo(10 * 1 * 0.84, 9);
+    expect(meleePower(a, map, true)).toBeCloseTo(10 * 1.5 * 0.84, 9);
+    // in der eigenen Provinz verteidigt sie: genau der Wert der Kampfrunde
+    expect(meleeOutput(sim.state, map, a)).toBeCloseTo(meleePower(a, map, true), 9);
+    expect(armyHp(a)).toBeCloseTo(10 * UNITS.infantry.hp * 0.84, 9);
+    a.morale = 0.35;
+    expect(meleePower(a, map, false)).toBeCloseTo(10 * 0.42, 9);
+    // große Armeen: nur die vordersten 20 Plätze voll, danach abnehmend
+    const big = add({ owner: 'DE', node: p, units: { infantry: 60 }, morale: 1, keepApart: true });
+    expect(meleePower(big, map, false)).toBeLessThan(60 * 1.2);
+    // Artillerie: im Nahkampf halb, Fernkampf voll
+    const gun = add({ owner: 'DE', node: p, units: { artillery: 4 }, keepApart: true });
+    expect(meleePower(gun, map, false)).toBeCloseTo(4 * UNITS.artillery.attack * MILITARY.meleeRangedFactor, 9);
+    expect(rangedPower(gun, map)).toBeCloseTo(4 * UNITS.artillery.attack, 9);
+  });
+});
+
+describe('Verbrauchsregler stur', () => {
+  it('fehlt ein eingestellter Rohstoff, springt kein anderer ein: Engpass, das Holz wird aufgestapelt', () => {
+    const { sim } = setup();
+    // eine Nation ohne eigenes Eisen, aber mit Holz
+    const rates0 = allRates(sim.state, map);
+    const id = Object.keys(rates0).find((n) => rates0[n].prod.iron === 0 && rates0[n].prod.lumber > rates0[n].upkeep)!;
+    expect(id).toBeDefined();
+    const n = sim.state.nations[id];
+    // 100 % Eisen ohne Eisen: Holz bleibt unangetastet (nur fester Unterhalt), Baustoffe im Engpass
+    expect(sim.apply(id, { type: 'setConsumption', category: 'materials', shares: { iron: 100, lumber: 0 } }).ok).toBe(true);
+    n.stock.iron = 0;
+    n.stock.lumber = 5000;
+    let r = allRates(sim.state, map)[id];
+    expect(upkeepUse(r, 'lumber')).toBe(0);
+    let before = n.stock.lumber;
+    sim.advance(12 * HOUR);
+    expect(n.stock.lumber - before).toBeCloseTo(netRate(r, 'lumber') / 2, -1);
+    expect(n.stock.lumber).toBeGreaterThan(before);
+    expect(n.shortage.materials).toBe(true);
+    // 25 % Eisen, 75 % Holz: Holz zahlt nur seine 75 %, die angezeigte Rate stimmt mit dem Vorrat überein
+    expect(sim.apply(id, { type: 'setConsumption', category: 'materials', shares: { iron: 25, lumber: 75 } }).ok).toBe(true);
+    n.stock.iron = 0;
+    r = allRates(sim.state, map)[id];
+    expect(upkeepUse(r, 'lumber')).toBeCloseTo(0.75 * r.upkeep, 6);
+    before = n.stock.lumber;
+    sim.advance(6 * HOUR);
+    expect(n.stock.lumber - before).toBeCloseTo(netRate(r, 'lumber') / 4, -1);
+  });
+});
+
+describe('Besatzung nach einer Eroberung aus 1 km', () => {
+  it('ein unterbrochener Marsch geht nach der Eroberung weiter, eine Einheit bleibt in der Stadt', () => {
+    const { sim, p, q, add } = setup();
+    sim.apply('DE', { type: 'declareWar', nation: 'FR' });
+    const r = map.provinces[q].links!.find((n) => n !== p && map.provinces[n].nation === 'FR')!;
+    sim.state.armies = sim.state.armies.filter((a) => a.node !== r);
+    sim.state.provinces[q].buildings.fortress = 0;
+    add({ owner: 'FR', node: q, units: { infantry: 1 } });
+    const a = add({ owner: 'DE', node: p, units: { infantry: 10 }, keepApart: true });
+    expect(sim.apply('DE', { type: 'move', army: a.id, to: r }).ok).toBe(true);
+    for (let k = 0; k < 3 * 24 * 6 && sim.state.provinces[q].owner !== 'DE'; k++) sim.advance(10 * MINUTE);
+    expect(sim.state.provinces[q].owner).toBe('DE');
+    sim.advance(HOUR);
+    const garrison = sim.state.armies.filter((x) => x.owner === 'DE' && x !== a && x.node === q && !x.pos && !x.move);
+    expect(garrison.reduce((t, x) => t + unitCount(x), 0)).toBe(1);
+    expect(a.move !== null || a.node === r).toBe(true);
+  });
+
+  it('eine einzelne letzte Einheit bleibt in der Stadt, ihr gemerkter Marschbefehl verfällt', () => {
+    const { sim, p, q, add } = setup();
+    sim.state.provinces[q].owner = 'DE';
+    const one = add({ owner: 'DE', node: q, units: { infantry: 1 }, resume: { node: p }, keepApart: true });
+    sim.advance(10 * MINUTE);
+    expect(one.move ?? null).toBeNull();
+    expect(one.node).toBe(q);
+    expect(one.resume ?? null).toBeNull();
+  });
+
+  it('zieht die Armee weiter, bleibt eine Einheit in der eroberten Stadt', () => {
+    const { sim, p, q, add } = setup();
+    sim.apply('DE', { type: 'declareWar', nation: 'FR' });
+    const r = map.provinces[q].links!.find((n) => n !== p && map.provinces[n].nation === 'FR')!;
+    sim.state.provinces[q].buildings.fortress = 0;
+    const foe = add({ owner: 'FR', node: q, units: { infantry: 1 } });
+    const a = add({ owner: 'DE', node: p, units: { infantry: 10 }, keepApart: true });
+    expect(sim.apply('DE', { type: 'attack', army: a.id, target: foe.id }).ok).toBe(true);
+    for (let k = 0; k < 3 * 24 * 6 && sim.state.provinces[q].owner !== 'DE'; k++) sim.advance(10 * MINUTE);
+    expect(sim.state.provinces[q].owner).toBe('DE');
+    // erobert aus der Nähe: die Armee rückt in die Stadt ein
+    expect(a.move ?? null).toBeNull();
+    expect(a.pos ?? null).toBeNull();
+    expect(a.node).toBe(q);
+    const n0 = unitCount(a);
+    // sofort weiter zur nächsten Stadt
+    expect(sim.apply('DE', { type: 'move', army: a.id, to: r }).ok).toBe(true);
+    const garrison = sim.state.armies.filter((x) => x.owner === 'DE' && x !== a && x.node === q && !x.pos && !x.move);
+    expect(garrison.map((x) => unitCount(x))).toEqual([1]);
+    expect(unitCount(a)).toBe(n0 - 1);
+  });
+});
+
+describe('Zwei Armeen aus verschiedenen Richtungen', () => {
+  it('werden in der Schlacht um dieselbe Stadt zusammengefasst, auch wenn sie mehr als 1 km auseinander stehen', () => {
+    const { sim, add } = setup();
+    sim.apply('DE', { type: 'declareWar', nation: 'FR' });
+    // französische Stadt mit zwei Wegen, deren 1-km-Punkte mehr als 1 km auseinander liegen
+    const pt = (q: number, n: number) => {
+      const c = map.provinces[q].center;
+      for (let f = 0; f <= 1; f += 0.0005) {
+        const x = armyPosition(map, { id: -1, owner: 'DE', node: q, pos: { a: q, b: n, f }, units: { infantry: 1 } }, 0);
+        if (Math.hypot(x[0] - c[0], x[1] - c[1]) >= 1) return x;
+      }
+      return c;
+    };
+    const fr = map.provinces.find((p) => {
+      if (p.nation !== 'FR' || p.capital || (p.links ?? []).length < 2) return false;
+      const [a, b] = [pt(p.id, p.links![0]), pt(p.id, p.links![1])];
+      return Math.hypot(a[0] - b[0], a[1] - b[1]) > 1.2;
+    })!;
+    const q = fr.id, [r1, r2] = fr.links!;
+    for (const r of [r1, r2]) sim.state.provinces[r].owner = 'DE';
+    sim.state.armies = sim.state.armies.filter((a) => ![q, r1, r2].includes(a.node));
+    sim.state.provinces[q].buildings.fortress = 5;
+    add({ owner: 'FR', node: q, units: { infantry: 60 } });
+    const a1 = add({ owner: 'DE', node: r1, units: { infantry: 20 } });
+    const a2 = add({ owner: 'DE', node: r2, units: { infantry: 15 } });
+    expect(sim.apply('DE', { type: 'move', army: a1.id, to: q }).ok).toBe(true);
+    expect(sim.apply('DE', { type: 'move', army: a2.id, to: q }).ok).toBe(true);
+    // bis beide angekommen sind (angehalten oder schon zusammengefasst)
+    for (let k = 0; k < 4 * 24 * 60 && sim.state.armies.some((x) => (x === a1 || x === a2) && x.move); k++) sim.advance(MINUTE);
+    sim.advance(10 * MINUTE);
+    const both = [a1, a2].filter((x) => sim.state.armies.includes(x));
+    expect(both.length).toBe(1);
+    expect(unitCount(both[0])).toBeGreaterThan(20);
   });
 });

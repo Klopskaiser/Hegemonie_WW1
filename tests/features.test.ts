@@ -2,8 +2,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { ALL_RES, DAY, HOUR, MILITARY, MINUTE, MORALE, UNITS } from '../src/game/balance.ts';
-import { applyCombatMorale, applyDamage, armyLocation, armyPosition, boardingWait, combatRound, conquer, rangedRound, damageBuildings, defections, harborLeg, inMelee, maxRange, meleeOutput, repairMachines, troopTarget, unitHp } from '../src/game/military.ts';
-import { activeLevel, capitalOf, moraleTarget, nationRates, recruitHours, totalUse, useSources } from '../src/game/economy.ts';
+import { applyCombatMorale, applyDamage, armyLocation, armyPosition, boardingWait, combatRound, conquer, rangedRound, damageBuildings, defections, harborLeg, inMelee, markFight, maxRange, meleeOutput, repairMachines, troopTarget, unitHp } from '../src/game/military.ts';
+import { activeLevel, capitalOf, moraleTarget, nationRates, recruitHours, stepMorale, totalUse, useSources } from '../src/game/economy.ts';
 import type { MapData } from '../src/game/mapdata.ts';
 import { edgeParts, edgePoint, nodePos } from '../src/game/graph.ts';
 import { segmentHours } from '../src/game/military.ts';
@@ -73,28 +73,40 @@ describe('Verbrauch nach Verursachern', () => {
 });
 
 describe('Moral, Abschüsse, Namen', () => {
-  it('Kämpfe in der Provinz senken das Moralziel bis zum Tageswechsel', () => {
+  it('Kämpfe in der Provinz senken das Moralziel fest um 15 % bis zum Tageswechsel, je Kampfstunde sofort −0,75 %', () => {
     const sim = newSim();
     const berlin = prov('Berlin');
     const before = moraleTarget(sim.state, map, berlin).target;
     const ps = sim.state.provinces[berlin];
     const penalty = () => moraleTarget(sim.state, map, berlin).parts.find((p) => p.label.startsWith('Kämpfe'))?.value ?? 0;
     ps.fought = true;
-    expect(penalty()).toBeCloseTo(-0.1, 9);
+    expect(penalty()).toBeCloseTo(-0.15, 9);
     expect(moraleTarget(sim.state, map, berlin).target).toBeCloseTo(Math.max(MORALE.min, before - MORALE.battle), 6);
-    // jeden Tag mit Kampf 10 % mehr, höchstens 30 %
-    for (const want of [-0.2, -0.3, -0.3]) {
+    // auch nach Tagen mit Kampf bleibt es bei −15 %
+    for (let d = 0; d < 3; d++) {
       sim.advance(DAY);
       expect(ps.fought).toBeUndefined();
       ps.fought = true;
-      expect(penalty()).toBeCloseTo(want, 9);
+      expect(penalty()).toBeCloseTo(-0.15, 9);
     }
-    // ein Tag ohne Kampf setzt zurück
+    // ohne Kampf kein Abzug
     ps.fought = false;
-    sim.advance(DAY);
-    expect(ps.battleDays).toBeUndefined();
-    ps.fought = true;
-    expect(penalty()).toBeCloseTo(-0.1, 9);
+    expect(penalty()).toBe(0);
+    // Sofortabzug: höchstens einmal je Spielstunde
+    const m0 = ps.morale;
+    markFight(sim.state, berlin);
+    markFight(sim.state, berlin);
+    expect(ps.morale).toBeCloseTo(m0 - 0.0075, 9);
+    sim.state.time += HOUR;
+    markFight(sim.state, berlin);
+    expect(ps.morale).toBeCloseTo(m0 - 0.015, 9);
+  });
+
+  it('Moral nähert sich dem Ziel mit mindestens 3 Punkten je Tag (oder der Restlücke), höchstens 10', () => {
+    expect(stepMorale(0.25, 0.85)).toBeCloseTo(0.35, 9); // 35 % von 60 = 21 → höchstens 10
+    expect(stepMorale(0.8, 0.85)).toBeCloseTo(0.83, 9); // 35 % von 5 = 1,75 → mindestens 3
+    expect(stepMorale(0.83, 0.85)).toBeCloseTo(0.85, 9); // Restlücke 2 < 3
+    expect(stepMorale(0.85, 0.8)).toBeCloseTo(0.82, 9); // abwärts ebenso
   });
 
   it('Armeen zählen Abschüsse; Schlachtschiffe bekommen Namen und lassen sich umbenennen', () => {
@@ -631,7 +643,15 @@ describe('KI: Nahrung', () => {
     const view = { state: sim.state, map, nation: 'DE', rates: nationRates(sim.state, map, 'DE'), random: () => 0.5 };
     const acts = new BasicAI().decide(view);
     expect(acts).toContainEqual({ type: 'switchBuilding', province: berlin, building: 'barracks', on: false });
-    expect(acts).toContainEqual({ type: 'switchBuilding', province: berlin, building: 'recruitment', on: false });
+    // Großmächte lassen ihre Wehrämter an (sie erobern lieber), Kleinstaaten schalten sie ab
+    expect(acts).not.toContainEqual({ type: 'switchBuilding', province: berlin, building: 'recruitment', on: false });
+    const ams = prov('Amsterdam');
+    sim.state.nations.NL.stock.grain = 100;
+    sim.state.provinces[ams].buildings.barracks = 2;
+    sim.invalidate();
+    sim.advance(60_000);
+    const nl = new BasicAI().decide({ state: sim.state, map, nation: 'NL', rates: nationRates(sim.state, map, 'NL'), random: () => 0.5 });
+    expect(nl).toContainEqual({ type: 'switchBuilding', province: ams, building: 'recruitment', on: false });
     const food = acts.find((a) => a.type === 'setConsumption' && a.category === 'food');
     if (food && food.type === 'setConsumption') expect(food.shares.fish ?? 0).toBeGreaterThan(food.shares.grain ?? 0);
     // keine neuen Kasernen ohne Getreideüberschuss

@@ -1,9 +1,9 @@
 import { useState } from 'react';
 import type { Action, ActionResult } from '../game/actions.ts';
 import { UNIT_ORDER, UNITS } from '../game/balance.ts';
-import { nodeName } from '../game/graph.ts';
+import { isSea, nodeName } from '../game/graph.ts';
 import type { MapData } from '../game/mapdata.ts';
-import { armyPower, isNaval, samePlace, unitCount } from '../game/military.ts';
+import { armyPower, isNaval, meleePower, rangedPower, samePlace, unitCount } from '../game/military.ts';
 import { armyName } from '../game/names.ts';
 import type { Army, GameState } from '../game/types.ts';
 import { Window } from './common.tsx';
@@ -22,7 +22,8 @@ export function MultiArmyPanel({ map, state, armies, act, onSelectArmy, onClose 
   const own = armies.filter((a) => a.owner === state.playerNation);
   const totals: Partial<Record<string, number>> = {};
   for (const a of own) for (const u of UNIT_ORDER) if (a.units[u]) totals[u] = (totals[u] ?? 0) + a.units[u]!;
-  const power = own.reduce((t, a) => t + armyPower(a), 0);
+  // aktuelle Kampfkraft je Runde (Nahkampf im Angriff, dazu Fernkampf), wie im Armeefenster
+  const power = own.reduce((t, a) => t + meleePower(a, map, false, isSea(map, a.node)) + rangedPower(a, map), 0);
 
   const runAll = async (actions: Action[]) => {
     const errors: string[] = [];
@@ -50,7 +51,7 @@ export function MultiArmyPanel({ map, state, armies, act, onSelectArmy, onClose 
   return (
     <Window title={`${armies.length} Armeen ausgewählt`} onClose={onClose} className="province-panel">
       <p className="muted small">
-        Zusammen {Object.entries(totals).map(([u, n]) => `${n}× ${UNITS[u as keyof typeof UNITS].short}`).join(', ') || '–'} · Stärke {Math.round(power)}.
+        Zusammen {Object.entries(totals).map(([u, n]) => `${n}× ${UNITS[u as keyof typeof UNITS].short}`).join(', ') || '–'} · Kampfkraft {power.toLocaleString('de-DE', { maximumFractionDigits: 1 })} je Runde.
         Rechtsklick auf die Karte schickt alle ausgewählten Armeen los.
       </p>
       <div className="btn-row">

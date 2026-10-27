@@ -61,7 +61,7 @@ describe('Verbrauchsregler', () => {
     expect(st.gas).toBeLessThan(gas0 + r.prod.gas / 2);
   });
 
-  it('fehlt ein Rohstoff, springen die anderen eingestellten der Kategorie ein', () => {
+  it('stur: fehlt ein Rohstoff, springen die anderen nicht ein – Engpass', () => {
     const sim = newSim();
     sim.apply('DE', { type: 'setConsumption', category: 'materials', shares: { iron: 50, lumber: 50 } });
     const st = sim.state.nations.DE.stock;
@@ -72,10 +72,10 @@ describe('Verbrauchsregler', () => {
     const r = sim.rates.DE;
     const iron0 = st.iron;
     sim.advance(DAY / 4);
-    expect(sim.state.nations.DE.shortage.materials).toBe(false);
-    // Eisen trägt mehr als seine 50 %, weil Holz fehlt
+    expect(sim.state.nations.DE.shortage.materials).toBe(true);
+    // Eisen trägt nur seine 50 %, auch wenn Holz fehlt
     const usual = (r.prod.iron - r.cons.iron - r.upkeep * 0.5) / 4;
-    expect(st.iron - iron0).toBeLessThan(usual - 100);
+    expect(st.iron - iron0).toBeCloseTo(usual, -1);
   });
 
   it('lehnt ungültige Verteilungen ab', () => {
