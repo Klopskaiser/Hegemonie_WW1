@@ -1,6 +1,6 @@
 // Militär: Wegfindung, Marsch, Nah- und Fernkampf, Eroberung, Aufständische.
 
-import { DEFAULT_COMBAT_MORALE, SUPERIORITY, COMBAT_MORALE_V2, BUILDING_DAMAGE_CHANCE, BUILDINGS, buildingLives, DAY, DEFECTION, FORTRESS_REDUCTION, HOUR, MILITARY, MINUTE, MORALE, SPLIT_REJOIN, TROOP_MORALE, UNITS,
+import { DEFAULT_COMBAT_MORALE, SUPERIORITY, COMBAT_MORALE_V2, BUILDING_DAMAGE_CHANCE, BUILDINGS, buildingLives, DAY, DEFECTION, FORTRESS_REDUCTION, HOUR, MILITARY, MINUTE, MORALE, TROOP_MORALE, UNITS,
   type Building, type UnitType,
 } from './balance.ts';
 import { atWar, hasRightOfWay, setRelation, noteWarDeclaration } from './diplomacy.ts';
@@ -460,6 +460,9 @@ export function startMove(ctx: MilitaryContext, a: Army, path: number[], then?: 
   const t = ctx.state.time;
   a.pos = null;
   delete a.boarding;
+  // wer losmarschiert, ist nicht mehr frisch abgeteilt – weder die Armee selbst noch die von ihr abgeteilten
+  delete a.apartFrom;
+  for (const b of ctx.state.armies) if (b.apartFrom === a.id) delete b.apartFrom;
   a.move = { path, seg: 0, segStart: t, segEnd: t, then };
   if (frac?.startFrac !== undefined) a.move.startFrac = frac.startFrac;
   if (frac?.endFrac !== undefined) a.move.endFrac = frac.endFrac;
@@ -985,6 +988,17 @@ export function mergeArmies(state: GameState, into: Army, from: Army): void {
     if (from.wounds?.[u]) (into.wounds ??= {})[u] = Math.max(into.wounds?.[u] ?? 0, from.wounds[u]!);
   }
   state.armies = state.armies.filter((x) => x !== from);
+  // von `from` abgeteilte Armeen bleiben getrennt von dem Verband, in dem sie aufgeht
+  for (const x of state.armies) {
+    if (x.apartFrom !== from.id) continue;
+    if (x === into) delete x.apartFrom;
+    else x.apartFrom = into.id;
+  }
+}
+
+/** Frisch abgeteilt: `a` stammt von `b` oder umgekehrt (siehe Army.apartFrom) */
+function apart(a: Army, b: Army): boolean {
+  return a.apartFrom === b.id || b.apartFrom === a.id;
 }
 
 // ---------------------------------------------------------------- Kampf
@@ -1067,7 +1081,7 @@ function spread(ctx: MilitaryContext): number {
  * Einheit (jede Einheit gleich wahrscheinlich, viele Infanteristen schützen also teure Technik) und trifft
  * sie, bis sie fällt oder der Schaden aufgebraucht ist. Angeschlagene Einheiten behalten ihre Wunden.
  */
-export function applyDamage(a: Army, dmg: number, random: () => number): void {
+export function applyDamage(a: Army, dmg: number, random: () => number, keep = 0): void {
   let rest = dmg;
   while (rest > 1e-9) {
     const types = unitTypes(a);
@@ -1079,6 +1093,8 @@ export function applyDamage(a: Army, dmg: number, random: () => number): void {
     const w = a.wounds?.[u] ?? 0;
     // ist die Moral gefallen, kann die Wunde schon über den Lebenspunkten liegen: dann fällt die Einheit
     const hit = Math.max(0, Math.min(rest, hp - w));
+    // die letzten `keep` Einheiten fallen nicht (Beschuss allein räumt keine Stadt)
+    if (total <= keep && w + hit >= hp - 1e-9) return;
     rest -= hit;
     if (w + hit >= hp - 1e-9) {
       a.units[u] = a.units[u]! - 1;
@@ -1193,7 +1209,8 @@ export function applyCombatMorale(t: CombatTally, mode: CombatMoraleMode = DEFAU
 /**
  * Übermacht im Nahkampf (vor dem Schaden der Runde): Schlachten sind zusammenhängende Gruppen von Armeen im
  * Nahkampf. Je Armee zählt ihre Seite (sie und alle, mit denen sie nicht im Krieg ist) gegen alle Gegner der
- * Schlacht, nach Einheitenzahl. Mindestens SUPERIORITY.ratio-fach überlegen: +boost, unterlegen: −malus.
+ * Schlacht, nach Einheitenzahl. Mindestens SUPERIORITY.ratio-fach und um minGap Einheiten überlegen: +boost,
+ * ebenso unterlegen: −malus.
  */
 function superiority(state: GameState, t: CombatTally, foesOf: Map<Army, Army[]>): void {
   const parent = new Map<Army, Army>();
@@ -1221,8 +1238,9 @@ function superiority(state: GameState, t: CombatTally, foesOf: Map<Army, Army[]>
       }
       if (!enemy || !own) continue;
       const e = tallyOf(t, a);
-      if (own >= SUPERIORITY.ratio * enemy) e.boost = (e.boost ?? 0) + SUPERIORITY.boost;
-      else if (enemy >= SUPERIORITY.ratio * own) e.boost = (e.boost ?? 0) - SUPERIORITY.malus;
+      const s = SUPERIORITY;
+      if (own >= s.ratio * enemy && own - enemy >= s.minGap) e.boost = (e.boost ?? 0) + s.boost;
+      else if (enemy >= s.ratio * own && enemy - own >= s.minGap) e.boost = (e.boost ?? 0) - s.malus;
     }
   }
 }
@@ -1241,6 +1259,16 @@ function splashTargets(state: GameState, map: MapData, owner: string, pos: [numb
     const p = armyPosition(map, b, state.time);
     return Math.hypot(p[0] - pos[0], p[1] - pos[1]) <= MILITARY.meleeKm;
   });
+}
+
+/**
+ * Steht die Armee in einer Stadt ihrer Seite (eigene oder nicht verfeindete) und hat ihre Seite (sie und alle,
+ * mit denen sie nicht im Krieg ist) dort sonst keine Einheiten? Dann lässt Beschuss ihre letzte Einheit
+ * stehen – Städte fallen nur im Nahkampf.
+ */
+function lastInCity(state: GameState, map: MapData, b: Army): boolean {
+  if (b.pos || isSea(map, b.node) || atWar(state, b.owner, state.provinces[b.node].owner)) return false;
+  return !state.armies.some((x) => x !== b && x.node === b.node && !x.pos && unitCount(x) > 0 && !atWar(state, b.owner, x.owner));
 }
 
 /** Vernichtete Armeen an allen getroffenen Orten entfernen (Meldung, Eroberung) */
@@ -1413,7 +1441,7 @@ export function rangedRound(ctx: MilitaryContext, tally?: CombatTally): void {
     const names = new Map(victims.map((b) => [b, armyName(b)]));
     const hit = out * spread(ctx);
     for (const b of victims) {
-      applyDamage(b, hit * fortressShield(state, map, b), ctx.random);
+      applyDamage(b, hit * fortressShield(state, map, b), ctx.random, lastInCity(state, map, b) ? 1 : 0);
       // beschossen werden zehrt an der Moral (einmal je Stunde, egal wie viele Schützen)
       tallyOf(t, b).shelled = true;
       const prov = b.pos ? roadProvince(map, b.pos) : isSea(map, b.node) ? -1 : b.node;
@@ -1582,20 +1610,21 @@ export function eliminate(state: GameState, nation: string): void {
 // ---------------------------------------------------------------- Wiedervereinigung
 
 /**
- * Abgetrennte Armeen, die ohne Befehl am selben Ort wie ihre Ursprungsarmee stehen, werden wieder
- * eingegliedert (`now`: sofort, sonst erst nach SPLIT_REJOIN). Ist die Ursprungsarmee fort, entfällt die Markierung.
+ * Befehl „Eingliedern“: eine abgetrennte Armee, die ohne Befehl am selben Ort wie ihre Ursprungsarmee steht,
+ * geht wieder in ihr auf. Ist die Ursprungsarmee fort oder unterwegs, entfällt die Markierung.
  */
-export function rejoinSplits(ctx: MilitaryContext, now = false, only?: number): void {
+export function rejoinSplits(ctx: MilitaryContext, only: number): void {
   const { state, map } = ctx;
   for (const a of [...state.armies]) {
-    if (!a.split || (only !== undefined && a.id !== only)) continue;
-    const origin = state.armies.find((b) => b.id === a.split!.from && b.owner === a.owner);
+    if (!a.split || a.id !== only) continue;
+    // die Ursprungsarmee oder der Verband, in dem sie inzwischen aufgegangen ist
+    const from = a.apartFrom ?? a.split.from;
+    const origin = state.armies.find((b) => b.id === from && b.owner === a.owner);
     if (!origin || origin.move) {
       a.split = null;
       continue;
     }
     if (a.move || a.target != null || origin.target != null || !samePlace(a, origin) || isNaval(a) !== isNaval(origin)) continue;
-    if (!now && state.time - a.split.at < SPLIT_REJOIN) continue;
     if (inMelee(state, map, a)) continue;
     mergeArmies(state, origin, a);
     ctx.invalidate();
@@ -1843,8 +1872,8 @@ function absorb(state: GameState, into: Army, b: Army): void {
 /**
  * Verbände (alle 10 Spielminuten): stehende Armeen derselben Nation (und Art: Flotte bzw. Landtruppen) im
  * Umkreis von MILITARY.meleeKm oder in derselben Schlacht (gemeinsamer Gegner im Nahkampf) werden zur größten
- * zusammengefasst – im Kampf wie im Stand. Ausgenommen:
- * vom Spieler abgeteilte Armeen, Armeen mit Angriffsziel. Wer einen unterbrochenen Marschbefehl hat, bleibt
+ * zusammengefasst – im Kampf wie im Stand. Ausgenommen: Armeen mit keepApart oder Angriffsziel; frisch
+ * abgeteilte Armeen außerhalb von Kämpfen nicht mit ihrer Ursprungsarmee (Army.apartFrom). Wer einen unterbrochenen Marschbefehl hat, bleibt
  * als Teil vorgemerkt und zieht nach dem Kampf weiter (splitParts).
  */
 export function mergeNearby(ctx: MilitaryContext): void {
@@ -1863,9 +1892,14 @@ export function mergeNearby(ctx: MilitaryContext): void {
     done.add(head);
     // im Umkreis oder in derselben Schlacht (gemeinsamer Gegner im Nahkampf)
     const near = comrades(state, map, head, cells).filter((b) => !done.has(b) && ok.has(b) && isNaval(b) === isNaval(head));
+    // frisch Abgeteilte bleiben außerhalb von Kämpfen getrennt von ihrer Ursprungsarmee (auch über einen Dritten)
+    const fighting = near.length > 0 && hostileNear(state, map, head, undefined, cells).length > 0;
+    const group = [head];
     for (const b of near) {
+      if (!fighting && group.some((g) => apart(g, b))) continue;
       done.add(b);
       absorb(state, head, b);
+      group.push(b);
       merged = true;
     }
   }

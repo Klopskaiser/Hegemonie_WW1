@@ -95,7 +95,7 @@ export const BUILDINGS: Record<Building, BuildingDef> = {
     describe: () => 'Produktion +25 %, Moral +7 %, ermöglicht Schiffe und Einschiffen.',
   },
   tradepost: {
-    name: 'Handelsposten', maxLevel: 1, inland: true,
+    name: 'Handelsposten', maxLevel: 1, inland: true, lives: 1,
     cost: () => ({ money: 12000, iron: 500, lumber: 2500 }),
     hours: () => 48,
     prodBonus: (l) => (l >= 1 ? 0.07 : 0),
@@ -104,7 +104,7 @@ export const BUILDINGS: Record<Building, BuildingDef> = {
     describe: () => 'Rohstoffproduktion +7 % (nicht Geld), Moral +3 %. Nur in Provinzen ohne Küste. Unterhalt 20 Fisch/Tag.',
   },
   workshop: {
-    name: 'Werkstatt', maxLevel: 1,
+    name: 'Werkstatt', maxLevel: 1, lives: 1,
     cost: () => ({ money: 5000, iron: 1500, lumber: 500 }),
     hours: () => 24,
     prodBonus: () => 0,
@@ -142,7 +142,7 @@ export const BUILDINGS: Record<Building, BuildingDef> = {
     describe: (l) => `Infanterie bei 100 % Moral alle ${RECRUIT_HOURS[l]} h (mit Wehramt; ohne halb so schnell, Doppelprovinz doppelt so schnell). Unterhalt 1000 Getreide und 1000 Geld je Stufe und Tag.`,
   },
   recruitment: {
-    name: 'Wehramt', maxLevel: 1, switchable: true,
+    name: 'Wehramt', maxLevel: 1, switchable: true, lives: 1,
     cost: () => ({ money: 2000, lumber: 125, iron: 125 }),
     hours: () => 1 / 6,
     prodBonus: () => 0,
@@ -151,7 +151,7 @@ export const BUILDINGS: Record<Building, BuildingDef> = {
     describe: () => `Stellt kostenlos Infanterie auf, bei 100 % Moral alle ${RECRUIT_HOURS[0]} h (Doppelprovinz doppelt so schnell). Ohne Wehramt und Kaserne keine Infanterie. Unterhalt 500 Geld/Tag.`,
   },
   office: {
-    name: 'Bauamt', maxLevel: 1, switchable: true,
+    name: 'Bauamt', maxLevel: 1, switchable: true, lives: 1,
     cost: () => ({ money: 30000, lumber: 500 }),
     hours: () => 48,
     prodBonus: () => 0,
@@ -240,7 +240,7 @@ export const UNITS: Record<UnitType, UnitDef> = {
   },
   artillery: {
     name: 'Artillerie', short: 'Art', cost: { money: 10000, iron: 3000, oil: 2000 }, hours: 96,
-    requires: { factory: 1 }, speed: 25, attack: 2.5, defense: 0.8, hp: 15, range: 60, upkeep: { oil: 15 },
+    requires: { factory: 1 }, speed: 25, attack: 2.5, defense: 0.8, hp: 15, range: 65, upkeep: { oil: 15 },
   },
   armoredCar: {
     name: 'Panzerwagen', short: 'PzW', cost: { money: 7000, iron: 2000, oil: 1500 }, hours: 16,
@@ -252,12 +252,12 @@ export const UNITS: Record<UnitType, UnitDef> = {
   },
   railgun: {
     name: 'Eisenbahngeschütz', short: 'EBG', cost: { money: 50000, iron: 10000, lumber: 5000, coal: 5000, oil: 10000 }, hours: 62,
-    requires: { factory: 3, railroad: 1 }, speed: 12.5, attack: 6, defense: 1, hp: 30, range: 180,
+    requires: { factory: 3, railroad: 1 }, speed: 12.5, attack: 6, defense: 1, hp: 30, range: 195,
     upkeep: { oil: 10, coal: 40 }, railOnly: true, sight: 200,
   },
   battleship: {
     name: 'Schlachtschiff', short: 'SS', cost: { money: 50000, iron: 15000, coal: 10000, oil: 5000 }, hours: 96,
-    requires: { factory: 3, harbor: 1 }, speed: 30, attack: 5, defense: 4, hp: 80, range: 90, upkeep: { oil: 30, coal: 30 }, naval: true, sight: 200,
+    requires: { factory: 3, harbor: 1 }, speed: 30, attack: 5, defense: 4, hp: 80, range: 100, upkeep: { oil: 30, coal: 30 }, naval: true, sight: 200,
   },
 };
 
@@ -307,8 +307,6 @@ export const MILITARY = {
   rebelUnits: [2, 4] as [number, number],
 };
 export const QUEUE_LIMIT = 10;
-/** Abgetrennte Armeen ohne Befehl am selben Ort werden nach dieser Zeit wieder eingegliedert */
-export const SPLIT_REJOIN = 6 * 3600_000;
 /** Jede Fabrikstufe über der Mindeststufe verkürzt die Bauzeit um diesen Anteil des Startwerts */
 export const FACTORY_SPEEDUP = 0.25;
 
@@ -378,10 +376,11 @@ export const TROOP_MORALE = {
 
 /**
  * Übermacht im Nahkampf: hat eine Seite einer Schlacht mindestens `ratio`-mal so viele Einheiten wie die andere
- * (Verbündete addiert, gezählt nach Einheiten, nicht nach Stärke), bekommt jede ihrer Armeen je Runde `boost`
+ * (Verbündete addiert, gezählt nach Einheiten, nicht nach Stärke) und mindestens `minGap` Einheiten mehr, bekommt
+ * jede ihrer Armeen je Runde `boost`
  * Moral, jede Armee der unterlegenen Seite verliert `malus` – zusätzlich und außerhalb der Rundengrenzen.
  */
-export const SUPERIORITY = { ratio: 2, boost: 0.005, malus: 0.003 };
+export const SUPERIORITY = { ratio: 2, minGap: 8, boost: 0.005, malus: 0.003 };
 
 /** Rechenweise der Kampfmoral, wenn der Spielstand keine festlegt (1: TROOP_MORALE, 2: COMBAT_MORALE_V2) */
 export const DEFAULT_COMBAT_MORALE = 2;

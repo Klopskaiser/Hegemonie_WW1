@@ -70,8 +70,8 @@ const config: MapConfig = {
   id: 'europe',
   name: 'Europa 1914',
   center: [20, 50],
-  // alle Entfernungen 10 % kürzer
-  scale: 0.9,
+  // alle Entfernungen 15 % kürzer
+  scale: 0.85,
   lonLatBox: [-45, 18, 80, 82],
   // Ostrand knapp westlich des Kaspischen Meeres
   rect: [-2800, -2450, 2040, 2250],

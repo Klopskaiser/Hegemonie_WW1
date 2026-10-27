@@ -55,8 +55,8 @@
   Osmanischen Reich, Sahara-Emirat (2: Süd-Algerien) aus Marokko. Großmächte behalten 10 Startprovinzen auf
   kleinerer Fläche. Doppelt sind nur Oulu (Holz) und Ouargla (Gas). Kiew ist Getreide ×2, Russland hat Eisen in
   Kriwoi Rog (Jekaterinoslaw); Holz im Süden: Fès (Mittlerer Atlas) und Tunis (Kroumirie).
-- Maßstab 0,9 (Vorgabe): die fertige Karte ist um 10 % verkleinert (`scale` in der Kartenkonfiguration),
-  Spielwerte in km (Tempo, Sicht, Reichweiten) bleiben – Wege sind damit 10 % kürzer.
+- Maßstab 0,85 (Vorgabe, zuerst 0,9): die fertige Karte ist um 15 % verkleinert (`scale` in der
+  Kartenkonfiguration), Spielwerte in km (Tempo, Sicht, Reichweiten) bleiben – Wege sind damit 15 % kürzer.
 - Der Kartenbau prüft je Nation die Rohstoffregeln und die Entfernung von der Hauptstadt zum nächsten Feld
   jedes Rohstoffs (Warnung ab 1000 km, `src/game/mapcheck.ts`).
 - Kartenrand: gerades Rechteck, Ostrand knapp westlich des Kaspischen Meeres. Jedes Land im
@@ -226,9 +226,12 @@
   (auch per Kaufgesuch), liefert auf Gesuche und bietet Überschüsse an.
 - Flaggen (SVG, vereinfacht um 1914) für alle Nationen; Bildplätze für Einheiten, Gebäude und je drei
   Varianten je Zeitungsmeldung (public/images/README.md).
-- Teilen: Regler je Einheitentyp; im Nahkampf nicht möglich. Die abgetrennte Armee wird ausgewählt;
-  wird sie ohne Befehl abgewählt (oder steht sie 6 Spielstunden ohne Befehl am selben Ort wie die
-  Ursprungsarmee), gliedert sie sich wieder ein. „Schiffe abtrennen“ bleibt dauerhaft getrennt.
+- Teilen: Regler je Einheitentyp; im Nahkampf nicht möglich. Die abgetrennte Armee wird ausgewählt.
+  Sie verschmilzt nicht von selbst wieder mit ihrer Ursprungsarmee (`apartFrom`, auch nicht über eine dritte
+  Armee im Verband), bis eine der beiden losmarschiert: Am Zielort geht sie in den dortigen Truppen auf, und
+  rückt die Ursprungsarmee nach, verschmelzen beide wieder. Im Kampf gilt die Trennung nicht (Verband wie
+  sonst). Wieder eingliedern nur von Hand („Zusammenlegen“ bzw. Aktion `rejoin`); früher geschah das beim
+  Abwählen und nach 6 Stunden von selbst (auf Vorgabe entfernt). Marschierende Armeen verschmelzen nie.
 - Zeitung: Karte oben, Meldungen darunter. Öffentliche Meldungen sammeln sich bis zur nächsten Ausgabe
   (state.newsFeed); eroberte Städte je Eroberer zusammengefasst („X erobert die Stadt Y (Provinz Y)“,
   Hauptstädte als eigene Meldung), vernichtete Armeen mit Namen und Sieger als Schlachtbericht.
@@ -332,7 +335,8 @@
   Im Kampf gehören auch Armeen dazu, die mit demselben Gegner im Nahkampf stehen (von zwei Seiten herangerückt,
   je 1 km vor dem Gegner, also bis zu 2 km auseinander). Wer dabei einen unterbrochenen
   Marschbefehl hat, bleibt als Teil vorgemerkt und zieht nach dem Kampf mit seinem Anteil (Verluste anteilig)
-  unter alter Nummer weiter. Nie zusammengefasst: vom Spieler abgeteilte Armeen und Armeen mit Angriffsziel.
+  unter alter Nummer weiter. Nie zusammengefasst: Armeen mit Angriffsziel; frisch abgeteilte nicht mit ihrer
+  Ursprungsarmee (siehe Teilen).
 - Marschart im Armeefenster (Vorgabe): „Normal“ (Standard) hält im Marsch nicht für Gegner in Reichweite,
   „Angriff“ hält mit Fernkampfeinheiten, sobald ein Gegner in Reichweite ist, und zieht danach weiter. Im
   Stand feuern Fernkampfeinheiten immer selbständig. „Gewaltmarsch“ (umschaltbar): 50 % schneller, im Marsch
@@ -340,7 +344,11 @@
 - Angriff (Vorgabe, Rechtsklick auf eine feindliche Armee oder Knopf im Armeefenster): die Armee verfolgt das
   Ziel und plant neu, wenn es weiterzieht. Mit Fernkampfeinheiten (auch gemischt) rückt sie nur bis in
   Reichweite heran und beschießt es, sonst bis in den Nahkampf.
-- Reichweiten (Vorgabe): Artillerie 60 km, Eisenbahngeschütz 180 km, Schlachtschiff 90 km. Kampfkraft je Moral linear:
+- Beschuss räumt keine Stadt (Vorgabe): steht eine Armee in einer Stadt ihrer Seite und hat die Seite dort sonst
+  keine Einheiten, fällt ihre letzte Einheit nicht durch Fernkampf – die Moral sinkt weiter (bis 10 %), die
+  Provinz gilt als umkämpft. Städte fallen nur im Nahkampf; unterwegs oder im gleichzeitigen Nahkampf wird
+  die letzte Einheit normal vernichtet.
+- Reichweiten (Vorgabe): Artillerie 65 km, Eisenbahngeschütz 195 km, Schlachtschiff 100 km. Kampfkraft je Moral linear:
   1,2 × Moral: 10 % → 0,12 bis 100 % → 1,2 (1,0 bei 83,3 %). Das Armeefenster zeigt Ziel und Gründe.
 - Spielbeginn: alle Provinzen und Truppen haben 70 % Moral (Startgeld 100.000).
 - Kämpfe und Eroberungen gelten im Umkreis von 1 km (siehe Nahkampfreichweite): eine Armee weiter draußen auf
@@ -386,8 +394,9 @@
 - Zielmoral der Infanterie richtet sich nach dem Gebiet, in dem die Armee gerade ist – auch unterwegs und auf
   Wegen: im eigenen Gebiet die Moral dieser Provinz, erst nach dem Grenzübertritt in fremdes Gebiet (oder auf
   See) 50 %.
-- Gebäudeschäden: Jede Stufe hat Leben (Eisenbahn, Hafen 3; Festung 1; sonst 2). Ein Treffer im Kampf (5 % je
-  Gebäude und Stunde, auch bei Kämpfen auf Wegen) kostet ein Leben der obersten Stufe; ohne Leben fällt die
+- Gebäudeschäden: Jede Stufe hat Leben (Eisenbahn, Hafen 3; Festung, Wehramt, Bauamt, Handelsposten,
+  Werkstatt 1; sonst 2). Ein Treffer im Kampf (5 % je Gebäude und Stunde, auch bei Kämpfen auf Wegen) kostet
+  ein Leben der obersten Stufe; ohne Leben fällt die
   Stufe weg, die darunter ist heil. Beschädigte Gebäude wirken nicht (Unterhalt läuft weiter), bis sie
   repariert sind: sofort, Kosten anteilig zu den fehlenden Leben an den Kosten der obersten Stufe (Eisenbahn
   mit 1/3 Leben: 2/3 des Preises), nicht solange Feinde in der Stadt stehen. Die KI repariert selbst.
@@ -459,6 +468,6 @@
 - Übermacht im Nahkampf (Vorgabe, `SUPERIORITY`, im Spielstand abschaltbar über `superiority: false`, Standard an):
   Je Schlacht (zusammenhängende Gruppe im Nahkampf) zählt jede Armee die Einheiten ihrer Seite (sie und alle, mit
   denen sie nicht im Krieg ist) gegen alle Gegner der Schlacht – nach Anzahl, nicht nach Stärke. Mindestens doppelt
-  so viele: +0,5 Prozentpunkte Moral je Runde; höchstens halb so viele: −0,3 Punkte – zusätzlich zu und außerhalb
-  der Rundengrenzen der Kampfmoral (die Moral bleibt in 10–100 %). Vergleich der Varianten in
+  so viele und mindestens 8 Einheiten mehr: +0,5 Prozentpunkte Moral je Runde; umgekehrt (höchstens halb so
+  viele, mindestens 8 weniger): −0,3 Punkte – zusätzlich zu und außerhalb der Rundengrenzen der Kampfmoral (die Moral bleibt in 10–100 %). Vergleich der Varianten in
   `plans/kampfmoral-vergleich.md` (`npm run morale:compare`).

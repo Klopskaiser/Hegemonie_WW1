@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useRef } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { ALL_RES, DAY, HOUR, RES_NAMES, SPEEDS } from '../game/balance.ts';
 import { atWar } from '../game/diplomacy.ts';
 import { nodeName } from '../game/graph.ts';
@@ -46,7 +46,6 @@ export function GameView({ start, onExit }: { start: SessionStart; onExit(): voi
   const [pendingSelect, setPendingSelect] = useState<number | null>(null);
   /** Rückfrage: Marsch ins Gebiet einer Nation, mit der Frieden herrscht */
   const [warConfirm, setWarConfirm] = useState<{ target: MoveTarget | { army: number }; nations: string[] } | null>(null);
-  const prevSelection = useRef<number[]>([]);
   const [panel, setPanel] = useState<SidePanel | null>(null);
   const [mode, setMode] = useState<MapMode>('political');
   const [focus, setFocus] = useState<{ province: number; seq: number } | null>(null);
@@ -136,19 +135,6 @@ export function GameView({ start, onExit }: { start: SessionStart; onExit(): voi
     setSelectedArmies([pendingSelect]);
     setPendingSelect(null);
   }, [state, pendingSelect]);
-
-  // abgetrennte Armeen, die ohne Befehl abgewählt werden, gliedern sich wieder ein
-  useEffect(() => {
-    const prev = prevSelection.current;
-    prevSelection.current = selectedArmies;
-    if (!state) return;
-    for (const id of prev) {
-      if (selectedArmies.includes(id)) continue;
-      const a = state.armies.find((x) => x.id === id);
-      if (a && a.owner === state.playerNation && a.split && !a.move) void session.act({ type: 'rejoin', army: id });
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedArmies]);
 
   useEffect(() => {
     if (!state || !selectedArmies.length) return;

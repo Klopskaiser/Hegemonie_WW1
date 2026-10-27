@@ -131,6 +131,19 @@ describe('Verbände im Umkreis von 1 km', () => {
     expect(sim.state.armies.some((a) => a.id === r.army)).toBe(true);
   });
 
+  it('frisch abgeteilte Armeen kämpfen im Verband mit ihrer Ursprungsarmee', () => {
+    const { sim, p, add } = setup();
+    const a = add({ owner: 'DE', node: p, units: { infantry: 12 } });
+    const r = sim.apply('DE', { type: 'split', army: a.id, units: { infantry: 4 } });
+    if (!r.ok) throw new Error(r.error);
+    sim.advance(10 * MINUTE);
+    expect(sim.state.armies.some((x) => x.id === r.army)).toBe(true);
+    sim.apply('DE', { type: 'declareWar', nation: 'FR' });
+    add({ owner: 'FR', node: p, units: { infantry: 30 } });
+    sim.advance(10 * MINUTE);
+    expect(sim.state.armies.some((x) => x.id === r.army)).toBe(false);
+  });
+
   it('eine Armee mit unterbrochenem Marschbefehl kämpft im Verband und zieht danach mit ihrem Anteil weiter', () => {
     const { sim, p, q, add } = setup();
     sim.apply('DE', { type: 'declareWar', nation: 'FR' });
@@ -399,7 +412,7 @@ describe('Übermacht im Nahkampf', () => {
     expect(x.morale! - 0.5).toBeCloseTo(-0.043, 9);
   });
 
-  it('knapp unter doppelt so vielen: keine Wirkung; abgeschaltet: keine Wirkung', () => {
+  it('knapp unter doppelt so vielen oder unter 8 Einheiten Unterschied: keine Wirkung; abgeschaltet: keine Wirkung', () => {
     const { sim, q, add } = setup();
     sim.apply('DE', { type: 'declareWar', nation: 'FR' });
     const fr = add({ owner: 'FR', node: q, units: { infantry: 10 }, keepApart: true });
@@ -408,10 +421,69 @@ describe('Übermacht im Nahkampf', () => {
     combatRound(sim.ctx, tally);
     expect(tally.get(de)?.boost ?? 0).toBe(0);
     expect(tally.get(fr)?.boost ?? 0).toBe(0);
+    // doppelt so viele, aber weniger als 8 Einheiten Unterschied: keine Wirkung; ab 8 wirkt sie
+    fr.units.infantry = 7;
+    de.units.infantry = 14;
+    tally = new Map();
+    combatRound(sim.ctx, tally);
+    expect(tally.get(de)?.boost ?? 0).toBe(0);
+    expect(tally.get(fr)?.boost ?? 0).toBe(0);
+    fr.units.infantry = 8;
+    de.units.infantry = 16;
+    tally = new Map();
+    combatRound(sim.ctx, tally);
+    expect(tally.get(de)?.boost).toBeCloseTo(SUPERIORITY.boost, 9);
+    expect(tally.get(fr)?.boost).toBeCloseTo(-SUPERIORITY.malus, 9);
+    fr.units.infantry = 10;
     de.units.infantry = 40;
     sim.state.superiority = false;
     tally = new Map();
     combatRound(sim.ctx, tally);
     expect(tally.get(de)?.boost ?? 0).toBe(0);
+  });
+});
+
+describe('Beschuss räumt keine Stadt', () => {
+  const guns = (s: ReturnType<typeof setup>, target: Army) => {
+    const { p, q } = s;
+    const c = map.provinces[q].center, o = map.provinces[p].center;
+    const f = Math.min(0.9, 20 / Math.hypot(o[0] - c[0], o[1] - c[1]));
+    return s.add({ owner: 'DE', node: q, units: { artillery: 30 }, pos: { a: q, b: p, f }, target: target.id, keepApart: true });
+  };
+
+  it('die letzte Einheit der Stadt bleibt stehen, auch auf mehrere Armeen verteilt; die Moral sinkt bis 10 %', () => {
+    const s = setup();
+    const { sim, q, add } = s;
+    sim.apply('DE', { type: 'declareWar', nation: 'FR' });
+    sim.state.provinces[q].buildings.fortress = 0;
+    const a = add({ owner: 'FR', node: q, units: { infantry: 3 }, keepApart: true });
+    const b = add({ owner: 'FR', node: q, units: { infantry: 2, tank: 1 }, keepApart: true });
+    guns(s, a);
+    sim.advance(DAY);
+    const left = sim.state.armies.filter((x) => x.owner === 'FR' && x.node === q && unitCount(x) > 0);
+    expect(left.reduce((t, x) => t + unitCount(x), 0)).toBe(1);
+    expect([a, b].some((x) => sim.state.armies.includes(x))).toBe(true);
+    expect(sim.state.provinces[q].owner).toBe('FR');
+    expect(left[0].morale ?? 1).toBeCloseTo(0.1, 6);
+  });
+
+  it('unterwegs oder mit gleichzeitigem Nahkampf fällt auch die letzte Einheit', () => {
+    const s = setup();
+    const { sim, p, q, add } = s;
+    sim.apply('DE', { type: 'declareWar', nation: 'FR' });
+    sim.state.provinces[q].buildings.fortress = 0;
+    const road = add({ owner: 'FR', node: q, units: { infantry: 2 }, pos: { a: q, b: p, f: 0.5 }, keepApart: true });
+    guns(s, road);
+    sim.advance(DAY);
+    expect(sim.state.armies.includes(road)).toBe(false);
+
+    const s2 = setup();
+    s2.sim.apply('DE', { type: 'declareWar', nation: 'FR' });
+    s2.sim.state.provinces[s2.q].buildings.fortress = 0;
+    const city = s2.add({ owner: 'FR', node: s2.q, units: { infantry: 2 }, keepApart: true });
+    s2.add({ owner: 'DE', node: s2.q, units: { infantry: 20 }, keepApart: true });
+    guns(s2, city);
+    s2.sim.advance(DAY);
+    expect(s2.sim.state.armies.includes(city)).toBe(false);
   });
 });

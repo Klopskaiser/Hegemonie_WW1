@@ -500,9 +500,9 @@ function applyArmyAction(ctx: ActionContext, nation: string, action: ArmyAction)
         if (!a.units[u]) delete a.units[u];
       }
       const id = ctx.newArmyId();
-      // vom Spieler abgeteilt: nie automatisch wieder zusammengefasst (nur von Hand oder durch Eingliedern)
+      // vom Spieler abgeteilt: nicht gleich wieder mit der Ursprungsarmee zusammengefasst (apartFrom)
       state.armies.push({
-        id, owner: nation, node: a.node, pos: a.pos ?? null, units, morale: a.morale, keepApart: true,
+        id, owner: nation, node: a.node, pos: a.pos ?? null, units, morale: a.morale, apartFrom: a.id,
         split: action.rejoin === false ? null : { from: a.id, at: state.time },
       });
       a.parts = null;
@@ -512,7 +512,7 @@ function applyArmyAction(ctx: ActionContext, nation: string, action: ArmyAction)
     }
     case 'rejoin': {
       if (!a.split) return { ok: false, error: 'Nicht abgetrennt' };
-      rejoinSplits(ctx, true, a.id);
+      rejoinSplits(ctx, a.id);
       return { ok: true };
     }
     case 'rename': {

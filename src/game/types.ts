@@ -111,8 +111,13 @@ export interface Army {
   aggressive?: boolean;
   /** Angriffsbefehl ohne Fernkampf: verfolgt diese Armee bis in den Nahkampf */
   chase?: number | null;
-  /** vom Spieler abgeteilt: wird nicht automatisch mit Armeen im Umkreis zusammengefasst */
+  /** wird nie automatisch mit Armeen im Umkreis zusammengefasst (nur von Hand) */
   keepApart?: boolean;
+  /**
+   * frisch abgeteilt von dieser Armee (bzw. dem Verband, in dem sie aufgegangen ist): außerhalb von Kämpfen nicht
+   * automatisch mit ihr zusammengefasst, bis eine der beiden losmarschiert
+   */
+  apartFrom?: number;
   /** im Kampf aufgenommene Armeen mit eigenem Marschbefehl: nach dem Kampf wieder abgeteilt */
   parts?: ArmyPart[] | null;
   /** Einheiten der Armee beim letzten Abgleich der Teile (Verluste werden anteilig verteilt) */

@@ -98,6 +98,10 @@ describe('Fokus der Verbrauchsregler', () => {
     expect(focusShares('food', 'grain', r({ grain: 5000, fish: 900 }, { fish: 500 }))).toEqual({ fish: 40, grain: 60 });
     // Energie: Kohle im Fokus, Öl und Gas anteilig zu ihrem Überschuss (abgerundet)
     expect(focusShares('energy', 'coal', r({ coal: 9000, oil: 300, gas: 300 }))).toEqual({ oil: 30, gas: 30, coal: 40 });
+    // Kohle und Gas tragen zusammen alles: Öl (Fokus) 0 %, kein Rundungsrest von 1 %
+    expect(focusShares('energy', 'oil', r({ coal: 2000, gas: 1000, oil: 500 }))).toEqual({ coal: 67, gas: 33, oil: 0 });
+    // der Rundungsrest geht nur an einen Rohstoff, dessen Überschuss ihn trägt (Gas 33,3 % → höchstens 33)
+    expect(focusShares('energy', 'oil', r({ coal: 334, gas: 333 }))).toEqual({ coal: 33, gas: 33, oil: 34 });
   });
 
   it('die Simulation stellt den Regler mit Fokus selbst ein; ohne Fokus gilt wieder die Hand', () => {

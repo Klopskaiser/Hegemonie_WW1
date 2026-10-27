@@ -327,12 +327,20 @@ export function focusShares(cat: Category, focus: Resource, r: NationRates): Par
   }
   // Anteil, den die anderen zusammen tragen können (höchstens alles)
   const carry = Math.min(1, total / r.upkeep);
-  let sum = 0;
-  others.forEach((x, i) => {
-    const v = total > 0 ? Math.floor(((avail[i] / total) * carry) * 100) : 0;
-    out[x] = v;
-    sum += v;
-  });
-  out[focus] = 100 - sum;
+  // je Rohstoff höchstens, was sein eigener Überschuss trägt
+  const cap = avail.map((a) => Math.min(100, Math.floor((a / r.upkeep) * 100 + 1e-9)));
+  const exact = avail.map((a) => (total > 0 ? (a / total) * carry * 100 : 0));
+  const v = exact.map((e, i) => Math.min(cap[i], Math.floor(e + 1e-9)));
+  // beim Abrunden verlorene Punkte an die Rohstoffe mit dem größten Rest, solange ihr Überschuss reicht
+  let left = Math.floor(carry * 100 + 1e-9) - v.reduce((a, b) => a + b, 0);
+  const order = others.map((_, i) => i).sort((i, j) => exact[j] - v[j] - (exact[i] - v[i]) || i - j);
+  while (left > 0) {
+    const i = order.find((k) => v[k] < cap[k]);
+    if (i === undefined) break;
+    v[i]++;
+    left--;
+  }
+  others.forEach((x, i) => { out[x] = v[i]; });
+  out[focus] = 100 - v.reduce((a, b) => a + b, 0);
   return out;
 }

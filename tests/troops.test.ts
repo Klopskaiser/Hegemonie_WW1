@@ -5,7 +5,7 @@ import { DAY, HOUR, TROOP_MORALE } from '../src/game/balance.ts';
 import { setRelation } from '../src/game/diplomacy.ts';
 import { edgeLength, edgePoint, nodePos } from '../src/game/graph.ts';
 import type { MapData } from '../src/game/mapdata.ts';
-import { armyPosition, defectionChance, defections, planRoute, infantryStrength, nextTroopMorale } from '../src/game/military.ts';
+import { armyPosition, defectionChance, defections, planRoute, infantryStrength, nextTroopMorale, unitCount } from '../src/game/military.ts';
 import { armyDesignation, armyName } from '../src/game/names.ts';
 import { Simulation } from '../src/game/sim.ts';
 import { createGame } from '../src/game/state.ts';
@@ -204,32 +204,46 @@ describe('Revoltechance und Teilen', () => {
     expect(sim.apply('DE', { type: 'split', army: a.id, units: { infantry: 2 } }).ok).toBe(false);
   });
 
-  it('abgetrennte Armeen ohne Befehl gliedern sich wieder ein, losgeschickte nicht', () => {
+  it('abgetrennte Armeen verschmelzen nicht wieder mit ihrer Ursprungsarmee, auch nicht über eine dritte', () => {
     const sim = newSim();
     const berlin = prov('Berlin');
     const a = cityArmy(sim, 'DE', berlin);
-    const n0 = a.units.infantry!;
     const r = sim.apply('DE', { type: 'split', army: a.id, units: { infantry: 3 } });
-    expect(r.ok && r.army).toBeTruthy();
-    const id = r.ok ? r.army! : -1;
-    sim.advance(7 * HOUR);
+    if (!r.ok) throw new Error(r.error);
+    const id = r.army!;
+    // eine dritte Armee kommt dazu: sie geht im Verband der Ursprungsarmee auf, die abgetrennte bleibt für sich
+    sim.state.armies.push({ id: sim.state.nextArmyId++, owner: 'DE', node: berlin, units: { infantry: 30 } });
+    sim.advance(DAY);
+    const split = sim.state.armies.find((x) => x.id === id);
+    expect(split?.units.infantry).toBe(3);
+    expect(sim.state.armies.filter((x) => x.owner === 'DE' && x.node === berlin && !x.move).length).toBe(2);
+    // Eingliedern nur auf Befehl
+    expect(sim.apply('DE', { type: 'rejoin', army: id }).ok).toBe(true);
     expect(sim.state.armies.some((x) => x.id === id)).toBe(false);
-    expect(a.units.infantry!).toBeGreaterThanOrEqual(n0);
   });
 
-  it('sofortiges Eingliedern beim Abwählen; losgeschickte Armeen bleiben getrennt', () => {
+  it('am Zielort gehen abgetrennte Armeen in den dortigen Truppen auf; rückt die Ursprungsarmee nach, auch mit ihr', () => {
     const sim = newSim();
     const berlin = prov('Berlin'), next = map.provinces[berlin].neighbors.find((n) => map.provinces[n].nation === 'DE')!;
     const a = cityArmy(sim, 'DE', berlin);
-    const r1 = sim.apply('DE', { type: 'split', army: a.id, units: { infantry: 2 } });
-    const id1 = r1.ok ? r1.army! : -1;
-    expect(sim.apply('DE', { type: 'rejoin', army: id1 }).ok).toBe(true);
-    expect(sim.state.armies.some((x) => x.id === id1)).toBe(false);
-    const r2 = sim.apply('DE', { type: 'split', army: a.id, units: { infantry: 2 } });
-    const id2 = r2.ok ? r2.army! : -1;
-    sim.apply('DE', { type: 'move', army: id2, to: next });
-    sim.advance(7 * HOUR);
-    expect(sim.state.armies.find((x) => x.id === id2)?.split ?? null).toBeNull();
+    const there = cityArmy(sim, 'DE', next);
+    const n0 = unitCount(there);
+    const r = sim.apply('DE', { type: 'split', army: a.id, units: { infantry: 2 } });
+    if (!r.ok) throw new Error(r.error);
+    expect(sim.apply('DE', { type: 'move', army: r.army!, to: next }).ok).toBe(true);
+    sim.advance(DAY);
+    expect(sim.state.armies.some((x) => x.id === r.army)).toBe(false);
+    expect(unitCount(there)).toBe(n0 + 2);
+    // abgetrennt und stehen gelassen; die Ursprungsarmee rückt nach und steht wieder am selben Ort
+    const r2 = sim.apply('DE', { type: 'split', army: there.id, units: { infantry: 2 } });
+    if (!r2.ok) throw new Error(r2.error);
+    expect(sim.apply('DE', { type: 'move', army: there.id, to: berlin }).ok).toBe(true);
+    expect(sim.state.armies.find((x) => x.id === r2.army)?.apartFrom).toBeUndefined();
+    sim.advance(DAY);
+    // sie ist in Berlin in den dortigen Truppen aufgegangen; diese rücken nach
+    expect(sim.apply('DE', { type: 'move', army: cityArmy(sim, 'DE', berlin).id, to: next }).ok).toBe(true);
+    sim.advance(DAY);
+    expect(sim.state.armies.filter((x) => x.owner === 'DE' && x.node === next && !x.move).length).toBe(1);
   });
 });
 

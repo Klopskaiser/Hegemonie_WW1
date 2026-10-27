@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { checkBuild, unitHours } from '../src/game/actions.ts';
-import { BUILDINGS, DAY, HOUR } from '../src/game/balance.ts';
+import { BUILDINGS, buildingLives, DAY, HOUR } from '../src/game/balance.ts';
 import { allRates, provinceOutput } from '../src/game/economy.ts';
 import type { MapData } from '../src/game/mapdata.ts';
 import { Simulation } from '../src/game/sim.ts';
@@ -150,5 +150,14 @@ describe('Bauamt und Manufaktur', () => {
     sim.apply('DE', { type: 'build', province: berlin, building: 'railroad' });
     sim.apply('DE', { type: 'build', province: berlin, building: 'factory' });
     expect(checkBuild(sim.state, map, 'DE', berlin, 'manufactory').ok).toBe(false);
+  });
+});
+
+describe('Leben der Gebäude', () => {
+  it('Wehramt, Bauamt, Handelsposten, Werkstatt und Festung haben ein Leben, Eisenbahn und Hafen drei, sonst zwei', () => {
+    for (const b of ['recruitment', 'office', 'tradepost', 'workshop', 'fortress'] as const) expect(buildingLives(b), b).toBe(1);
+    expect(buildingLives('railroad')).toBe(3);
+    expect(buildingLives('harbor')).toBe(3);
+    expect(buildingLives('factory')).toBe(2);
   });
 });

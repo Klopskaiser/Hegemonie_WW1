@@ -13,7 +13,7 @@ import { observe, type Controller, type NationView, type Observation } from './c
 import { allRates, defaultConsumption, moraleTarget, provincePoints, recruitHours, stepMorale, type NationRates, provinceCounts, focusShares } from './economy.ts';
 import type { MapData } from './mapdata.ts';
 import {
-  applyCombatMorale, combatRound, type CombatTally, defections, encounters, forcedMarchWear, mergeNearby, pursue, splitParts, engageRanged, isNaval, mixMorale, processArrivals, rangedRound, rejoinSplits, updateRevoltFlags, nextTroopMorale, repairMachines, resumeOrders, troopTarget,
+  applyCombatMorale, combatRound, type CombatTally, defections, encounters, forcedMarchWear, mergeNearby, pursue, splitParts, engageRanged, isNaval, mixMorale, processArrivals, rangedRound, updateRevoltFlags, nextTroopMorale, repairMachines, resumeOrders, troopTarget,
 } from './military.ts';
 import { harborSea, isSea } from './graph.ts';
 import { expireOffers } from './market.ts';
@@ -174,7 +174,6 @@ export class Simulation {
       rangedRound(this.ctx, tally);
       applyCombatMorale(tally, s.combatMorale ?? DEFAULT_COMBAT_MORALE);
       forcedMarchWear(this.ctx);
-      rejoinSplits(this.ctx);
       if (updateRevoltFlags(s)) this.dirty = true;
       expireOffers(s);
       this.recruitInfantry();
