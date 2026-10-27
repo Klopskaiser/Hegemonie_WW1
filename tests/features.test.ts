@@ -156,8 +156,8 @@ describe('Provinzmoral und Hauptstadt', () => {
     // starke Besatzung (mehr als 20 Stärke in der Stadt): +3 %
     const garrison = () => moraleTarget(sim.state, map, berlin).parts.find((p) => p.label === 'Starke Besatzung')?.value;
     sim.state.armies = sim.state.armies.filter((a) => a.node !== berlin);
-    sim.state.armies.push({ id: sim.state.nextArmyId++, owner: 'DE', node: berlin, units: { infantry: 16 } });
-    expect(garrison()).toBeUndefined(); // 16 Infanterie = Stärke 20, nicht mehr als 20
+    sim.state.armies.push({ id: sim.state.nextArmyId++, owner: 'DE', node: berlin, units: { infantry: 19 } });
+    expect(garrison()).toBeUndefined(); // 19 Infanterie = Stärke 19,95, nicht mehr als 20
     sim.state.armies.push({ id: sim.state.nextArmyId++, owner: 'DE', node: berlin, units: { infantry: 1 } });
     expect(garrison()).toBeCloseTo(0.03, 9);
   });

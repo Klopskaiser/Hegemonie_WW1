@@ -108,13 +108,13 @@ describe('Simulation', () => {
     expect(sim.state.provinces[capitalDE].queue.length).toBe(1);
   });
 
-  it('höhere Fabrikstufen verkürzen die Bauzeit (Artillerie 4/3/2/1 Tage, Panzer ab Stufe 2: 36/27/18 h)', () => {
+  it('höhere Fabrikstufen verkürzen die Bauzeit (Artillerie 4/3/2/1 Tage, Panzer ab Stufe 2: 40/30/20 h)', () => {
     const sim = newSim();
     const ps = sim.state.provinces[capitalDE];
     const days = [1, 2, 3, 4].map((l) => { ps.buildings.factory = l; return unitHours(sim.state, capitalDE, 'artillery') / 24; });
     expect(days).toEqual([4, 3, 2, 1]);
     const tank = [2, 3, 4].map((l) => { ps.buildings.factory = l; return unitHours(sim.state, capitalDE, 'tank'); });
-    expect(tank).toEqual([36, 27, 18]);
+    expect(tank).toEqual([40, 30, 20]);
   });
 
   it('lässt Infanterie nicht in Auftrag geben', () => {

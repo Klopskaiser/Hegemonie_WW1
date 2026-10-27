@@ -203,9 +203,9 @@ describe('Kampfkraft im Armeefenster', () => {
   it('entspricht dem Schaden der Kampfrunde und folgt der aktuellen Moral', () => {
     const { sim, p, add } = setup();
     const a = add({ owner: 'DE', node: p, units: { infantry: 10 }, morale: 0.7, keepApart: true });
-    // 1,2 × 70 % = 0,84 je Infanterist: Angriff 1, Verteidigung 1,5
+    // 1,2 × 70 % = 0,84 je Infanterist: Angriff 1, Verteidigung 1,1
     expect(meleePower(a, map, false)).toBeCloseTo(10 * 1 * 0.84, 9);
-    expect(meleePower(a, map, true)).toBeCloseTo(10 * 1.5 * 0.84, 9);
+    expect(meleePower(a, map, true)).toBeCloseTo(10 * 1.1 * 0.84, 9);
     // in der eigenen Provinz verteidigt sie: genau der Wert der Kampfrunde
     expect(meleeOutput(sim.state, map, a)).toBeCloseTo(meleePower(a, map, true), 9);
     expect(armyHp(a)).toBeCloseTo(10 * UNITS.infantry.hp * 0.84, 9);
@@ -218,6 +218,10 @@ describe('Kampfkraft im Armeefenster', () => {
     const gun = add({ owner: 'DE', node: p, units: { artillery: 4 }, keepApart: true });
     expect(meleePower(gun, map, false)).toBeCloseTo(4 * UNITS.artillery.attack * MILITARY.meleeRangedFactor, 9);
     expect(rangedPower(gun, map)).toBeCloseTo(4 * UNITS.artillery.attack, 9);
+    // Maschinen haben in Angriff und Verteidigung denselben Wert
+    for (const u of ['armoredCar', 'artillery', 'tank', 'railgun', 'battleship'] as const) expect(UNITS[u].defense, u).toBe(UNITS[u].attack);
+    expect([UNITS.armoredCar.attack, UNITS.artillery.attack, UNITS.tank.attack, UNITS.railgun.attack, UNITS.battleship.attack]).toEqual([2, 1.5, 4, 3, 6]);
+    expect(UNITS.infantry.defense).toBeCloseTo(1.1 * UNITS.infantry.attack, 9);
   });
 });
 

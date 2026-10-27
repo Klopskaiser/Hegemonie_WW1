@@ -105,7 +105,7 @@
   Kaserne 2: 4 h, Kaserne kostet 1000 Getreide je Stufe und Tag; Kaserne braucht Wehramt, ohne Wehramt halbes Tempo;
   ohne beide keine Infanterie. Fertigung nur für Fabrikeinheiten: Artillerie/Panzerwagen Fabrik 1,
   Panzer Fabrik 2, Schlachtschiff Fabrik 3 + Hafen, Eisenbahngeschütz Fabrik 3 + Eisenbahn.
-  Bauzeit: Startwert auf der Mindeststufe (Artillerie 96 h, Panzerwagen 16 h, Panzer 36 h,
+  Bauzeit: Startwert auf der Mindeststufe (Artillerie 96 h, Panzerwagen 16 h, Panzer 40 h,
   Eisenbahngeschütz 62 h, Schlachtschiff 96 h), jede weitere Fabrikstufe −25 % des Startwerts.
   Kosten und Unterhalt: siehe src/game/balance.ts (Stand nach Vorgabe des Auftraggebers).
 - Kämpfe in einer Provinz beschädigen Gebäude (5 % je Stunde und Gebäude, eine Stufe; das Wehramt
@@ -380,8 +380,12 @@
   Ein Marsch zu einem Wegpunkt hinter der letzten eigenen Stadt läuft bis dorthin durch (früher blieb die Armee
   in dieser Stadt stehen). Eisenbahngeschütze fahren nur im eigenen Bahnnetz: ein Wegpunkt jenseits der Grenze
   wird bis knapp davor angefahren (`roadLimit`).
+- Kampfwerte (Vorgabe): Infanterie 1 (× 1,2 × Moral, also höchstens 1,2), in eigenen Provinzen +10 %;
+  Maschinen haben in Angriff und Verteidigung denselben Wert: Panzerwagen 2, Artillerie 1,5, Panzer 4,
+  Eisenbahngeschütz 3, Schlachtschiff 6 (auch Fernkampfschaden je Einheit). Artillerie und
+  Eisenbahngeschütze kämpfen im Nahkampf mit halbem Wert, Schlachtschiffe voll.
 - Nahkampf (Vorgabe): je Armee kämpfen die stärksten Einheiten vorne (Panzer, Panzerwagen, dann Infanterie,
-  Fernkampfeinheiten mit halbem Wert zuletzt). Platz 1–20 zählt voll, Platz 21–50 linear weniger
+  Artillerie und Eisenbahngeschütze mit halbem Wert zuletzt). Platz 1–20 zählt voll, Platz 21–50 linear weniger
   ((51 − Platz)/31), ab Platz 51 nichts – höchstens 35 „volle“ Einheiten. Fernkampf hat keine Grenze.
   Treffer (Nah- und Fernkampf) werden je Einheit ausgewürfelt (jede Einheit gleich wahrscheinlich), ein
   Treffer trifft die Einheit, bis sie fällt; Infanterie schützt so teure Technik. Kämpfe auf Wegen

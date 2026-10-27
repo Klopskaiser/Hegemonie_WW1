@@ -133,8 +133,8 @@ export function ArmyPanel({ map, state, army: a, armies, act, onSelectArmy, onSp
       )}
       <p className="army-status">{status}</p>
       <div className="small strength-row" title={'Schaden je Kampfrunde (stündlich), den jede gegnerische Armee im Umkreis von 1 km voll abbekommt – ohne Zufallsstreuung und Festung. '
-        + 'Infanterie nach aktueller Moral; im Nahkampf zählen die vordersten 20 Einheiten voll, bis Platz 50 abnehmend; Fernkampfeinheiten kämpfen dort nur halb. '
-        + 'Verteidigung gilt in eigenen Provinzen, sonst Angriff; auf See kämpfen Landtruppen halb.'}>
+        + 'Infanterie nach aktueller Moral; im Nahkampf zählen die vordersten 20 Einheiten voll, bis Platz 50 abnehmend; Artillerie und Eisenbahngeschütze kämpfen dort nur halb. '
+        + 'Verteidigung gilt in eigenen Provinzen (Infanterie +10 %, Maschinen gleich), sonst Angriff; auf See kämpfen Landtruppen halb.'}>
         Kampfkraft: Angriff {fmtPower(meleePower(a, map, false, atSea))} · Verteidigung {fmtPower(meleePower(a, map, !atSea, atSea))}
         {rangedPower(a, map) > 0 ? ` · Fernkampf ${fmtPower(rangedPower(a, map))}` : ''} · Lebenspunkte {Math.round(armyHp(a))}
       </div>

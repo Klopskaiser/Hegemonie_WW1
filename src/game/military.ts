@@ -1186,8 +1186,9 @@ export function meleeOutput(state: GameState, map: MapData, a: Army): number {
 }
 
 /**
- * Nahkampfschaden je Kampfrunde (ohne Zufallsstreuung und Festung): mit Angriffs- bzw. Verteidigungswerten,
- * Infanterie nach aktueller Moral, Fernkampfeinheiten halb, auf See Landeinheiten halb; nur die vordersten
+ * Nahkampfschaden je Kampfrunde (ohne Zufallsstreuung und Festung): mit Angriffs- bzw. Verteidigungswerten
+ * (Maschinen gleich, Infanterie in eigenen Provinzen +10 %), Infanterie nach aktueller Moral, Artillerie und
+ * Eisenbahngeschütze halb, auf See Landeinheiten halb; nur die vordersten
  * Plätze zählen voll (meleeWeight). Diesen Schaden bekommt jede gegnerische Armee im Umkreis.
  */
 export function meleePower(a: Army, map: MapData, defending: boolean, sea = false): number {
@@ -1196,7 +1197,7 @@ export function meleePower(a: Army, map: MapData, defending: boolean, sea = fals
     const d = UNITS[u];
     return {
       n: a.units[u]!,
-      v: (defending ? d.defense : d.attack) * (unitRange(a, u, map) > 0 ? MILITARY.meleeRangedFactor : 1)
+      v: (defending ? d.defense : d.attack) * (!d.naval && unitRange(a, u, map) > 0 ? MILITARY.meleeRangedFactor : 1)
         * (sea && !d.naval ? MILITARY.seaFactor : 1) * soldierFactor(a, u),
     };
   }).sort((x, y) => y.v - x.v);

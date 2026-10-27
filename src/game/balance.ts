@@ -236,28 +236,28 @@ export interface UnitDef {
 export const UNITS: Record<UnitType, UnitDef> = {
   infantry: {
     name: 'Infanterie', short: 'Inf', cost: {}, hours: 0,
-    requires: {}, auto: true, speed: 36, attack: 1, defense: 1.5, hp: 20, range: 0, upkeep: { grain: 18 },
+    requires: {}, auto: true, speed: 36, attack: 1, defense: 1.1, hp: 20, range: 0, upkeep: { grain: 18 },
   },
   artillery: {
     name: 'Artillerie', short: 'Art', cost: { money: 10000, iron: 3000, oil: 2000 }, hours: 96,
-    requires: { factory: 1 }, speed: 25, attack: 2.5, defense: 0.8, hp: 15, range: 65, upkeep: { oil: 15 },
+    requires: { factory: 1 }, speed: 25, attack: 1.5, defense: 1.5, hp: 15, range: 65, upkeep: { oil: 15 },
   },
   armoredCar: {
     name: 'Panzerwagen', short: 'PzW', cost: { money: 7000, iron: 2000, oil: 1500 }, hours: 16,
-    requires: { factory: 1 }, speed: 72, attack: 2, defense: 1.5, hp: 25, range: 0, upkeep: { oil: 15 },
+    requires: { factory: 1 }, speed: 72, attack: 2, defense: 2, hp: 25, range: 0, upkeep: { oil: 15 },
   },
   tank: {
-    name: 'Panzer', short: 'Pz', cost: { money: 20000, iron: 5000, oil: 2500 }, hours: 36,
-    requires: { factory: 2 }, speed: 36, attack: 4, defense: 3, hp: 50, range: 0, upkeep: { oil: 30 },
+    name: 'Panzer', short: 'Pz', cost: { money: 20000, iron: 5000, oil: 2500 }, hours: 40,
+    requires: { factory: 2 }, speed: 36, attack: 4, defense: 4, hp: 50, range: 0, upkeep: { oil: 30 },
   },
   railgun: {
     name: 'Eisenbahngeschütz', short: 'EBG', cost: { money: 50000, iron: 10000, lumber: 5000, coal: 5000, oil: 10000 }, hours: 62,
-    requires: { factory: 3, railroad: 1 }, speed: 12.5, attack: 6, defense: 1, hp: 30, range: 200,
+    requires: { factory: 3, railroad: 1 }, speed: 12.5, attack: 3, defense: 3, hp: 30, range: 200,
     upkeep: { oil: 10, coal: 40 }, railOnly: true, sight: 200,
   },
   battleship: {
     name: 'Schlachtschiff', short: 'SS', cost: { money: 50000, iron: 15000, coal: 10000, oil: 5000 }, hours: 96,
-    requires: { factory: 3, harbor: 1 }, speed: 30, attack: 5, defense: 4, hp: 80, range: 100, upkeep: { oil: 30, coal: 30 }, naval: true, sight: 200,
+    requires: { factory: 3, harbor: 1 }, speed: 30, attack: 6, defense: 6, hp: 80, range: 100, upkeep: { oil: 30, coal: 30 }, naval: true, sight: 200,
   },
 };
 
@@ -276,7 +276,7 @@ export const MILITARY = {
   harborEmbarkFactor: 0.5,
   /** Sichtweite eigener Armeen (km); Eisenbahngeschütze und Schlachtschiffe siehe UNITS.sight */
   viewRange: 100,
-  /** Fernkampfeinheiten im Nahkampf */
+  /** Artillerie und Eisenbahngeschütze im Nahkampf (Schlachtschiffe kämpfen voll) */
   meleeRangedFactor: 0.5,
   /**
    * Nahkampfreichweite (km): stehende Armeen im Krieg, die so nahe beieinander sind, kämpfen (auch auf See);
