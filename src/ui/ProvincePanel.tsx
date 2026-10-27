@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { checkBuild, checkCapitalMove, checkProduce, missing, plannedBuildings, requirementsMet, type Action, type ActionResult, checkRepair } from '../game/actions.ts';
 import {
-  BUILDING_ORDER, BUILDINGS, CAPITAL_MOVE, DEFECTION, MILITARY, RES_NAMES, UNIT_ORDER, UNITS, type UnitType, buildingLives } from '../game/balance.ts';
+  BUILDING_ORDER, BUILDINGS, CAPITAL_MOVE, DEFECTION, MILITARY, RES_NAMES, UNIT_ORDER, UNITS, type UnitType, buildingLives, siteAllows } from '../game/balance.ts';
 import { activeCapital, moraleTarget, provinceOutput, provincePoints, recruitHours } from '../game/economy.ts';
 import type { MapData } from '../game/mapdata.ts';
 import { defectionChance, garrisonStrength } from '../game/military.ts';
@@ -123,7 +123,7 @@ export function ProvincePanel({ map, state, id, armies: visibleArmies, act, onSe
         <>
           <h4>Gebäude</h4>
           <div className="build-list">
-            {BUILDING_ORDER.filter((b) => !BUILDINGS[b].coastal || mp.coastal).map((b) => {
+            {BUILDING_ORDER.filter((b) => siteAllows(b, mp.coastal)).map((b) => {
               const def = BUILDINGS[b];
               const level = ps.buildings[b];
               const c = ps.construction?.building === b ? ps.construction : null;

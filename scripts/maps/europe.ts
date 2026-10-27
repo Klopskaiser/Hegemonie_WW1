@@ -16,19 +16,24 @@ const VOJVODINA = ['RS-01', 'RS-02', 'RS-03', 'RS-04', 'RS-05', 'RS-06', 'RS-07'
 const AUSTRIAN_ITALY = ['IT-TN', 'IT-BZ', 'IT-TS', 'IT-GO'];
 const RUSSIAN_TURKEY = ['TR-36', 'TR-75', 'TR-08'];
 const ROMANIAN_BULGARIA = ['BG-08', 'BG-19'];
+// neue Kleinstaaten in den Weiten Russlands, Arabiens und der Sahara (nicht ganz historisch)
+const NORTH_RUSSIA = ['RU-MUR', 'RU-KR', 'RU-ARK', 'RU-NEN', 'RU-KO'];
+const SHAMMAR = ['JO-MA', 'JO-MN', 'IQ-AN', 'SY-DY'];
+const SAHARA = ['DZ-37', 'DZ-08', 'DZ-01', 'DZ-30', 'DZ-47', 'DZ-33', 'DZ-11'];
 
 const BY_COUNTRY: Record<string, string> = {
   DEU: 'DE',
   AUT: 'AU', HUN: 'AU', CZE: 'AU', SVK: 'AU', SVN: 'AU', HRV: 'AU', BIH: 'AU', LIE: 'AU',
   FRA: 'FR', MCO: 'FR',
-  MAR: 'MG', DZA: 'MG', ESH: 'MG', MRT: 'MG', MLI: 'MG',
+  MAR: 'MG', DZA: 'MG', ESH: 'SH', MRT: 'SH', MLI: 'SH',
   TUN: 'LY', LBY: 'LY', NER: 'LY', TCD: 'LY',
   EGY: 'EG', SDN: 'EG',
   GBR: 'GB', IRL: 'GB', IMN: 'GB', JEY: 'GB', GGY: 'GB',
   ITA: 'IT', SMR: 'IT', VAT: 'IT', MLT: 'IT',
-  RUS: 'RU', BLR: 'RU', UKR: 'RU', LTU: 'RU', LVA: 'RU', EST: 'RU', FIN: 'RU', ALD: 'RU', MDA: 'RU',
+  RUS: 'RU', BLR: 'RU', UKR: 'RU', MDA: 'RU',
+  LTU: 'BA', LVA: 'BA', EST: 'BA', FIN: 'FI', ALD: 'FI',
   GEO: 'RU', ARM: 'RU', AZE: 'RU', KAZ: 'RU', TKM: 'RU', UZB: 'RU', POL: 'RU',
-  TUR: 'OT', SYR: 'OT', LBN: 'OT', ISR: 'OT', PSX: 'OT', JOR: 'OT', IRQ: 'OT', SAU: 'OT', KWT: 'OT',
+  TUR: 'OT', SYR: 'OT', LBN: 'OT', ISR: 'OT', PSX: 'OT', JOR: 'OT', IRQ: 'OT', SAU: 'JS', KWT: 'OT',
   IRN: 'OT', CYP: 'OT', CYN: 'OT', ESB: 'OT', WSB: 'OT',
   ESP: 'ES', AND: 'ES', GIB: 'ES',
   SWE: 'SE',
@@ -57,11 +62,16 @@ for (const c of [...GALICIA_POLAND, ...AUSTRIAN_UKRAINE, ...TRANSYLVANIA_BANAT_B
 }
 for (const c of RUSSIAN_TURKEY) OVERRIDES[c] = 'RU';
 for (const c of ROMANIAN_BULGARIA) OVERRIDES[c] = 'RO';
+for (const c of NORTH_RUSSIA) OVERRIDES[c] = 'NR';
+for (const c of SHAMMAR) OVERRIDES[c] = 'JS';
+for (const c of SAHARA) OVERRIDES[c] = 'SH';
 
 const config: MapConfig = {
   id: 'europe',
   name: 'Europa 1914',
   center: [20, 50],
+  // alle Entfernungen 10 % kürzer
+  scale: 0.9,
   lonLatBox: [-45, 18, 80, 82],
   // Ostrand knapp westlich des Kaspischen Meeres
   rect: [-2800, -2450, 2040, 2250],
@@ -108,6 +118,12 @@ const config: MapConfig = {
     { id: 'AL', name: 'Albanien', color: '#b5a57c', major: false, capital: 'Tirana' },
     { id: 'GR', name: 'Griechenland', color: '#93c1df', major: false, capital: 'Athens' },
     { id: 'BG', name: 'Bulgarien', color: '#a3b38a', major: false, capital: 'Sofia' },
+    // Kleinstaaten zum Ausbreiten für Russland, Osmanen und Marokko (feste Provinzzahl)
+    { id: 'FI', name: 'Finnland', color: '#a9c4d8', major: false, capital: 'Helsinki', provinces: 3 },
+    { id: 'BA', name: 'Baltikum', color: '#c4a882', major: false, capital: 'Riga', provinces: 2 },
+    { id: 'NR', name: 'Nordrussland', color: '#8f9f78', major: false, capital: 'Arkhangelsk', provinces: 3 },
+    { id: 'JS', name: 'Dschabal Schammar', color: '#d9c48f', major: false, capital: 'Sakakah', provinces: 2 },
+    { id: 'SH', name: 'Sahara-Emirat', color: '#cfa77e', major: false, capital: 'Bechar', provinces: 2 },
   ],
   adjust: {
     resources: {
@@ -116,20 +132,32 @@ const config: MapConfig = {
       'Palermo': 'oil', 'Ploiești': 'oil', 'Bukarest': 'grain', // Öl Sizilien, Rumänien am echten Ölfeld
       'Cork': 'fish', 'Bari': 'fish', 'Vlora': 'fish', // mehr Fisch
       'Danzig': 'fish', 'Barcelona': 'fish', 'Alexandria': 'fish', // Küsten-Getreide wird Fischfang
-      'Mailand': 'iron', 'Agadir': 'iron',
+      'Mailand': 'iron',
       // Ausgleich (Ziel: Getreide 45, Fisch 22, Eisen 33, Holz 33, Kohle 34, Gas 27, Öl 16 Symbole)
-      'Hamburg': 'fish', 'Turm Severin': 'coal', 'Samsun': 'lumber', 'Agram': 'lumber', 'Bergen': 'fish',
+      'Hamburg': 'fish', 'Turm Severin': 'coal', 'Trabzon': 'lumber', 'Agram': 'lumber', 'Bergen': 'fish',
       'Montpellier': 'grain', 'Valencia': 'grain', 'Jaffa': 'grain',
       'Glasgow': 'iron', 'Dresden': 'iron', 'Bilbao': 'iron', 'Athen': 'iron',
       'Konstanza': 'gas', 'Niš': 'lumber', 'Kragujevac': 'coal', 'Tromsø': 'iron', 'Mo i Rana': 'gas',
+      'Pitești': 'lumber', // Rumänien: Baustoffe mindestens 15 %
+      // Russland: Kornkammer Kiew, Eisen in Kriwoi Rog, Kohle im Donbass, Öl an der Wolga, Eisen nur noch im Süden
+      'Kiew': 'grain', 'Jekaterinoslaw': 'iron', 'Charkow': 'coal', 'Samara': 'oil', 'Perm': 'gas', 'Warschau': 'coal',
+      // Kleinstaaten im Norden und Osten
+      'Helsingfors': 'fish', 'Oulu': 'lumber', 'Rovaniemi': 'coal', 'Riga': 'grain', 'Reval': 'coal',
+      'Archangelsk': 'fish', 'Petrosawodsk': 'iron', 'Syktywkar': 'oil', 'Sakaka': 'gas', 'Tabuk': 'iron',
+      // Holz im Süden: Zedern im Mittleren Atlas, Korkeichen der Kroumirie
+      'Fès': 'lumber', 'Tunis': 'lumber', 'Marrakesch': 'grain', 'El Djelfa': 'gas', 'Nalut': 'coal',
+      // Sahara: Hassi R'Mel/Hassi Messaoud, Eisenerz von Gara Djebilet
+      'Ouargla': 'gas', 'Bechar': 'iron',
     },
-    // Doppel-Öl im Sirte-Becken und im Kaukasus; jede Großmacht hat genau 2 Doppelprovinzen
+    // Doppel-Öl im Sirte-Becken und im Kaukasus, Doppelgetreide in Kiew; jede Großmacht hat genau 2 Doppelprovinzen
     doubles: {
-      add: ['Sirte', 'Jerewan', 'Hamburg', 'Turm Severin', 'Samsun', 'Agram', 'Bergen', 'Tromsø', 'Kragujevac'],
-      remove: ['Bani Walid', 'Samara', 'Niš'],
+      add: ['Sirte', 'Jerewan', 'Hamburg', 'Turm Severin', 'Trabzon', 'Agram', 'Bergen', 'Tromsø', 'Kragujevac',
+        'Kiew', 'Oulu', 'Ouargla'],
+      // neue Kleinstaaten: nur Oulu (Holz) und Ouargla (Gas) doppelt
+      remove: ['Bani Walid', 'Samara', 'Niš', 'Rovaniemi', 'Syktywkar'],
     },
   },
-  oilLimit: { MG: 2, LY: 2, EG: 2, RU: 2, NO: 1, AL: 1 },
+  oilLimit: { MG: 2, LY: 2, EG: 2, RU: 2, NO: 1, AL: 1, NR: 1 },
   hotspots: [
     // Kohle
     { r: 'coal', at: [7.1, 51.5] }, { r: 'coal', at: [7.0, 49.3] }, { r: 'coal', at: [18.9, 50.3] },
@@ -158,6 +186,9 @@ const config: MapConfig = {
     { r: 'grain', at: [2.0, 48.5] }, { r: 'grain', at: [17.0, 52.5] }, { r: 'grain', at: [-5.0, 37.5] },
     { r: 'grain', at: [31.0, 30.8] }, { r: 'grain', at: [33.0, 39.0] }, { r: 'grain', at: [-7.5, 33.0] },
     { r: 'grain', at: [36.5, 34.5] }, { r: 'grain', at: [10.0, 36.0] }, { r: 'grain', at: [28.0, 47.0] },
+    // Holz – Wälder im Süden (Zedern im Mittleren Atlas und im Libanon, Korkeichen in Kabylei und Kroumirie)
+    { r: 'lumber', at: [-5.1, 33.4] }, { r: 'lumber', at: [4.3, 36.6] }, { r: 'lumber', at: [8.7, 36.8] },
+    { r: 'lumber', at: [35.9, 34.1] },
     // Gas
     { r: 'gas', at: [6.8, 53.2] }, { r: 'gas', at: [24.4, 46.5] }, { r: 'gas', at: [10.5, 45.0] },
     { r: 'gas', at: [9.2, 52.8] }, { r: 'gas', at: [3.3, 32.9] }, { r: 'gas', at: [36.4, 49.4] },
@@ -182,8 +213,8 @@ const config: MapConfig = {
   ownIslands: [[13.36, 38.12]],
   // Patras auf die Peloponnes, damit der Weg nach Kalamata im eigenen Gebiet bleibt
   cityAt: { Patras: [21.74, 38.24] },
-  // Samsun: ein Hafen nahe der Stadt zum Schwarzen Meer II
-  seaLinks: { Samsun: ['Schwarzes Meer II'] },
+  // Trabzon (ehemals Samsun): ein Hafen nahe der Stadt zum Schwarzen Meer II
+  seaLinks: { Trabzon: ['Schwarzes Meer II'] },
   renames: {
     'Istanbul': 'Konstantinopel', 'Saint Petersburg': 'St. Petersburg', 'Kaliningrad': 'Königsberg',
     'Wroclaw': 'Breslau', 'Gdansk': 'Danzig', 'Szczecin': 'Stettin', 'Poznan': 'Posen',

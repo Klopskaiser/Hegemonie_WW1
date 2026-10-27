@@ -128,7 +128,7 @@ export function EventsPanel({ map, state, onSelect, onClose }: Props) {
   );
 }
 
-const SHORT: Record<Building, string> = { railroad: 'B', harbor: 'H', workshop: 'Ws', factory: 'F', manufactory: 'M', barracks: 'K', recruitment: 'W', office: 'BA', fortress: 'Fe' };
+const SHORT: Record<Building, string> = { railroad: 'B', harbor: 'H', tradepost: 'HP', workshop: 'Ws', factory: 'F', manufactory: 'M', barracks: 'K', recruitment: 'W', office: 'BA', fortress: 'Fe' };
 
 export function ProvincesPanel({ map, state, onSelect, onClose }: Props) {
   const own = state.provinces.map((ps, i) => ({ ps, mp: map.provinces[i], i })).filter((x) => x.ps.owner === state.playerNation)
@@ -136,7 +136,7 @@ export function ProvincesPanel({ map, state, onSelect, onClose }: Props) {
   return (
     <Window title={`Provinzen (${own.length})`} onClose={onClose} className="side-panel">
       <table className="table clickable">
-        <thead><tr><th>Provinz</th><th></th><th>Moral</th><th title="B Eisenbahn, H Hafen, Ws Werkstatt, F Fabrik, M Manufaktur, K Kaserne, W Wehramt, BA Bauamt, Fe Festung">Gebäude</th><th>Bau</th></tr></thead>
+        <thead><tr><th>Provinz</th><th></th><th>Moral</th><th title="B Eisenbahn, H Hafen, HP Handelsposten, Ws Werkstatt, F Fabrik, M Manufaktur, K Kaserne, W Wehramt, BA Bauamt, Fe Festung">Gebäude</th><th>Bau</th></tr></thead>
         <tbody>
           {own.map(({ ps, mp, i }) => (
             <tr key={i} onClick={() => onSelect(i)}>

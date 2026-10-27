@@ -7,6 +7,8 @@ export interface MapConfigNation {
   major: boolean;
   /** NAMEASCII der Hauptstadt in ne_10m_populated_places */
   capital: string;
+  /** feste Provinzzahl (sonst Großmacht: majorProvinces, Kleinstaat: nach Fläche) */
+  provinces?: number;
 }
 
 export interface MapConfig {
@@ -18,6 +20,8 @@ export interface MapConfig {
   lonLatBox: [number, number, number, number];
   /** Kartenausschnitt in km nach der Projektion [x0, y0, x1, y1] */
   rect: [number, number, number, number];
+  /** Maßstab der fertigen Karte (1 = Projektion in km; 0,9 = alle Entfernungen 10 % kürzer) */
+  scale?: number;
   /** Provinzen je Spielernation (Großmacht) */
   majorProvinces: number;
   /** Zielfläche einer Provinz bei Kleinstaaten in km² */

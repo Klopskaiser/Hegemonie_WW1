@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, useRef } from 'react';
 import { ALL_RES, DAY, HOUR, RES_NAMES, SPEEDS } from '../game/balance.ts';
 import { atWar } from '../game/diplomacy.ts';
 import { nodeName } from '../game/graph.ts';
-import { armyLocation, engagedTarget, isRangedOnly, planRoute, routePoints, type MoveTarget, samePlace, inMelee, unitRange } from '../game/military.ts';
+import { armyLocation, engagedTarget, planRoute, routePoints, type MoveTarget, inMelee, inMeleeRange, unitRange } from '../game/military.ts';
 import { requiredWars, type Action } from '../game/actions.ts';
 import { MultiArmyPanel } from './MultiArmyPanel.tsx';
 import type { UnitType } from '../game/balance.ts';
@@ -70,10 +70,10 @@ export function GameView({ start, onExit }: { start: SessionStart; onExit(): voi
     const out = new Set<number>();
     for (const a of armies) {
       if (a.move) continue;
-      if (armies.some((b) => b !== a && !b.move && samePlace(a, b) && atWar(state, a.owner, b.owner))) out.add(a.node);
+      if (armies.some((b) => b !== a && !b.move && atWar(state, a.owner, b.owner) && inMeleeRange(map!, a, b, state.time))) out.add(a.node);
     }
     return [...out];
-  }, [armies, state]);
+  }, [armies, state, map]);
   // laufende Fernkampfgefechte (für die Geschossanimation)
   const shots = useMemo<Shot[]>(() => {
     if (!state || !map) return [];
@@ -82,7 +82,7 @@ export function GameView({ start, onExit }: { start: SessionStart; onExit(): voi
       const t = engagedTarget(state, map, a);
       if (!t || !armies.includes(t)) continue;
       // im Nahkampf gebundene Schützen feuern nicht sichtbar
-      if (inMelee(state, a)) continue;
+      if (inMelee(state, map, a)) continue;
       for (const u of Object.keys(a.units) as UnitType[]) {
         if ((a.units[u] ?? 0) > 0 && unitRange(a, u, map) > 0) {
           out.push({ key: `${a.id}-${t.id}-${u}`, kind: u, shooter: a.id, target: t.id, count: a.units[u]! });
@@ -246,8 +246,8 @@ export function GameView({ start, onExit }: { start: SessionStart; onExit(): voi
       if ('army' in t) {
         const other = armies.find((b) => b.id === t.army);
         if (!other || other.id === a.id) continue;
-        // reine Fernkampfverbände beschießen Feinde, alle anderen marschieren zum Ziel
-        action = isRangedOnly(a, map) && atWar(state, state.playerNation, other.owner)
+        // feindliche Armee: angreifen und verfolgen (mit Fernkampf bis in Reichweite); sonst dorthin marschieren
+        action = atWar(state, state.playerNation, other.owner)
           ? { type: 'attack', army: a.id, target: other.id }
           : moveAction(a.id, place, confirmed);
       } else action = moveAction(a.id, t, confirmed);

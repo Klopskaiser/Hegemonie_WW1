@@ -2,7 +2,7 @@
 // Genutzt vom Kartenbau (scripts/build-map.ts), vom Dev-Server (Speichern) und vom Editor (Vorschau).
 // Orte werden über Namen angesprochen (Provinzen und Seegebiete), Punkte in km wie in der Karte.
 
-import type { MapData } from './mapdata.ts';
+import type { MapData, Resource } from './mapdata.ts';
 
 export type Pt = [number, number];
 
@@ -15,6 +15,8 @@ export interface MapEdits {
   paths?: Record<string, Pt[]>;
   /** Kreuzungspunkte: zusätzliche und entfernte (entfernt wird, was näher als 3 km liegt) */
   junctions?: { add?: Pt[]; remove?: Pt[] };
+  /** Rohstoff und Doppelprovinz je Provinzname (statt der Verteilung aus dem Kartenbau) */
+  resources?: Record<string, { r: Resource; double: boolean }>;
 }
 
 export interface EditResult {
@@ -82,6 +84,16 @@ export function applyEdits(base: MapData, edits: MapEdits): EditResult {
     if (n === undefined) warnings.push(`Unbekannter Ort: ${name}`);
     return n;
   };
+  // Rohstoffe
+  for (const [name, v] of Object.entries(edits.resources ?? {})) {
+    const p = map.provinces.find((x) => x.name === name);
+    if (!p) {
+      warnings.push(`Unbekannte Provinz: ${name}`);
+      continue;
+    }
+    p.resource = v.r;
+    p.double = v.double;
+  }
   const pos = (n: number): Pt => (n < P ? map.provinces[n].center : map.seas[n - P].center);
   const same = (a: number, b: number, x: number, y: number) => (a === x && b === y) || (a === y && b === x);
   for (const p of map.provinces) {

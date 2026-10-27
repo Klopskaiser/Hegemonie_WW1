@@ -52,6 +52,19 @@ export const RES_ICON: Record<Res, string> = {
   ),
 };
 
+const iconImages: Partial<Record<Res, HTMLImageElement>> = {};
+/** Rohstoffsymbol als Bild für Canvas; ruft onLoad, sobald es geladen ist */
+export function iconImage(r: Res, onLoad: () => void): HTMLImageElement {
+  let img = iconImages[r];
+  if (!img) {
+    img = new Image();
+    img.src = RES_ICON[r];
+    iconImages[r] = img;
+  }
+  if (!img.complete) img.addEventListener('load', onLoad, { once: true });
+  return img;
+}
+
 export function ResIcon({ res, size = 18 }: { res: Res; size?: number }) {
   return <img className="res-icon" src={RES_ICON[res]} width={size} height={size} alt="" draggable={false} />;
 }

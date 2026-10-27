@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { checkBuild, checkProduce, plannedBuildings, type Action, type ActionResult } from '../game/actions.ts';
-import { BUILDING_ORDER, BUILDINGS, buildingLives, RES_NAMES, UNIT_ORDER, UNITS, type Building, type UnitType } from '../game/balance.ts';
+import { BUILDING_ORDER, BUILDINGS, buildingLives, RES_NAMES, UNIT_ORDER, UNITS, type Building, type UnitType, siteAllows } from '../game/balance.ts';
 import { activeCapital, provinceOutput } from '../game/economy.ts';
 import type { MapData } from '../game/mapdata.ts';
 import type { GameState } from '../game/types.ts';
@@ -68,7 +68,7 @@ export function ProvinceOverview({ map, state, act, onSelect, onClose }: Props) 
             {own.map(({ ps, mp, i }) => {
               const out = provinceOutput(map, ps, i);
               const planned = plannedBuildings(ps);
-              const buildable = BUILDING_ORDER.filter((b) => (!BUILDINGS[b].coastal || mp.coastal) && planned[b] < BUILDINGS[b].maxLevel)
+              const buildable = BUILDING_ORDER.filter((b) => siteAllows(b, mp.coastal) && planned[b] < BUILDINGS[b].maxLevel)
                 .map((b) => ({ b, chk: checkBuild(state, map, me, i, b) }));
               const pickB = buildable.find((x) => x.b === build[i]) ?? buildable.find((x) => x.chk.ok) ?? buildable[0];
               const units = UNIT_ORDER.filter((u) => !UNITS[u].auto).map((u) => ({ u, chk: checkProduce(state, map, me, i, u) }));

@@ -1,11 +1,11 @@
 import { useState } from 'react';
 import type { Action, ActionResult } from '../game/actions.ts';
-import { HOUR, UNIT_ORDER, UNITS, type UnitType } from '../game/balance.ts';
+import { MILITARY, HOUR, UNIT_ORDER, UNITS, type UnitType } from '../game/balance.ts';
 import { atWar } from '../game/diplomacy.ts';
 import { isSea, nodeName } from '../game/graph.ts';
 import type { MapData } from '../game/mapdata.ts';
 import {
-  armyPosition, armyPower, armySpeed, boardingWait, infantryStrength, isNaval, maxRange, samePlace, segmentHours, troopMorale, troopTarget, unitCount, unitHp,
+  armyPosition, armyPower, armySpeed, boardingWait, inMeleeRange, infantryStrength, isNaval, maxRange, samePlace, segmentHours, troopMorale, troopTarget, unitCount, unitHp,
 } from '../game/military.ts';
 import { armyName } from '../game/names.ts';
 import { Flag } from './Flag.tsx';
@@ -55,16 +55,18 @@ export function ArmyPanel({ map, state, army: a, armies, act, onSelectArmy, onSp
   const real = (gameHours: number) => (state.paused ? 'pausiert' : fmtDuration((gameHours * HOUR) / state.speed));
 
   const here = a.move ? null : a.node;
-  const hostileHere = here === null ? [] : armies.filter((b) => b !== a && !b.move && samePlace(a, b) && atWar(state, a.owner, b.owner));
+  const hostileHere = here === null ? [] : armies.filter((b) => b !== a && !b.move && atWar(state, a.owner, b.owner) && inMeleeRange(map, a, b, state.time));
   const target = a.target != null ? armies.find((b) => b.id === a.target) : undefined;
+  const chased = a.chase != null ? armies.find((b) => b.id === a.chase) : undefined;
   const range = maxRange(a, map);
   const pos = armyPosition(map, a, state.time);
-  const targets = range > 0
-    ? armies.filter((b) => atWar(state, a.owner, b.owner) && unitCount(b) > 0).map((b) => {
-      const p = armyPosition(map, b, state.time);
-      return { b, d: Math.hypot(p[0] - pos[0], p[1] - pos[1]) };
-    }).filter((x) => x.d <= range * 3).sort((x, y) => x.d - y.d).slice(0, 6)
-    : [];
+  // Gegner in der Nähe (für den Angriffsbefehl): mit Fernkampf bis zur dreifachen Reichweite, sonst 150 km
+  const targets = armies.filter((b) => atWar(state, a.owner, b.owner) && unitCount(b) > 0).map((b) => {
+    const p = armyPosition(map, b, state.time);
+    return { b, d: Math.hypot(p[0] - pos[0], p[1] - pos[1]) };
+  }).filter((x) => x.d <= Math.max(range * 3, 150)).sort((x, y) => x.d - y.d).slice(0, 6);
+  const partName = (p: NonNullable<Army['parts']>[number]) => armyName({ id: p.id, owner: a.owner, node: a.node, units: p.units, num: p.num, name: p.name });
+  const partDest = (p: NonNullable<Army['parts']>[number]) => nodeName(map, 'node' in p.resume ? p.resume.node : p.resume.road.b);
   const atSea = isSea(map, a.node);
   // auf See dürfen Truppen zu einer Flotte steigen, an Land nur gleiche Art
   const mergeable = own && !a.move
@@ -129,7 +131,11 @@ export function ArmyPanel({ map, state, army: a, armies, act, onSelectArmy, onSp
         </form>
       )}
       <p className="army-status">{status}</p>
-      {target && <p className="small">Fernkampf auf {armyName(target)} ({nodeName(map, target.node)})</p>}
+      {target && <p className="small">{a.autoTarget ? 'Fernkampf auf' : 'Angriff (Fernkampf) auf'} {armyName(target)} ({nodeName(map, target.node)})</p>}
+      {chased && <p className="small">Verfolgt {armyName(chased)} ({nodeName(map, chased.node)}) bis in den Nahkampf</p>}
+      {!!a.parts?.length && (
+        <p className="small">Im Verband (ziehen nach dem Kampf weiter): {a.parts.map((p) => `${partName(p)} → ${partDest(p)}`).join(', ')}</p>
+      )}
 
       <h4>Einheiten</h4>
       <table className="table">
@@ -171,18 +177,28 @@ export function ArmyPanel({ map, state, army: a, armies, act, onSelectArmy, onSp
         </>
       )}
       <div className="muted small">
-        Tempo {Math.round(armySpeed(a))} km/h{range > 0 ? ` · Reichweite ${range} km` : ''}
+        Tempo {Math.round(armySpeed(a) * (a.forcedMarch ? MILITARY.forcedMarchSpeed : 1))} km/h{a.forcedMarch ? ' (Gewaltmarsch)' : ''}{range > 0 ? ` · Reichweite ${range} km` : ''}
       </div>
 
       {own && (
         <>
           <h4>Befehle</h4>
           <p className="muted small">
-            Rechtsklick auf die Karte setzt ein Marschziel – auch mitten auf einem Weg. Linksklick ins Leere oder Esc hebt die Auswahl auf.
-            Verlässt die letzte Armee eine eigene Stadt, bleibt eine Einheit als Besatzung zurück.
+            Rechtsklick auf die Karte setzt ein Marschziel – auch mitten auf einem Weg. Rechtsklick auf eine feindliche
+            Armee greift sie an: die Armee verfolgt sie, mit Fernkampfeinheiten nur bis in Reichweite. Linksklick ins Leere
+            oder Esc hebt die Auswahl auf. Verlässt die letzte Armee eine eigene Stadt, bleibt eine Einheit als Besatzung zurück.
           </p>
           <div className="btn-row">
-            <button className="btn small" disabled={!a.move && a.target == null} onClick={() => run({ type: 'stop', army: a.id })}>Halt</button>
+            <button className={'btn small' + (!a.aggressive ? ' active' : '')} title="Normaler Marsch: kein Anhalten für Gegner in Reichweite (im Stand wird weiter selbständig gefeuert)"
+              onClick={() => run({ type: 'setMarch', army: a.id, aggressive: false })}>Normal</button>
+            <button className={'btn small' + (a.aggressive ? ' active' : '')} title="Angriffsmarsch: Fernkampfeinheiten halten an, sobald ein Gegner in Reichweite ist, und ziehen danach weiter"
+              onClick={() => run({ type: 'setMarch', army: a.id, aggressive: true })}>Angriff</button>
+            <button className={'btn small' + (a.forcedMarch ? ' active' : '')}
+              title={`Gewaltmarsch: ${Math.round((MILITARY.forcedMarchSpeed - 1) * 100)} % schneller; im Marsch je Stunde −${Math.round(MILITARY.forcedMarchWear * 100)} % Moral bzw. Zustand (Maschinen können ausfallen), keine Reparatur`}
+              onClick={() => run({ type: 'setMarch', army: a.id, forced: !a.forcedMarch })}>Gewaltmarsch</button>
+          </div>
+          <div className="btn-row">
+            <button className="btn small" disabled={!a.move && a.target == null && a.chase == null} onClick={() => run({ type: 'stop', army: a.id })}>Halt</button>
             <button className={'btn small' + (splitting ? ' active' : '')} disabled={!canSplit}
               title={hostileHere.length ? 'Im Kampf nicht möglich' : 'Einheiten in eine eigene Armee abtrennen'}
               onClick={() => setSplitting(splitting ? null : half)}>
@@ -228,18 +244,14 @@ export function ArmyPanel({ map, state, army: a, armies, act, onSelectArmy, onSp
               ))}
             </div>
           )}
-          {range > 0 && (
-            <>
-              <h4>Fernkampf</h4>
-              {targets.length === 0 ? <div className="muted small">Kein Feind in der Nähe.</div> : targets.map(({ b, d }) => (
-                <div key={b.id} className="army-row">
-                  <Swatch color={map.nations.find((n) => n.id === b.owner)?.color ?? '#4a4540'} />
-                  <span>{armyName(b)} · {unitCount(b)} Einh. · {Math.round(d)} km{d > range ? ' (heranrücken)' : ''}</span>
-                  <button className="btn small" onClick={() => run({ type: 'attack', army: a.id, target: b.id })}>Beschießen</button>
-                </div>
-              ))}
-            </>
-          )}
+          <h4>Angriff</h4>
+          {targets.length === 0 ? <div className="muted small">Kein Feind in der Nähe.</div> : targets.map(({ b, d }) => (
+            <div key={b.id} className="army-row">
+              <Swatch color={map.nations.find((n) => n.id === b.owner)?.color ?? '#4a4540'} />
+              <span>{armyName(b)} · {unitCount(b)} Einh. · {Math.round(d)} km{range > 0 && d > range ? ' (heranrücken)' : ''}</span>
+              <button className="btn small" onClick={() => run({ type: 'attack', army: a.id, target: b.id })}>{range > 0 ? 'Beschießen' : 'Angreifen'}</button>
+            </div>
+          ))}
           {msg && <div className="error">{msg}</div>}
         </>
       )}

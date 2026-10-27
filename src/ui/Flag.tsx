@@ -133,6 +133,27 @@ const FLAGS: Record<string, ReactNode> = {
     </>
   ),
   BG: h3('#fff', '#00966e', '#d62612'),
+  // neue Kleinstaaten (frei gestaltet, angelehnt an Flaggen ab 1918)
+  FI: nordic('#fff', '#1d4f91'),
+  BA: h3('#9e3039', '#fff', '#9e3039'),
+  NR: (
+    <>
+      <rect width={W} height={H} fill="#fff" />
+      <path d={`M0,0 L${W},${H} M${W},0 L0,${H}`} stroke="#1c57a5" strokeWidth={3.5} />
+    </>
+  ),
+  JS: (
+    <>
+      <rect width={W} height={H} fill="#a8161f" />
+      <rect width={7} height={H} fill="#fff" />
+    </>
+  ),
+  SH: (
+    <>
+      <rect width={W} height={H} fill="#2f6b3a" />
+      {crescent(13, 10, 5.5, '#2f6b3a')}
+    </>
+  ),
   REB: (
     <>
       <rect width={W} height={H} fill="#3d3833" />

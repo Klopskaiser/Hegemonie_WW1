@@ -11,7 +11,7 @@ import { isSea, nodeNeighbors } from './graph.ts';
 import type { MapData, Resource } from './mapdata.ts';
 import { acceptOffer, cancelOffer, postOffer } from './market.ts';
 import {
-  armyPower, boardingWait, halt, inMelee, isNaval, mergeArmies, nearestNode, planRoute, rejoinSplits, samePlace, startMove, unitCount, unitTypes,
+  armyPower, boardingWait, halt, inMelee, isNaval, mergeArmies, nearestNode, planRoute, pursue, rejoinSplits, replan, samePlace, startMove, unitCount, unitTypes,
   type MilitaryContext, type MoveTarget,
 } from './military.ts';
 import type { Army, GameState, ProvinceState, Relation, Stock } from './types.ts';
@@ -43,8 +43,13 @@ export type ArmyAction =
     declareWar?: boolean;
   }
   | { type: 'stop'; army: number }
-  /** Fernkampfziel setzen (null = aufheben) */
+  /**
+   * Angriff auf eine feindliche Armee (null = aufheben): die Armee verfolgt das Ziel – mit Fernkampfeinheiten
+   * bis in Reichweite und beschießt es dann, sonst bis in den Nahkampf.
+   */
   | { type: 'attack'; army: number; target: number | null }
+  /** Marschart: Gewaltmarsch (schneller, Verschleiß) und Angriffsmarsch (Fernkampf hält bei Gegnern in Reichweite) */
+  | { type: 'setMarch'; army: number; forced?: boolean; aggressive?: boolean }
   /**
    * Einheiten in eine neue Armee am selben Ort abspalten. Bleibt sie ohne Befehl am selben Ort,
    * wird sie wieder eingegliedert – außer mit `rejoin: false` (z. B. Schiffe abtrennen).
@@ -129,6 +134,7 @@ export function buildBlocker(map: MapData, province: number, building: Building,
   const def = BUILDINGS[building];
   if (levels[building] + 1 > def.maxLevel) return 'Höchste Stufe erreicht';
   if (def.coastal && !map.provinces[province].coastal) return 'Nur in Küstenprovinzen';
+  if (def.inland && map.provinces[province].coastal) return 'Nur in Provinzen ohne Küste';
   for (const [b, lvl] of Object.entries(def.requires ?? {}) as [Building, number][]) {
     if (levels[b] < lvl) return `Benötigt ${BUILDINGS[b].name}`;
   }
@@ -392,7 +398,7 @@ function applyArmyAction(ctx: ActionContext, nation: string, action: ArmyAction)
   if (!a || a.owner !== nation) return { ok: false, error: 'Armee gehört nicht dir' };
   switch (action.type) {
     case 'move': {
-      if (inMelee(state, a)) return { ok: false, error: 'Im Nahkampf gebunden – erst nach Kampfende beweglich' };
+      if (inMelee(state, map, a)) return { ok: false, error: 'Im Nahkampf gebunden – erst nach Kampfende beweglich' };
       const N = map.provinces.length + map.seas.length;
       if (!Number.isInteger(action.to) || action.to < 0 || action.to >= N) return { ok: false, error: 'Unbekanntes Ziel' };
       let target: MoveTarget = { node: action.to };
@@ -426,7 +432,10 @@ function applyArmyAction(ctx: ActionContext, nation: string, action: ArmyAction)
       a.resume = null;
       a.target = null;
       a.autoTarget = false;
+      a.chase = null;
       a.split = null;
+      a.parts = null;
+      a.partBase = null;
       a.warOn = warOn.length ? warOn : null;
       startMove(ctx, a, plan.path, plan.then, { ...plan, wait });
       ctx.invalidate();
@@ -435,6 +444,7 @@ function applyArmyAction(ctx: ActionContext, nation: string, action: ArmyAction)
     case 'stop': {
       halt(map, a, state.time);
       a.target = null;
+      a.chase = null;
       a.resume = null;
       ctx.invalidate();
       return { ok: true };
@@ -442,21 +452,42 @@ function applyArmyAction(ctx: ActionContext, nation: string, action: ArmyAction)
     case 'attack': {
       if (action.target === null) {
         a.target = null;
+        a.chase = null;
         return { ok: true };
       }
       const t = state.armies.find((x) => x.id === action.target);
       if (!t) return { ok: false, error: 'Ziel nicht gefunden' };
       if (!atWar(state, nation, t.owner)) return { ok: false, error: 'Kein Krieg mit diesem Ziel' };
-      if (!unitTypes(a).some((u) => UNITS[u].range > 0)) return { ok: false, error: 'Keine Fernkampfeinheiten' };
-      a.target = t.id;
-      a.autoTarget = false;
+      if (inMelee(state, map, a)) return { ok: false, error: 'Im Nahkampf gebunden – erst nach Kampfende beweglich' };
+      // mit Fernkampfeinheiten: Ziel beschießen (vorher bis in Reichweite heran), sonst bis in den Nahkampf verfolgen
+      if (unitTypes(a).some((u) => UNITS[u].range > 0)) {
+        a.target = t.id;
+        a.autoTarget = false;
+        a.chase = null;
+      } else {
+        a.chase = t.id;
+        a.target = null;
+      }
+      a.resume = null;
       a.split = null;
+      a.parts = null;
+      a.partBase = null;
+      pursue(ctx, a);
+      ctx.invalidate();
+      return { ok: true };
+    }
+    case 'setMarch': {
+      if (action.aggressive !== undefined) a.aggressive = !!action.aggressive || undefined;
+      if (action.forced !== undefined && !!action.forced !== !!a.forcedMarch) {
+        a.forcedMarch = !!action.forced || undefined;
+        replan(ctx, a);
+      }
       ctx.invalidate();
       return { ok: true };
     }
     case 'split': {
       if (a.move) return { ok: false, error: 'Nur im Stand möglich' };
-      if (inMelee(state, a)) return { ok: false, error: 'Im Nahkampf gebunden – Teilen erst nach Kampfende' };
+      if (inMelee(state, map, a)) return { ok: false, error: 'Im Nahkampf gebunden – Teilen erst nach Kampfende' };
       const units: Partial<Record<UnitType, number>> = {};
       let n = 0;
       for (const u of Object.keys(action.units) as UnitType[]) {
@@ -472,10 +503,13 @@ function applyArmyAction(ctx: ActionContext, nation: string, action: ArmyAction)
         if (!a.units[u]) delete a.units[u];
       }
       const id = ctx.newArmyId();
+      // vom Spieler abgeteilt: nie automatisch wieder zusammengefasst (nur von Hand oder durch Eingliedern)
       state.armies.push({
-        id, owner: nation, node: a.node, pos: a.pos ?? null, units, morale: a.morale,
+        id, owner: nation, node: a.node, pos: a.pos ?? null, units, morale: a.morale, keepApart: true,
         split: action.rejoin === false ? null : { from: a.id, at: state.time },
       });
+      a.parts = null;
+      a.partBase = null;
       ctx.invalidate();
       return { ok: true, army: id };
     }

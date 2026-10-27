@@ -58,7 +58,8 @@ export function assignResources(
     const sc: Record<Resource, number> = {
       grain: (desert ? 0.15 : lat > 60 ? 0.2 : 1) + near('grain') * 0.6 + noise(),
       fish: p.coastal ? 0.9 + noise() : -Infinity,
-      lumber: (desert ? 0.05 : lat > 56 ? 1.3 : 0.8) + noise(),
+      // Waldgebiete im Süden (Atlas, Libanon) über Rohstofforte, sonst nach Breite
+      lumber: (desert ? 0.05 : lat > 56 ? 1.3 : 0.8) + near('lumber') * 0.8 + noise(),
       iron: 0.3 + near('iron') * 0.8 + noise(),
       coal: 0.4 + near('coal') + noise(),
       gas: 0.45 + near('gas') + noise(),

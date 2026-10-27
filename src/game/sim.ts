@@ -14,7 +14,7 @@ import { observe, type Controller, type NationView, type Observation } from './c
 import { allRates, defaultConsumption, moraleTarget, provincePoints, recruitHours, stepMorale, type NationRates } from './economy.ts';
 import type { MapData } from './mapdata.ts';
 import {
-  combatRound, defections, encounters, engageRanged, isNaval, mixMorale, processArrivals, rangedRound, rejoinSplits, updateRevoltFlags, nextTroopMorale, repairMachines, resumeOrders, troopTarget,
+  applyCombatMorale, combatRound, type CombatTally, defections, encounters, forcedMarchWear, mergeNearby, pursue, splitParts, engageRanged, isNaval, mixMorale, processArrivals, rangedRound, rejoinSplits, updateRevoltFlags, nextTroopMorale, repairMachines, resumeOrders, troopTarget,
 } from './military.ts';
 import { harborSea, isSea } from './graph.ts';
 import { expireOffers } from './market.ts';
@@ -137,11 +137,19 @@ export class Simulation {
     if (s.time % (10 * MINUTE) === 0) {
       this.startWaitingOrders();
       engageRanged(this.ctx);
+      // Verbände: nach dem Kampf Teile abteilen, Befehle fortsetzen, verfolgen, Stehende zusammenfassen
+      splitParts(this.ctx);
       resumeOrders(this.ctx);
+      pursue(this.ctx);
+      mergeNearby(this.ctx);
     }
     if (s.time % HOUR === 0) {
-      combatRound(this.ctx);
-      rangedRound(this.ctx);
+      // Nah- und Fernkampf derselben Stunde: Moral gemeinsam und gedeckelt
+      const tally: CombatTally = new Map();
+      combatRound(this.ctx, tally);
+      rangedRound(this.ctx, tally);
+      applyCombatMorale(tally);
+      forcedMarchWear(this.ctx);
       rejoinSplits(this.ctx);
       if (updateRevoltFlags(s)) this.dirty = true;
       expireOffers(s);
@@ -371,7 +379,7 @@ export class Simulation {
       if (ps.morale < DEFECTION.threshold) this.log(`Unruhen in ${this.map.provinces[i].name} (Moral ${Math.round(ps.morale * 100)} %): Die Provinz droht überzulaufen.`, ps.owner, i);
     });
     this.troopMorale();
-    repairMachines(s);
+    repairMachines(s, this.map);
     defections(this.ctx);
     for (const id of this.nationIds) {
       const n = s.nations[id];

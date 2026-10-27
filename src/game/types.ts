@@ -103,6 +103,29 @@ export interface Army {
   resume?: { node: number } | { road: RoadPos } | null;
   /** beim Ein- oder Ausschiffen gestellt: halbe Stärke, kein Fernkampf (bis sie weiterzieht) */
   boarding?: boolean;
+  /** Gewaltmarsch: schneller, im Marsch Verschleiß (Moral, Maschinen), keine Reparatur */
+  forcedMarch?: boolean;
+  /** Angriffsmarsch: Fernkampfeinheiten halten im Marsch an, sobald ein Gegner in Reichweite ist */
+  aggressive?: boolean;
+  /** Angriffsbefehl ohne Fernkampf: verfolgt diese Armee bis in den Nahkampf */
+  chase?: number | null;
+  /** vom Spieler abgeteilt: wird nicht automatisch mit Armeen im Umkreis zusammengefasst */
+  keepApart?: boolean;
+  /** im Kampf aufgenommene Armeen mit eigenem Marschbefehl: nach dem Kampf wieder abgeteilt */
+  parts?: ArmyPart[] | null;
+  /** Einheiten der Armee beim letzten Abgleich der Teile (Verluste werden anteilig verteilt) */
+  partBase?: Partial<Record<UnitType, number>> | null;
+}
+
+/** Teil eines Verbands: zieht nach dem Kampf mit seinem Anteil der Einheiten weiter */
+export interface ArmyPart {
+  id: number;
+  num?: number;
+  name?: string;
+  units: Partial<Record<UnitType, number>>;
+  resume: { node: number } | { road: RoadPos };
+  forcedMarch?: boolean;
+  aggressive?: boolean;
 }
 
 /** Beziehungsstufen, von schlecht nach gut */

@@ -3,6 +3,7 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { edgePoints, edgeThrough, nodeNeighbors } from '../src/game/graph.ts';
 import type { MapData } from '../src/game/mapdata.ts';
+import { checkNation } from '../src/game/mapcheck.ts';
 import { applyEdits } from '../src/game/mapedits.ts';
 
 const base: MapData = JSON.parse(fs.readFileSync(path.join(import.meta.dirname, '..', 'data', 'maps', 'europe.base.json'), 'utf8'));
@@ -44,5 +45,29 @@ describe('Karteneditor-Vorgaben', () => {
     expect(nodeNeighbors(map, berlin)).toContain(dresden);
     if (!base.provinces[berlin].neighbors.includes(dresden)) expect(edgeThrough(map, berlin, dresden)).not.toBeNull();
     expect(nodeNeighbors(map, id('Hamburg'))).toContain(sea('Nordsee'));
+  });
+});
+
+describe('Rohstoffe der Karte', () => {
+  it('Editor-Vorgaben setzen Rohstoff und Doppelprovinz, unbekannte Provinzen werden gemeldet', () => {
+    const { map, warnings } = applyEdits(base, { resources: { Kiew: { r: 'iron', double: false }, Nirgendwo: { r: 'oil', double: true } } });
+    expect(map.provinces[id('Kiew')].resource).toBe('iron');
+    expect(map.provinces[id('Kiew')].double).toBe(false);
+    expect(base.provinces[id('Kiew')].resource).toBe('grain');
+    expect(warnings).toEqual(['Unbekannte Provinz: Nirgendwo']);
+    // Russland verliert damit seine Doppelprovinz
+    expect(checkNation(map, 'RU').problems).toContain('1 Doppelprovinzen statt 2');
+  });
+
+  it('Großmächte halten die Rohstoffregeln ein, Großmächte haben 10 Provinzen', () => {
+    for (const n of base.nations.filter((x) => x.major)) {
+      const c = checkNation(base, n.id);
+      expect(c.provinces, n.id).toBe(10);
+      expect(c.problems.filter((p) => !p.includes('km entfernt')), n.id).toEqual([]);
+    }
+    expect(base.provinces[id('Kiew')].double).toBe(true);
+    expect(base.provinces.filter((p) => p.nation === 'RU' && p.resource === 'iron').length).toBeGreaterThan(0);
+    // Holz auch in Nordafrika
+    expect(base.provinces.filter((p) => ['MG', 'LY', 'EG'].includes(p.nation) && p.resource === 'lumber').length).toBeGreaterThanOrEqual(2);
   });
 });

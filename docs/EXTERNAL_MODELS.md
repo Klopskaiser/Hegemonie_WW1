@@ -48,7 +48,8 @@ Typdefinitionen (maßgeblich): `src/game/bridgeProtocol.ts` (Nachrichten, Karten
 {"type":"cancelCapitalMove"}                             // Verlegung abbrechen (Kosten kommen ganz zurück)
 {"type":"move","army":57,"to":180}                       // Provinz oder Seegebiet; Landungen werden automatisch geplant
 {"type":"stop","army":57}
-{"type":"attack","army":57,"target":91}                  // Fernkampfziel, null hebt auf
+{"type":"attack","army":57,"target":91}                  // Angriff mit Verfolgung (Fernkampf bis in Reichweite), null hebt auf
+{"type":"setMarch","army":57,"forced":true,"aggressive":true} // Gewaltmarsch, Angriffsmarsch
 {"type":"split","army":57,"units":{"infantry":3}}        // diese Einheiten bleiben als neue Armee stehen
 {"type":"merge","army":58,"into":57}
 {"type":"rename","army":57,"name":"SMS Kiel"}            // eigener Name, leer = automatisch

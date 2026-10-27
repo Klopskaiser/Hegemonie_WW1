@@ -2,10 +2,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { ALL_RES, DAY, HOUR, MILITARY, MINUTE, MORALE, UNITS } from '../src/game/balance.ts';
-import { applyDamage, armyLocation, armyPosition, boardingWait, combatRound, conquer, damageBuildings, defections, harborLeg, inMelee, maxRange, meleeOutput, repairMachines, troopTarget, unitHp } from '../src/game/military.ts';
+import { applyCombatMorale, applyDamage, armyLocation, armyPosition, boardingWait, combatRound, conquer, rangedRound, damageBuildings, defections, harborLeg, inMelee, maxRange, meleeOutput, repairMachines, troopTarget, unitHp } from '../src/game/military.ts';
 import { activeLevel, capitalOf, moraleTarget, nationRates, recruitHours, totalUse, useSources } from '../src/game/economy.ts';
 import type { MapData } from '../src/game/mapdata.ts';
-import { edgeParts } from '../src/game/graph.ts';
+import { edgeParts, edgePoint, nodePos } from '../src/game/graph.ts';
 import { segmentHours } from '../src/game/military.ts';
 import { checkRepair, requiredWars } from '../src/game/actions.ts';
 import { priceBounds } from '../src/game/market.ts';
@@ -232,7 +232,7 @@ describe('Kampf am Ort, fortgesetzte Befehle, Besatzung, Bahn zum Hafen', () => 
     const garrison: Army = { id: sim.state.nextArmyId++, owner: 'FR', node: q, units: { infantry: 1 } };
     const road: Army = { id: sim.state.nextArmyId++, owner: 'DE', node: q, pos: { a: p, b: q, f: 0.8 }, units: { infantry: 20 } };
     sim.state.armies.push(garrison, road);
-    expect(inMelee(sim.state, road)).toBe(false);
+    expect(inMelee(sim.state, map, road)).toBe(false);
     combatRound(sim.ctx);
     expect(garrison.units.infantry).toBe(1);
     expect(sim.state.provinces[q].owner).toBe('FR');
@@ -405,7 +405,8 @@ describe('Reparatur', () => {
   it('Maschinen bekommen zum Tageswechsel 1/7 der fehlenden Lebenspunkte zurück, Infanterie nicht; im Nahkampf keine Reparatur', () => {
     const sim = newSim();
     const berlin = prov('Berlin');
-    const a: Army = { id: sim.state.nextArmyId++, owner: 'DE', node: berlin, units: { tank: 2, infantry: 5 }, wounds: { tank: 35, infantry: 10 } };
+    // getrennt gehalten, sonst würde sie mit der Besatzung Berlins zusammengefasst
+    const a: Army = { id: sim.state.nextArmyId++, owner: 'DE', node: berlin, units: { tank: 2, infantry: 5 }, wounds: { tank: 35, infantry: 10 }, keepApart: true };
     sim.state.armies.push(a);
     sim.advance(DAY);
     expect(a.wounds!.tank).toBeCloseTo(30, 9);
@@ -413,15 +414,15 @@ describe('Reparatur', () => {
     // kleine Wunden: mindestens 5 % von 50 = 2,5 je Tag, bis sie ganz verheilt sind
     const b: Army = { id: sim.state.nextArmyId++, owner: 'DE', node: berlin, units: { tank: 1 }, wounds: { tank: 4 } };
     sim.state.armies.push(b);
-    repairMachines(sim.state);
+    repairMachines(sim.state, map);
     expect(b.wounds!.tank).toBeCloseTo(1.5, 9);
-    repairMachines(sim.state);
+    repairMachines(sim.state, map);
     expect(b.wounds!.tank).toBeUndefined();
     // im Nahkampf: keine Reparatur
     sim.apply('DE', { type: 'declareWar', nation: 'FR' });
     sim.state.armies.push({ id: sim.state.nextArmyId++, owner: 'FR', node: berlin, units: { infantry: 1 } });
     const before = a.wounds!.tank!;
-    repairMachines(sim.state);
+    repairMachines(sim.state, map);
     expect(a.wounds!.tank).toBe(before);
   });
 });
@@ -676,5 +677,152 @@ describe('Festung und Sicht', () => {
     sim.state.armies.push({ id: sim.state.nextArmyId++, owner: 'DE', node: q, units: { infantry: 10 } });
     vis = visibleNodes(sim.state, map, 'DE');
     expect(armyVisible(sim.state, map, 'DE', fr, vis)).toBe(true);
+  });
+});
+
+describe('Kampfmoral und Flächenschaden', () => {
+  const army = (owner: string, node: number, infantry: number, morale = 0.7): Army => ({ id: Math.floor(Math.random() * 1e9), owner, node, units: { infantry }, morale });
+
+  it('Moral je Kampfrunde: Verluste höchstens −4 %, Abschüsse höchstens +4 %', () => {
+    const a = (m = 0.5) => army('DE', 0, 10, m);
+    const cases: [Partial<{ foes: number; shelled: boolean; kills: number }>, number][] = [
+      [{ foes: 1 }, -0.02], // Nahkampf
+      [{ foes: 2 }, -0.03], // gegen mehrere Armeen
+      [{ foes: 100 }, -0.03], // egal wie viele
+      [{ shelled: true }, -0.02], // nur Beschuss, egal wie viele Schützen
+      [{ foes: 5, shelled: true }, -0.04], // Höchstwert
+      [{ foes: 1, kills: 10 }, 0.02], // im Nahkampf netto höchstens +2 %
+      [{ kills: 10 }, 0.04], // Schütze ohne Gegenwehr
+      [{ foes: 3, shelled: true, kills: 2 }, -0.02],
+    ];
+    for (const [e, d] of cases) {
+      const x = a();
+      applyCombatMorale(new Map([[x, { foes: 0, shelled: false, kills: 0, ...e }]]));
+      expect(x.morale! - 0.5, JSON.stringify(e)).toBeCloseTo(d, 9);
+    }
+  });
+
+  it('jede gegnerische Armee im Umkreis von 1 km bekommt den vollen Nahkampfschaden', () => {
+    const sim = newSim();
+    const fr = map.provinces.find((p) => p.nation === 'FR' && !p.capital && (p.links ?? []).length)!;
+    const q = fr.id, p = fr.links![0];
+    sim.apply('DE', { type: 'declareWar', nation: 'FR' });
+    sim.state.armies = sim.state.armies.filter((a) => a.node !== p && a.node !== q);
+    sim.state.provinces[q].buildings.fortress = 0;
+    const attacker = army('DE', q, 20);
+    const big = army('FR', q, 60), small = army('FR', q, 10);
+    // auf dem Weg: etwa 0,5 km und etwa 2 km vor der Stadt
+    const at = (km: number): Army => {
+      const x = army('FR', q, 30);
+      const city = armyPosition(map, x, 0);
+      let f = 1;
+      x.pos = { a: p, b: q, f };
+      while (f > 0) {
+        const pt = armyPosition(map, x, 0);
+        if (Math.hypot(pt[0] - city[0], pt[1] - city[1]) >= km) break;
+        f -= 0.0005;
+        x.pos = { a: p, b: q, f };
+      }
+      return x;
+    };
+    const near = at(0.5), far = at(2);
+    sim.state.armies.push(attacker, big, small, near, far);
+    const hp = (x: Army) => x.units.infantry! * unitHp(x, 'infantry') - (x.wounds?.infantry ?? 0);
+    const h0 = new Map([big, small, near, far].map((x) => [x, hp(x)]));
+    // Moral erst danach anwenden, sonst ändern sich die Lebenspunkte je Infanterist
+    const tally = new Map();
+    combatRound(sim.ctx, tally);
+    const loss = (x: Army) => h0.get(x)! - hp(x);
+    expect(loss(big)).toBeGreaterThan(0);
+    // voller Schaden statt Aufteilung nach Stärke: beide Armeen am Ort verlieren gleich viel
+    expect(loss(small)).toBeCloseTo(loss(big), 6);
+    expect(loss(near)).toBeCloseTo(loss(big), 6);
+    expect(loss(far)).toBe(0);
+    // die Armee 0,5 km vor der Stadt ist im Nahkampf (gegen eine Armee), der Angreifer gegen drei
+    expect(tally.get(near)?.foes).toBe(1);
+    expect(tally.get(attacker)?.foes).toBe(3);
+    expect(tally.has(far)).toBe(false);
+  });
+
+  it('Beschuss trifft alle Gegner im Umkreis des Ziels voll und zählt einmal je Stunde', () => {
+    const sim = newSim();
+    const fr = map.provinces.find((p) => p.nation === 'FR' && !p.capital && (p.links ?? []).length)!;
+    const q = fr.id, p = fr.links![0];
+    sim.apply('DE', { type: 'declareWar', nation: 'FR' });
+    sim.state.armies = sim.state.armies.filter((a) => a.node !== p && a.node !== q);
+    sim.state.provinces[q].buildings.fortress = 0;
+    const target = army('FR', q, 40), other = army('FR', q, 5);
+    // zwei Artillerien knapp vor der Stadt (außerhalb des Umkreises), beide auf dasselbe Ziel
+    const gun = (): Army => {
+      const g: Army = { ...army('DE', q, 0), units: { artillery: 5 }, target: target.id };
+      const city = armyPosition(map, g, 0);
+      for (let f = 1; f > 0; f -= 0.001) {
+        g.pos = { a: p, b: q, f };
+        const pt = armyPosition(map, g, 0);
+        if (Math.hypot(pt[0] - city[0], pt[1] - city[1]) >= 10) break;
+      }
+      return g;
+    };
+    const g1 = gun(), g2 = gun();
+    sim.state.armies.push(target, other, g1, g2);
+    const hp = (x: Army) => x.units.infantry! * unitHp(x, 'infantry') - (x.wounds?.infantry ?? 0);
+    const h0 = new Map([target, other].map((x) => [x, hp(x)]));
+    const tally = new Map();
+    rangedRound(sim.ctx, tally);
+    const lossT = h0.get(target)! - hp(target), lossO = h0.get(other)! - hp(other);
+    expect(lossT).toBeGreaterThan(0);
+    expect(lossO).toBeCloseTo(lossT, 6);
+    expect(tally.get(target)).toMatchObject({ shelled: true, foes: 0 });
+    expect(tally.get(other)).toMatchObject({ shelled: true });
+  });
+});
+
+describe('Nahkampfreichweite 1 km', () => {
+  const setup = () => {
+    const sim = newSim();
+    const fr = map.provinces.find((p) => p.nation === 'FR' && !p.capital && (p.links ?? []).some((n) => map.provinces[n].nation === 'DE'))!;
+    const q = fr.id, p = fr.links!.find((n) => map.provinces[n].nation === 'DE')!;
+    sim.apply('DE', { type: 'declareWar', nation: 'FR' });
+    sim.state.armies = sim.state.armies.filter((a) => a.node !== p && a.node !== q);
+    sim.state.provinces[q].buildings.fortress = 0;
+    // Anteil auf dem Weg q→p, der km von der Stadt q entfernt liegt
+    const roadAt = (km: number) => {
+      const c = nodePos(map, q);
+      for (let f = 0; f <= 1; f += 0.0002) {
+        const pt = edgePoint(map, q, p, f);
+        if (Math.hypot(pt[0] - c[0], pt[1] - c[1]) >= km) return f;
+      }
+      return 1;
+    };
+    return { sim, p, q, roadAt };
+  };
+
+  it('Artillerie dicht vor einer Stadt ist im Nahkampf gebunden, weiter weg nicht', () => {
+    const { sim, p, q, roadAt } = setup();
+    const garrison: Army = { id: sim.state.nextArmyId++, owner: 'FR', node: q, units: { infantry: 1 } };
+    const close: Army = { id: sim.state.nextArmyId++, owner: 'DE', node: q, pos: { a: q, b: p, f: roadAt(0.8) }, units: { artillery: 2 } };
+    const away: Army = { id: sim.state.nextArmyId++, owner: 'DE', node: q, pos: { a: q, b: p, f: roadAt(1.5) }, units: { artillery: 2 } };
+    sim.state.armies.push(garrison, close, away);
+    expect(inMelee(sim.state, map, close)).toBe(true);
+    expect(inMelee(sim.state, map, away)).toBe(false);
+    expect(inMelee(sim.state, map, garrison)).toBe(true);
+  });
+
+  it('wer sich auf 1 km nähert, bleibt stehen, kämpft und erobert die Stadt aus dieser Entfernung', () => {
+    const { sim, p, q } = setup();
+    const garrison: Army = { id: sim.state.nextArmyId++, owner: 'FR', node: q, units: { infantry: 1 } };
+    const army: Army = { id: sim.state.nextArmyId++, owner: 'DE', node: p, units: { infantry: 20 } };
+    sim.state.armies.push(garrison, army);
+    expect(sim.apply('DE', { type: 'move', army: army.id, to: q }).ok).toBe(true);
+    for (let k = 0; k < 5 * 24 * 60 && army.move; k++) sim.advance(MINUTE);
+    expect(army.move).toBeNull();
+    const at = armyPosition(map, army, sim.state.time), c = nodePos(map, q);
+    const dist = Math.hypot(at[0] - c[0], at[1] - c[1]);
+    expect(dist).toBeLessThanOrEqual(1.0001);
+    expect(dist).toBeGreaterThan(0.3);
+    expect(inMelee(sim.state, map, army)).toBe(true);
+    sim.advance(DAY);
+    expect(sim.state.armies.includes(garrison)).toBe(false);
+    expect(sim.state.provinces[q].owner).toBe('DE');
   });
 });

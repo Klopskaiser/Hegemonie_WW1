@@ -102,7 +102,7 @@ describe('Bauamt und Manufaktur', () => {
     expect(checkBuild(sim.state, map, 'DE', berlin, 'manufactory').ok).toBe(false);
   });
 
-  it('Werkstatt: Voraussetzung für die Fabrik, Fertigung 10 % schneller, Moral +2 %; Bauamt abschaltbar', () => {
+  it('Werkstatt: Voraussetzung für die Fabrik, Fertigung 10 % schneller, Moral +1 %; Bauamt abschaltbar', () => {
     const sim = newSim();
     const ps = sim.state.provinces[berlin];
     expect(BUILDINGS.workshop.cost(1)).toEqual({ money: 5000, iron: 1500, lumber: 500 });
@@ -116,7 +116,7 @@ describe('Bauamt und Manufaktur', () => {
     const slow = unitHours(sim.state, berlin, 'artillery');
     ps.buildings.workshop = 1;
     expect(unitHours(sim.state, berlin, 'artillery')).toBeCloseTo(slow / 1.1, 6);
-    expect(BUILDINGS.workshop.morale(1)).toBeCloseTo(0.02, 9);
+    expect(BUILDINGS.workshop.morale(1)).toBeCloseTo(0.01, 9);
     ps.buildings.office = 1;
     const on = allRates(sim.state, map).DE.cons.money;
     expect(sim.apply('DE', { type: 'switchBuilding', province: berlin, building: 'office', on: false }).ok).toBe(true);
@@ -124,6 +124,24 @@ describe('Bauamt und Manufaktur', () => {
     expect(on - allRates(sim.state, map).DE.cons.money).toBe(2000);
     expect(checkBuild(sim.state, map, 'DE', berlin, 'railroad').hours).toBe(72);
     expect(BUILDINGS.workshop.hours(1)).toBe(24);
+  });
+
+  it('Handelsposten: nur ohne Küste, Rohstoffe +7 %, Moral +3 %, Unterhalt 20 Fisch', () => {
+    const sim = newSim();
+    const inland = map.provinces.find((p) => p.nation === 'DE' && !p.coastal)!.id;
+    const coast = map.provinces.find((p) => p.nation === 'DE' && p.coastal)!.id;
+    expect(BUILDINGS.tradepost.cost(1)).toEqual({ money: 12000, iron: 2000, lumber: 3000 });
+    expect(checkBuild(sim.state, map, 'DE', coast, 'tradepost').error).toBe('Nur in Provinzen ohne Küste');
+    expect(checkBuild(sim.state, map, 'DE', inland, 'tradepost').ok).toBe(true);
+    const ps = sim.state.provinces[inland];
+    const before = provinceOutput(map, ps, inland);
+    const fish = allRates(sim.state, map).DE.cons.fish;
+    ps.buildings.tradepost = 1;
+    const after = provinceOutput(map, ps, inland);
+    expect(after.amount / before.amount).toBeCloseTo(1.07, 6);
+    expect(after.money).toBe(before.money);
+    expect(allRates(sim.state, map).DE.cons.fish - fish).toBe(20);
+    expect(BUILDINGS.tradepost.morale(1)).toBeCloseTo(0.03, 9);
   });
 
   it('auch geplante Fabriken schließen die Manufaktur aus', () => {

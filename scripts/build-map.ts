@@ -6,6 +6,7 @@
 
 import fs from 'node:fs';
 import { applyEdits } from '../src/game/mapedits.ts';
+import { checkReport } from '../src/game/mapcheck.ts';
 import path from 'node:path';
 import * as shapefile from 'shapefile';
 import { topology } from 'topojson-server';
@@ -408,9 +409,9 @@ for (const cfg of config.nations) {
   const rnd = makeRng(hash(cfg.id) ^ 0x5eed);
   // kleine Inseln bekommen keinen eigenen Mittelpunkt, sie fallen an die nächste Provinz
   const { pts, effArea } = samplesIn(shape.filter((part) => polyArea(part) >= 2000), 3000, rnd);
-  let count = cfg.major
+  let count = cfg.provinces ?? (cfg.major
     ? config.majorProvinces
-    : Math.max(1, Math.min(config.minorMaxProvinces, Math.round(effArea / config.minorCellArea)));
+    : Math.max(1, Math.min(config.minorMaxProvinces, Math.round(effArea / config.minorCellArea))));
 
   const own = allPlaces.filter((pl) => pl.nation === cfg.id);
   const cap = own.find((pl) => pl.aliases.includes(cfg.capital)) ?? own.sort((a, b) => b.pop - a.pop)[0];
@@ -426,7 +427,7 @@ for (const cfg of config.nations) {
   let mainShape = shape;
   const islandProvs: Prov[] = [];
   // Kleinstaaten bekommen Inselprovinzen zusätzlich, statt ihr Festland auszudünnen
-  if (!cfg.major) count = Math.min(config.minorMaxProvinces, count + islands.length);
+  if (!cfg.major && cfg.provinces === undefined) count = Math.min(config.minorMaxProvinces, count + islands.length);
   const forcedOnly = islands.length > 0 && islands.every((part) => forced.some((p) => pointInPoly(p[0], p[1], part)))
     && islands.every((part) => seeds.some((s) => pointInPoly(s.pos[0], s.pos[1], part)));
   if (forcedOnly) {
@@ -753,7 +754,8 @@ const byName = (name: string) => {
 // vorliegen – Grenzkorrekturen ändern so die abgestimmte Verteilung nicht. Neu verteilen: --new-resources.
 // Die festen Vorgaben der Konfiguration gelten danach in jedem Fall.
 {
-  const prev = path.join(ROOT, 'public', 'maps', `${config.id}.json`);
+  // aus der Grundkarte, damit Vorgaben aus dem Karteneditor nicht in die Grundkarte wandern
+  const prev = path.join(ROOT, 'data', 'maps', `${config.id}.base.json`);
   if (!process.argv.includes('--new-resources') && fs.existsSync(prev)) {
     const old = JSON.parse(fs.readFileSync(prev, 'utf8')) as MapData;
     const byOldName = new Map(old.provinces.map((p) => [p.name, p]));
@@ -1198,6 +1200,30 @@ const data: MapData = {
   console.log(`Wegkreuzungen: ${bundled.junctions.length} (${bundled.junctions.map((j) => where(j.node)).join(', ')}), Abkürzungen: ${bundled.shortcuts.length}`);
 }
 
+// Maßstab: alle Lagen in km verkleinern (Zuschnitt und Wege bleiben, nur die Entfernungen schrumpfen)
+if (config.scale && config.scale !== 1) {
+  const s = config.scale;
+  const sc = (v: number) => r1(v * s);
+  const scFlat = (a: number[]) => a.map(sc);
+  data.bounds = data.bounds.map(sc) as MapData['bounds'];
+  for (const p of data.provinces) {
+    p.polys = p.polys.map((poly) => poly.map(scFlat));
+    p.center = [sc(p.center[0]), sc(p.center[1])];
+    p.mid = [sc(p.mid[0]), sc(p.mid[1])];
+    p.area = Math.round(p.area * s * s);
+  }
+  for (const z of data.seas) {
+    z.polys = z.polys.map((poly) => poly.map(scFlat));
+    z.center = [sc(z.center[0]), sc(z.center[1])];
+  }
+  for (const b of data.borders) b.segs = scFlat(b.segs);
+  data.seaBorders = scFlat(data.seaBorders);
+  for (const r of data.roads ?? []) r.pts = scFlat(r.pts);
+  for (const r of data.shortcuts ?? []) r.pts = scFlat(r.pts);
+  for (const j of data.junctions ?? []) { j.x = sc(j.x); j.y = sc(j.y); }
+  console.log(`Maßstab ${s}: Entfernungen ${Math.round((1 - s) * 100)} % kürzer`);
+}
+
 // Grundkarte sichern, dann die Handarbeit aus dem Karteneditor anwenden (scripts/maps/<id>.edits.json)
 const baseOut = path.join(ROOT, 'data', 'maps', `${config.id}.base.json`);
 fs.mkdirSync(path.dirname(baseOut), { recursive: true });
@@ -1216,3 +1242,5 @@ fs.writeFileSync(out, JSON.stringify(final));
 const isolated = provinces.filter((p) => p.neighbors.length === 0 && !p.coastal).map((p) => p.name);
 if (isolated.length) console.warn('Ohne Nachbarn und Küste:', isolated.join(', '));
 console.log(`geschrieben: ${out} (${Math.round(fs.statSync(out).size / 1024)} KB), Küstenprovinzen: ${provinces.filter((p) => p.coastal).length}`);
+console.log('Rohstoffprüfung (Entfernung Hauptstadt → nächstes Feld, eigene Provinz = 0):');
+console.log(checkReport(final, (nation) => config.oilLimit?.[nation] ?? (config.nations.find((n) => n.id === nation)!.major ? 1 : 0)));

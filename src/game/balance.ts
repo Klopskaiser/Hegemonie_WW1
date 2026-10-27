@@ -40,13 +40,16 @@ export const PROVINCE = {
 
 // ---------------------------------------------------------------- Gebäude
 
-export type Building = 'railroad' | 'harbor' | 'fortress' | 'workshop' | 'factory' | 'manufactory' | 'barracks' | 'recruitment' | 'office';
-export const BUILDING_ORDER: Building[] = ['railroad', 'harbor', 'workshop', 'factory', 'manufactory', 'barracks', 'recruitment', 'office', 'fortress'];
+export type Building = 'railroad' | 'harbor' | 'tradepost' | 'fortress' | 'workshop' | 'factory' | 'manufactory' | 'barracks' | 'recruitment' | 'office';
+export const BUILDING_ORDER: Building[] = ['railroad', 'harbor', 'tradepost', 'workshop', 'factory', 'manufactory', 'barracks', 'recruitment', 'office', 'fortress'];
 
 export interface BuildingDef {
   name: string;
   maxLevel: number;
+  /** nur in Küstenprovinzen */
   coastal?: boolean;
+  /** nur in Provinzen ohne Küste (dort ist kein Hafen möglich) */
+  inland?: boolean;
   cost(level: number): Cost;
   hours(level: number): number;
   /** Produktionsbonus der erreichten Stufe (0.33 = +33 %) */
@@ -91,13 +94,22 @@ export const BUILDINGS: Record<Building, BuildingDef> = {
     morale: (l) => (l >= 1 ? 0.07 : 0),
     describe: () => 'Produktion +25 %, Moral +7 %, ermöglicht Schiffe und Einschiffen.',
   },
+  tradepost: {
+    name: 'Handelsposten', maxLevel: 1, inland: true,
+    cost: () => ({ money: 12000, iron: 2000, lumber: 3000 }),
+    hours: () => 48,
+    prodBonus: (l) => (l >= 1 ? 0.07 : 0),
+    morale: (l) => (l >= 1 ? 0.03 : 0),
+    upkeep: { fish: 20 },
+    describe: () => 'Rohstoffproduktion +7 % (nicht Geld), Moral +3 %. Nur in Provinzen ohne Küste. Unterhalt 20 Fisch/Tag.',
+  },
   workshop: {
     name: 'Werkstatt', maxLevel: 1,
     cost: () => ({ money: 5000, iron: 1500, lumber: 500 }),
     hours: () => 24,
     prodBonus: () => 0,
-    morale: (l) => (l >= 1 ? 0.02 : 0),
-    describe: () => `Mechanische Einheiten (alles außer Infanterie) werden ${Math.round(WORKSHOP_SPEEDUP * 100)} % schneller gebaut, Moral +2 %. Voraussetzung für die Fabrik.`,
+    morale: (l) => (l >= 1 ? 0.01 : 0),
+    describe: () => `Mechanische Einheiten (alles außer Infanterie) werden ${Math.round(WORKSHOP_SPEEDUP * 100)} % schneller gebaut, Moral +1 %. Voraussetzung für die Fabrik.`,
   },
   factory: {
     name: 'Fabrik', maxLevel: 4, fromDay: 3,
@@ -156,6 +168,12 @@ export const BUILDINGS: Record<Building, BuildingDef> = {
     describe: (l) => `Schadensminderung ${Math.round(FORTRESS_REDUCTION[l] * 100)} %, Moral +${5 * l} %${l >= 2 ? ', Truppen verborgen' : ''}.`,
   },
 };
+
+/** Passt das Gebäude zur Lage der Provinz (Küste bzw. Binnenland)? */
+export function siteAllows(b: Building, coastal: boolean): boolean {
+  const def = BUILDINGS[b];
+  return (!def.coastal || coastal) && (!def.inland || !coastal);
+}
 
 /** Leben je Stufe eines Gebäudes */
 export function buildingLives(b: Building): number {
@@ -222,7 +240,7 @@ export const UNITS: Record<UnitType, UnitDef> = {
   },
   artillery: {
     name: 'Artillerie', short: 'Art', cost: { money: 10000, iron: 3000, oil: 2000 }, hours: 96,
-    requires: { factory: 1 }, speed: 25, attack: 2.5, defense: 0.8, hp: 15, range: 75, upkeep: { oil: 15 },
+    requires: { factory: 1 }, speed: 25, attack: 2.5, defense: 0.8, hp: 15, range: 60, upkeep: { oil: 15 },
   },
   armoredCar: {
     name: 'Panzerwagen', short: 'PzW', cost: { money: 7000, iron: 2000, oil: 1500 }, hours: 16,
@@ -234,12 +252,12 @@ export const UNITS: Record<UnitType, UnitDef> = {
   },
   railgun: {
     name: 'Eisenbahngeschütz', short: 'EBG', cost: { money: 50000, iron: 10000, lumber: 5000, coal: 5000, oil: 10000 }, hours: 62,
-    requires: { factory: 3, railroad: 1 }, speed: 12.5, attack: 6, defense: 1, hp: 30, range: 250,
+    requires: { factory: 3, railroad: 1 }, speed: 12.5, attack: 6, defense: 1, hp: 30, range: 180,
     upkeep: { oil: 10, coal: 40 }, railOnly: true, sight: 200,
   },
   battleship: {
     name: 'Schlachtschiff', short: 'SS', cost: { money: 50000, iron: 15000, coal: 10000, oil: 5000 }, hours: 96,
-    requires: { factory: 3, harbor: 1 }, speed: 30, attack: 5, defense: 4, hp: 80, range: 150, upkeep: { oil: 30, coal: 30 }, naval: true, sight: 200,
+    requires: { factory: 3, harbor: 1 }, speed: 30, attack: 5, defense: 4, hp: 80, range: 90, upkeep: { oil: 30, coal: 30 }, naval: true, sight: 200,
   },
 };
 
@@ -260,6 +278,15 @@ export const MILITARY = {
   viewRange: 100,
   /** Fernkampfeinheiten im Nahkampf */
   meleeRangedFactor: 0.5,
+  /**
+   * Nahkampfreichweite (km): stehende Armeen im Krieg, die so nahe beieinander sind, kämpfen (auch auf See);
+   * marschierende bleiben stehen, sobald sie so nahe kommen; Städte werden aus dieser Entfernung erobert.
+   * Zugleich Flächenschaden: jeder Treffer (Nah- und Fernkampf) trifft alle Gegner in diesem Umkreis voll.
+   */
+  meleeKm: 1,
+  /** Gewaltmarsch: Tempo-Faktor; im Marsch je Stunde dieser Anteil Moral (Infanterie) bzw. Lebenspunkte (Maschinen, können ausfallen) */
+  forcedMarchSpeed: 1.5,
+  forcedMarchWear: 0.04,
   /** Nahkampf je Armee: die stärksten Einheiten zuerst; bis Platz `meleeFull` voll, danach linear weniger, ab Platz `meleeMax` + 1 nichts */
   meleeFull: 20,
   meleeMax: 50,
@@ -331,12 +358,17 @@ export const TROOP_MORALE = {
   /** Annäherung an das Ziel je Tageswechsel: volle Lücke, höchstens so viel */
   rise: { max: 0.1 },
   fall: { max: 0.08 },
-  /** Abzug je Nahkampfrunde bzw. je Fernkampfrunde als Ziel */
+  /**
+   * Je Kampfrunde (stündlich): Nahkampf −2 %, gegen zwei und mehr Armeen −1 % zusätzlich, beschossen −2 %
+   * (egal wie viele Schützen). Zusammen höchstens lossMax, egal wie viele Armeen beteiligt sind.
+   */
   melee: 0.02,
-  shelled: 0.015,
-  /** Zuwachs je vernichteter feindlicher Einheit, höchstens je Runde */
+  outnumbered: 0.01,
+  shelled: 0.02,
+  lossMax: 0.04,
+  /** Zuwachs je vernichteter feindlicher Einheit, höchstens killMax je Runde (gegen den Verlust gerechnet) */
   perKill: 0.01,
-  killMax: 0.05,
+  killMax: 0.04,
   /** Kampfkraft (und Lebenspunkte) der Infanterie: 1,2 × Moral – 10 % → 0,12, 100 % → 1,2 (1,0 bei 83,3 %) */
   strength: [[0, 0], [1, 1.2]] as [number, number][],
   min: 0.1,

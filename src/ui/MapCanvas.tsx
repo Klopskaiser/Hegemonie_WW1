@@ -3,7 +3,6 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Sight } from '../game/visibility.ts';
-import type { Res } from '../game/balance.ts';
 import { closestOnEdge, edgeParts, edgePoints, edgeSlice, harborSea, isSea, nodeCount, nodeNeighbors, nodePos } from '../game/graph.ts';
 import type { MapData } from '../game/mapdata.ts';
 import { armyPosition, isNaval, normalizeTarget, remainingRoute, unitCount, unitRange, type MoveTarget, boardingWait } from '../game/military.ts';
@@ -11,7 +10,7 @@ import { makeRng } from '../game/rng.ts';
 import { REBELS, type Army, type ProvinceState } from '../game/types.ts';
 import { DEFECTION, HOUR, UNITS, type UnitType } from '../game/balance.ts';
 import { fmtDuration } from './format.ts';
-import { RES_ICON } from './icons.tsx';
+import { iconImage } from './icons.tsx';
 
 export type MapMode = 'political' | 'resources' | 'morale';
 
@@ -108,17 +107,6 @@ const SEA = '#b7c6bf';
 const SEA_DEEP = '#a9bab4';
 const INK = 'rgba(58, 38, 22, 0.9)';
 
-const iconImages: Partial<Record<Res, HTMLImageElement>> = {};
-function iconImage(r: Res, onLoad: () => void): HTMLImageElement {
-  let img = iconImages[r];
-  if (!img) {
-    img = new Image();
-    img.src = RES_ICON[r];
-    iconImages[r] = img;
-  }
-  if (!img.complete) img.addEventListener('load', onLoad, { once: true });
-  return img;
-}
 
 let paperCanvas: HTMLCanvasElement | null = null;
 function paperTexture(): HTMLCanvasElement {

@@ -114,7 +114,7 @@ export class BasicAI implements Controller {
       const pick = (safe.length ? safe : own).reduce<number | null>((b, i) => (b === null || provincePoints(map, state.provinces[i], i) > provincePoints(map, state.provinces[b], b) ? i : b), null);
       if (pick !== null) actions.push({ type: 'moveCapital', province: pick });
     }
-    const net = (r: 'coal' | 'oil') => netRate(view.rates, r);
+    const net = (r: 'coal' | 'oil' | 'fish') => netRate(view.rates, r);
     const building = own.filter((i) => state.provinces[i].construction).length;
     const maxParallel = Math.max(1, Math.ceil(own.length / (major ? 6 : 10)));
     if (building >= maxParallel) return;
@@ -151,6 +151,8 @@ export class BasicAI implements Controller {
         switch (b) {
           case 'railroad': score = base * 0.33 * (net('coal') < BUILDINGS.railroad.upkeep!.coal! && mp.resource !== 'coal' ? 0.3 : 1); break;
           case 'harbor': score = base * 0.25; break;
+          // Handelsposten: kleiner Produktionsbonus, kostet Fisch – nur wenn genug Fisch übrig ist
+          case 'tradepost': score = base * 0.07 * (net('fish') < 3 * BUILDINGS.tradepost.upkeep!.fish! ? 0.2 : 1); break;
           // Werkstatt: Voraussetzung für die Fabrik (bevorzugt in Städten), beschleunigt vorhandene Fabriken
           case 'workshop': {
             const wantFactory = factories < (major ? 3 : 1) && ps.buildings.manufactory === 0;

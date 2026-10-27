@@ -43,19 +43,29 @@
   (Quellen: Fan-Wikis, offizielles Forum/Hilfecenter, Guides – teils widersprüchlich).
 - Stärkeskala der Einheiten nach älterer Version: Infanterie ≈ 1, Panzerwagen 2, Panzer 4.
 - Nahrung wird anteilig zur Produktion aus Getreide und Fisch verbraucht.
-- Europakarte: 14 Spielernationen + 10 neutrale Kleinstaaten, 177 Provinzen (Wunsch: 160–180).
+- Europakarte: 14 Spielernationen + 15 neutrale Kleinstaaten, 189 Provinzen (Wunsch: 160–180, erweitert um
+  12 Provinzen neuer Kleinstaaten).
   Spielernationen: Deutsches Reich, Österreich-Ungarn, Frankreich, Großbritannien, Italien,
   Russland, Osmanisches Reich, Spanien, Schweden, Norwegen, Rumänien sowie in Afrika Marokko (Marokko +
   Algerien, Hauptstadt Rabat), Libyen (Libyen + Tunesien) und Ägypten. Frankreich, Italien und GB haben keine
   Kolonien mehr auf der Karte; Malta → Italien, Zypern → Osmanisches Reich, Island → Dänemark.
   Nicht streng historisch, wo es dem Spiel dient. Persien gibt es nicht.
+- Neue Kleinstaaten zum Ausbreiten (Vorgabe): Finnland (3 Provinzen), Baltikum (2) und Nordrussland (3: Karelien,
+  Archangelsk, Komi) aus Russland, Dschabal Schammar (2: Ostjordanien, Nordarabien, Syrische Wüste) aus dem
+  Osmanischen Reich, Sahara-Emirat (2: Süd-Algerien) aus Marokko. Großmächte behalten 10 Startprovinzen auf
+  kleinerer Fläche. Doppelt sind nur Oulu (Holz) und Ouargla (Gas). Kiew ist Getreide ×2, Russland hat Eisen in
+  Kriwoi Rog (Jekaterinoslaw); Holz im Süden: Fès (Mittlerer Atlas) und Tunis (Kroumirie).
+- Maßstab 0,9 (Vorgabe): die fertige Karte ist um 10 % verkleinert (`scale` in der Kartenkonfiguration),
+  Spielwerte in km (Tempo, Sicht, Reichweiten) bleiben – Wege sind damit 10 % kürzer.
+- Der Kartenbau prüft je Nation die Rohstoffregeln und die Entfernung von der Hauptstadt zum nächsten Feld
+  jedes Rohstoffs (Warnung ab 1000 km, `src/game/mapcheck.ts`).
 - Kartenrand: gerades Rechteck, Ostrand knapp westlich des Kaspischen Meeres. Jedes Land im
   Ausschnitt gehört einer Nation (das Kartenskript bricht sonst ab) – keine grauen Reste.
 - Inseln: mittelgroße Inseln (5.000–15.000 km², z. B. Korsika, Zypern, Kreta) sind genau eine
   eigene Provinz; kleinere Inseln gehören zur nächstgelegenen Provinz.
 - Städte: Hauptstadt plus die größten Städte ab 300.000 Einwohnern, höchstens 30 % der Provinzen.
 - **Jede Spielernation (Mensch oder KI) hat 10 Provinzen mit genau 2 Doppelprovinzen.**
-  Neutrale Kleinstaaten haben weniger (1–9 nach Fläche, ab 3 Provinzen eine Doppelprovinz).
+  Neutrale Kleinstaaten haben weniger (1–9 nach Fläche oder fest vorgegeben, ab 3 Provinzen eine Doppelprovinz).
   Provinzen dürfen unterschiedlich groß sein (Russland und Wüstengebiete haben große Provinzen).
 - Provinzbildung: gewichtetes k-Means (Wüste/Norden dünner) + Voronoi, Hauptstadt als fester Punkt.
 - Rohstoffe (`scripts/resources.ts`, gezählt in Punkten, Doppelprovinz = 2):
@@ -166,7 +176,9 @@
 - Bauamt (Vorgabe): 2 Tage, 30000 Geld + 500 Holz, Unterhalt 2000 Geld/Tag, Gebäudebauzeiten
   in seiner Provinz −25 % (bestätigt: nur Gebäude, nur eigene Provinz; Einheiten unverändert).
   Abschaltbar wie Kaserne, Wehramt und Eisenbahn (aus: kein Unterhalt, keine Wirkung).
-- Werkstatt (Vorgabe): 1 Stufe, 1 Tag, 5000 Geld, 1500 Eisen, 500 Holz, Moral +2 %, mechanische
+- Handelsposten (Vorgabe): 1 Stufe, nur in Provinzen ohne Küste (kein Hafen möglich), 12000 Geld, 2000 Eisen,
+  3000 Holz, Bauzeit 48 h, Rohstoffproduktion +7 % (nicht Geld), Moral +3 %, Unterhalt 20 Fisch/Tag.
+- Werkstatt (Vorgabe): 1 Stufe, 1 Tag, 5000 Geld, 1500 Eisen, 500 Holz, Moral +1 %, mechanische
   Einheiten (alles außer Infanterie) in der Provinz +10 % Bautempo (Fertigungszeit ÷ 1,1),
   Voraussetzung für die Fabrik (geplante Werkstatt zählt mit). Alte Spielstände: Werkstatt 0,
   bestehende Fabriken bleiben.
@@ -193,8 +205,8 @@
 - Truppenmoral (nur Infanterie, je Armee): Stärke 0,8 + 0,4 × Moral (50 % = 1,0, 100 % = 1,2).
   Tageswechsel: Annäherung an das Ziel (eigene Provinz: deren Moral; See, Weg, fremdes Gebiet: 50 %;
   ohne Getreide: 10 %), steigen 30 % der Lücke (2–10 Punkte), sinken 25 % (2–8 Punkte). Je
-  Nahkampfrunde −2 Punkte, je Beschuss −1,5, je vernichteter feindlicher Einheit +1 (höchstens +5
-  je Runde). Neue Rekruten bringen die Provinzmoral mit (gewichtetes Mittel). Maschinen: keine Moral,
+  Nahkampfrunde −2 Punkte, gegen mehrere Armeen −3, beschossen −2 (egal wie viele Schützen), zusammen
+  höchstens −4 je Runde; je vernichteter feindlicher Einheit +1 (höchstens +4 je Runde, gegen den Verlust gerechnet). Neue Rekruten bringen die Provinzmoral mit (gewichtetes Mittel). Maschinen: keine Moral,
   Zustand ohne Einfluss auf die Kampfkraft; Infanterie zeigt keinen Zustand.
 - Überlaufen statt Aufständischer: Provinzen unter 33 % Moral zeigen eine Rebellionsfaust und laufen
   zum Tageswechsel über: Chance linear von 1 % (knapp unter 33 %) bis 33 % (0 % Moral), je angefangene
@@ -258,7 +270,7 @@
   Patras liegt auf der Peloponnes (`cityAt`), damit Patras–Kalamata im eigenen Gebiet bleibt.
 - Samsun hat genau einen Hafen nahe der Stadt zum Schwarzen Meer II (`seaLinks`).
 - Begegnungen auf Wegen: Armeen, die auf demselben Weg aneinander vorbeiziehen, sich überholen oder auf
-  eine dort stehende Armee treffen, bleiben am Treffpunkt stehen und kämpfen – im Krieg überall, an Land
+  eine dort stehende Armee treffen (bis auf 1 km), bleiben am Treffpunkt stehen und kämpfen – im Krieg überall, an Land
   auch im Frieden/Embargo (dann beginnt der Krieg); Durchmarschrecht und geteilte Karte lassen passieren.
   Auf See kämpfen nur Nationen im Krieg. Wer in einen laufenden Kampf nachrückt, verschmilzt mit der
   größten eigenen Armee dort; alle Kämpfe laufen im selben Stundentakt.
@@ -270,7 +282,8 @@
 - Armeen zählen Abschüsse. Schlachtschiffe und Eisenbahngeschütze bekommen beim Bau einen Namen (Orte der
   eigenen Nation, z. B. „SMS …“); jede eigene Armee lässt sich umbenennen.
 - Karteneditor (nur `npm run dev`, Knopf im Hauptmenü oder `#editor`): Land-, Hafen- und Seewege
-  hinzufügen/löschen, Verläufe und Einschiffpunkte per Knick verschieben, Kreuzungen setzen. Gespeichert
+  hinzufügen/löschen, Verläufe und Einschiffpunkte per Knick verschieben, Kreuzungen setzen; Modus „Rohstoffe“:
+  Rohstoff und Doppelprovinz je Provinz setzen, mit Regelprüfung der Nation und Entfernung zum nächsten Feld. Gespeichert
   werden Vorgaben in `scripts/maps/europe.edits.json`; der Kartenbau schreibt die Grundkarte nach
   `data/maps/europe.base.json` und wendet die Vorgaben an (`src/game/mapedits.ts`).
 - Inseln werden nicht zerteilt: Stücke einer Insel gehören der Provinz, deren Stadt dort liegt (sonst dem
@@ -292,16 +305,39 @@
   verlorene Hauptstadt in ihre wertvollste sichere Provinz. Der Stern auf der Karte zeigt die aktive Hauptstadt.
 - Truppenmoral (nur Infanterie): 10–100 %. Ziel = Provinzmoral (stehend in eigener Provinz) bzw. 50 %
   (sonst), bei Getreidemangel −20 %. Zum Tageswechsel geht sie auf das Ziel zu, nie darüber hinaus:
-  höchstens +10 %/−8 %, bei Getreidemangel +5 %/−13 %. Kampfeffekte (Nahkampf −2 %, Beschuss −1,5 %,
-  Abschüsse +1 % bis +5 % je Runde) wirken sofort und unabhängig davon. Kampfkraft je Moral linear:
+  höchstens +10 %/−8 %, bei Getreidemangel +5 %/−13 %. Kampfeffekte wirken je Kampfstunde und unabhängig davon.
+- Kampfmoral je Stunde (Vorgabe, Nah- und Fernkampf zusammen): Nahkampf −2 %, gegen zwei und mehr Armeen −3 %,
+  beschossen −2 % (egal wie viele Schützen), Nahkampf und Beschuss zusammen höchstens −4 % – egal wie viele
+  Armeen angreifen. Abschüsse +1 % je Einheit, höchstens +4 %, gegen den Verlust gerechnet (im Nahkampf netto
+  höchstens +2 %, Schütze ohne Gegenwehr bis +4 %).
+- Nahkampfreichweite 1 km (Vorgabe, `MILITARY.meleeKm`): stehende Armeen im Krieg, die höchstens 1 km
+  auseinander stehen, kämpfen – an Land wie auf See, Artillerie in diesem Umkreis wird in den Nahkampf
+  verwickelt. Marschierende Armeen bleiben genau am Rand dieses Umkreises stehen, sobald sie einer Armee im
+  Krieg so nahe kommen (auch auf anderen Wegen und vor Städten); Nachrücker verschmelzen mit der größten
+  eigenen Armee im Umkreis. Städte werden aus 1 km Entfernung erobert.
+- Flächenschaden (Vorgabe): jeder Treffer im Nah- und Fernkampf trifft alle gegnerischen Armeen im selben
+  Umkreis von 1 km mit vollem Schaden; Aufteilen schützt nicht.
+- Verbände (Vorgabe): stehende Armeen derselben Nation (Landtruppen bzw. Flotten) im Umkreis von 1 km werden
+  alle 10 Spielminuten zur größten zusammengefasst – im Kampf wie im Stand. Wer dabei einen unterbrochenen
+  Marschbefehl hat, bleibt als Teil vorgemerkt und zieht nach dem Kampf mit seinem Anteil (Verluste anteilig)
+  unter alter Nummer weiter. Nie zusammengefasst: vom Spieler abgeteilte Armeen und Armeen mit Angriffsziel.
+- Marschart im Armeefenster (Vorgabe): „Normal“ (Standard) hält im Marsch nicht für Gegner in Reichweite,
+  „Angriff“ hält mit Fernkampfeinheiten, sobald ein Gegner in Reichweite ist, und zieht danach weiter. Im
+  Stand feuern Fernkampfeinheiten immer selbständig. „Gewaltmarsch“ (umschaltbar): 50 % schneller, im Marsch
+  je Stunde −4 % Moral (Infanterie) bzw. 4 % der Lebenspunkte (Maschinen, können ausfallen), keine Reparatur.
+- Angriff (Vorgabe, Rechtsklick auf eine feindliche Armee oder Knopf im Armeefenster): die Armee verfolgt das
+  Ziel und plant neu, wenn es weiterzieht. Mit Fernkampfeinheiten (auch gemischt) rückt sie nur bis in
+  Reichweite heran und beschießt es, sonst bis in den Nahkampf.
+- Reichweiten (Vorgabe): Artillerie 60 km, Eisenbahngeschütz 180 km, Schlachtschiff 90 km. Kampfkraft je Moral linear:
   1,2 × Moral: 10 % → 0,12 bis 100 % → 1,2 (1,0 bei 83,3 %). Das Armeefenster zeigt Ziel und Gründe.
 - Spielbeginn: alle Provinzen und Truppen haben 70 % Moral (Startgeld 100.000).
-- Kämpfe und Eroberungen gelten je Ort: Armeen auf einem Weg kämpfen nur mit Armeen am selben Wegpunkt
-  (nicht mit der Besatzung der nächsten Stadt); erobern kann nur, wer in der Stadt steht. Läuft eine
+- Kämpfe und Eroberungen gelten im Umkreis von 1 km (siehe Nahkampfreichweite): eine Armee weiter draußen auf
+  dem Weg kämpft nicht mit der Besatzung der nächsten Stadt und erobert sie nicht. Läuft eine
   Provinz ohne Besatzung über, stellt der neue Herr eine Infanterie hinein – eine Stadt ist nie leer.
 - Unterbrochene Befehle: Wird ein Marsch durch Nahkampf, eine Begegnung auf dem Weg oder ein Fernkampfziel
   angehalten, merkt sich die Armee ihr Ziel und zieht weiter, sobald sie wieder frei ist (Prüfung alle
-  10 Spielminuten). Ein neuer Befehl oder „Halt“ verwirft das gemerkte Ziel.
+  10 Spielminuten). Ein neuer Befehl oder „Halt“ verwirft das gemerkte Ziel. Bei einer Verfolgung bestimmt
+  das Ziel den Weg, ein gemerktes Ziel entfällt.
 - Eisenbahn deckt auch die Wege bis zu den Hafenpunkten ab (Schienen auf der Karte, Bahntempo bis zum
   Hafenpunkt, danach Transporttempo).
 - Abbruch eines Baus, einer laufenden Fertigung oder einer Hauptstadtverlegung erstattet die vollen Kosten.

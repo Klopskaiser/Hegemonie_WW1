@@ -1,11 +1,14 @@
-// Karteneditor (nur mit Dev-Server): Wege, Häfen, Seewege und Kreuzungen von Hand nachbessern.
+// Karteneditor (nur mit Dev-Server): Wege, Häfen, Seewege, Kreuzungen und Rohstoffe von Hand nachbessern.
 // Bearbeitet werden Vorgaben (scripts/maps/<karte>.edits.json), die auf die generierte Grundkarte
 // angewendet werden; Speichern schreibt zusätzlich die fertige Karte nach public/maps.
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { CATEGORIES, CATEGORY_NAMES, RES_NAMES } from '../game/balance.ts';
 import { edgePoints, isSea, nodeCount, nodeName, nodeNeighbors, nodePos } from '../game/graph.ts';
-import type { MapData } from '../game/mapdata.ts';
+import { checkNation, FAR_KM, NATION_MAX, NATION_MIN } from '../game/mapcheck.ts';
+import { RESOURCES, type MapData, type Resource } from '../game/mapdata.ts';
 import { applyEdits, pairKey, samplePath, territoryAt, type MapEdits, type Pt } from '../game/mapedits.ts';
+import { iconImage, ResIcon } from './icons.tsx';
 import { forgetMap } from './maps.ts';
 
 interface Edge {
@@ -73,7 +76,8 @@ export function MapEditor({ onExit }: { onExit(): void }) {
   const [dirty, setDirty] = useState(false);
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
-  const [mode, setMode] = useState<'edit' | 'connect'>('edit');
+  const [mode, setMode] = useState<'edit' | 'connect' | 'resources'>('edit');
+  const [selProv, setSelProv] = useState<number | null>(null);
   const [connectFrom, setConnectFrom] = useState<number | null>(null);
   const [sel, setSel] = useState<{ u: number; v: number } | null>(null);
   const [selNode, setSelNode] = useState<number | null>(null);
@@ -85,7 +89,7 @@ export function MapEditor({ onExit }: { onExit(): void }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const view = useRef<View>({ s: 0.2, ox: 0, oy: 0 });
   const drag = useRef<Drag | null>(null);
-  const pan = useRef<{ x: number; y: number; ox: number; oy: number; moved: boolean } | null>(null);
+  const pan = useRef<{ x: number; y: number; ox: number; oy: number; moved: boolean; at: Pt } | null>(null);
   const mouse = useRef<Pt | null>(null);
   const frame = useRef(0);
 
@@ -211,6 +215,16 @@ export function MapEditor({ onExit }: { onExit(): void }) {
 
   const setInner = (e: Edge, pts: Pt[], base: MapEdits = edits) => withPath(base, name(e.u), name(e.v), pts.slice(1, -1));
 
+  /** Rohstoff einer Provinz setzen; entspricht er der Grundkarte, entfällt die Vorgabe */
+  const setResource = (prov: number, r: Resource, double: boolean) => {
+    if (!base) return;
+    const pname = base.provinces[prov].name;
+    const resources = { ...(edits.resources ?? {}) };
+    delete resources[pname];
+    if (base.provinces[prov].resource !== r || base.provinces[prov].double !== double) resources[pname] = { r, double };
+    commit({ ...edits, resources });
+  };
+
   // ------------------------------------------------------------ Zeichnen
 
   const provincePaths = useMemo(() => {
@@ -257,8 +271,34 @@ export function MapEditor({ onExit }: { onExit(): void }) {
       ctx.strokeStyle = 'rgba(60, 40, 20, 0.45)';
       ctx.stroke(provincePaths.provinces[i]);
     });
+    if (mode === 'resources' && selProv !== null) {
+      ctx.strokeStyle = '#c0281a';
+      ctx.lineWidth = 3 / s;
+      ctx.stroke(provincePaths.provinces[selProv]);
+    }
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     const X = (x: number) => ox + x * s, Y = (y: number) => oy + y * s;
+    // Rohstoffmodus: Symbole statt Wege
+    if (mode === 'resources') {
+      const size = s > 0.5 ? 18 : 14;
+      ctx.font = '11px Georgia, serif';
+      ctx.textAlign = 'center';
+      for (const p of map.provinces) {
+        const n = p.double ? 2 : 1;
+        const x = X(p.mid[0]) - (n * size) / 2, y = Y(p.mid[1]) - size / 2;
+        ctx.fillStyle = edits.resources?.[p.name] ? 'rgba(255, 214, 120, 0.95)' : 'rgba(245, 235, 210, 0.8)';
+        ctx.beginPath();
+        ctx.roundRect(x - 2, y - 2, n * size + 4, size + 4, 4);
+        ctx.fill();
+        const img = iconImage(p.resource, schedule);
+        if (img.complete) for (let k = 0; k < n; k++) ctx.drawImage(img, x + k * size, y, size, size);
+        if (s > 0.35) {
+          ctx.fillStyle = 'rgba(40, 25, 10, 0.95)';
+          ctx.fillText(p.name, X(p.mid[0]), y - 5);
+        }
+      }
+      return;
+    }
     const line = (pts: Pt[]) => {
       ctx.beginPath();
       pts.forEach(([x, y], k) => (k ? ctx.lineTo(X(x), Y(y)) : ctx.moveTo(X(x), Y(y))));
@@ -439,6 +479,8 @@ export function MapEditor({ onExit }: { onExit(): void }) {
     if (!map) return;
     const p = toKm(ev);
     if (ev.button === 2) return;
+    // Rohstoffe: Klick wählt die Provinz (beim Loslassen), Ziehen verschiebt die Karte
+    if (mode === 'resources') return startPan(ev);
     // Wegpunkt des gewählten Weges greifen
     if (selEdge && mode === 'edit') {
       const k = vertexAt(selEdge, p);
@@ -486,7 +528,7 @@ export function MapEditor({ onExit }: { onExit(): void }) {
   };
 
   const startPan = (ev: React.PointerEvent) => {
-    pan.current = { x: ev.clientX, y: ev.clientY, ox: view.current.ox, oy: view.current.oy, moved: false };
+    pan.current = { x: ev.clientX, y: ev.clientY, ox: view.current.ox, oy: view.current.oy, moved: false, at: toKm(ev) };
     (ev.target as Element).setPointerCapture?.(ev.pointerId);
   };
 
@@ -503,6 +545,8 @@ export function MapEditor({ onExit }: { onExit(): void }) {
     }
     const pn = pan.current;
     if (pn) {
+      // kleines Zittern beim Klicken verschiebt die Karte nicht
+      if (!pn.moved && Math.hypot(ev.clientX - pn.x, ev.clientY - pn.y) < 3) return;
       view.current.ox = pn.ox + ev.clientX - pn.x;
       view.current.oy = pn.oy + ev.clientY - pn.y;
       pn.moved = true;
@@ -519,7 +563,10 @@ export function MapEditor({ onExit }: { onExit(): void }) {
     const d = drag.current;
     drag.current = null;
     if (pan.current) {
-      if (!pan.current.moved && mode === 'edit') {
+      if (!pan.current.moved && mode === 'resources' && map) {
+        const t = territoryAt(map, pan.current.at[0], pan.current.at[1]);
+        setSelProv(t >= 0 && t < map.provinces.length ? t : null);
+      } else if (!pan.current.moved && mode === 'edit') {
         setSel(null);
         setSelNode(null);
         setSelVertex(null);
@@ -580,7 +627,7 @@ export function MapEditor({ onExit }: { onExit(): void }) {
       else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); void save(); }
       else if (e.key === 'Delete' && selEdge) deleteEdge(selEdge);
       else if (e.key.toLowerCase() === 'k' && selVertex) toggleJunction();
-      else if (e.key === 'Escape') { setConnectFrom(null); setSel(null); setSelNode(null); setSelVertex(null); }
+      else if (e.key === 'Escape') { setConnectFrom(null); setSel(null); setSelNode(null); setSelVertex(null); setSelProv(null); }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -614,7 +661,8 @@ export function MapEditor({ onExit }: { onExit(): void }) {
     v.s = Math.max(v.s, 1.2);
     v.ox = el.clientWidth / 2 - x * v.s;
     v.oy = el.clientHeight / 2 - y * v.s;
-    setSelNode(n);
+    if (mode === 'resources' && n < map.provinces.length) setSelProv(n);
+    else setSelNode(n);
     setSel(null);
     schedule();
   };
@@ -653,6 +701,7 @@ export function MapEditor({ onExit }: { onExit(): void }) {
         <strong>Karteneditor · Europa 1914</strong>
         <button className={'btn small' + (mode === 'edit' ? ' active' : '')} onClick={() => { setMode('edit'); setConnectFrom(null); }}>Bearbeiten</button>
         <button className={'btn small' + (mode === 'connect' ? ' active' : '')} onClick={() => { setMode('connect'); setConnectFrom(null); }}>Verbinden</button>
+        <button className={'btn small' + (mode === 'resources' ? ' active' : '')} onClick={() => { setMode('resources'); setConnectFrom(null); setSel(null); setSelNode(null); setSelVertex(null); }}>Rohstoffe</button>
         <button className="btn small" disabled={!history.length} onClick={undo}>Rückgängig</button>
         <button className="btn small" disabled={!future.length} onClick={redo}>Wiederholen</button>
         <button className="btn small primary" disabled={!dirty} onClick={() => void save()}>Speichern</button>
@@ -679,6 +728,8 @@ export function MapEditor({ onExit }: { onExit(): void }) {
               <p className="small muted">Provinz–Provinz (auch ohne gemeinsame Grenze, dann als Abkürzung), Provinz–Seegebiet (Hafen), Seegebiet–Seegebiet.</p>
             </section>
           )}
+
+          {mode === 'resources' && <ResourcePanel map={map} base={base!} edits={edits} prov={selProv} onSet={setResource} onGo={goTo} />}
 
           {selEdge && (
             <section>
@@ -737,9 +788,19 @@ export function MapEditor({ onExit }: { onExit(): void }) {
                 </div>
               );
             })}
+            {Object.entries(edits.resources ?? {}).map(([pname, v]) => (
+              <div key={'res' + pname} className="editor-row small">
+                <span>◆ {pname}: {RES_NAMES[v.r]}{v.double ? ' ×2' : ''}</span>
+                <button className="btn small" title="Rohstoff der Grundkarte" onClick={() => {
+                  const resources = { ...(edits.resources ?? {}) };
+                  delete resources[pname];
+                  commit({ ...edits, resources });
+                }}>✕</button>
+              </div>
+            ))}
             {(edits.junctions?.add?.length || edits.junctions?.remove?.length)
               ? <p className="small">Kreuzungen: +{edits.junctions?.add?.length ?? 0} / −{edits.junctions?.remove?.length ?? 0}</p> : null}
-            {!edits.add?.length && !edits.remove?.length && !pathKeys.length && <p className="small muted">Noch keine.</p>}
+            {!edits.add?.length && !edits.remove?.length && !pathKeys.length && !Object.keys(edits.resources ?? {}).length && <p className="small muted">Noch keine.</p>}
             {applied!.warnings.map((w) => <p key={w} className="small warn">⚠ {w}</p>)}
           </section>
 
@@ -747,10 +808,77 @@ export function MapEditor({ onExit }: { onExit(): void }) {
             <h3>Bedienung</h3>
             <p>Weg anklicken zum Auswählen. Knick ziehen zum Verschieben (rastet an Knicken anderer Wege und Kreuzungen ein, Umschalt: frei). Knicke an derselben Stelle ziehen gemeinsam mit (Alt: nur dieser Weg).</p>
             <p>Doppelklick auf den Weg: Knick einfügen. Rechtsklick auf einen Knick: löschen. K: Kreuzung am gewählten Knick. Entf: Verbindung löschen.</p>
+            <p>Rohstoffe: Provinz anklicken, Rohstoff wählen und „doppelt“ umschalten. Geänderte Provinzen sind gelb hinterlegt.</p>
             <p>Strg+Z / Strg+Y, Strg+S speichert. Mausrad zoomt, Ziehen auf freier Fläche verschiebt die Karte.</p>
           </section>
         </aside>
       </div>
     </div>
+  );
+}
+
+/** Rohstoffmodus: Auswahl für die gewählte Provinz und Regelprüfung ihrer Nation */
+function ResourcePanel({ map, base, edits, prov, onSet, onGo }: {
+  map: MapData;
+  base: MapData;
+  edits: MapEdits;
+  prov: number | null;
+  onSet(prov: number, r: Resource, double: boolean): void;
+  onGo(node: number): void;
+}) {
+  const nationName = (id: string) => map.nations.find((n) => n.id === id)?.name ?? id;
+  const pct = (v: number) => `${Math.round(v * 100)} %`;
+  if (prov === null) {
+    const all = map.nations.map((n) => checkNation(map, n.id)).filter((c) => c.problems.length);
+    return (
+      <section>
+        <h3>Rohstoffe</h3>
+        <p className="small">Provinz anklicken.</p>
+        <h3>Regelverstöße und weite Wege</h3>
+        {all.map((c) => (
+          <button key={c.nation} className="editor-link small" onClick={() => onGo(map.nations.find((n) => n.id === c.nation)!.capital)}>
+            ⚠ {nationName(c.nation)}: {c.problems.join(', ')}
+          </button>
+        ))}
+        {!all.length && <p className="small muted">Keine.</p>}
+      </section>
+    );
+  }
+  const p = map.provinces[prov];
+  const b = base.provinces[prov];
+  const c = checkNation(map, p.nation);
+  const major = map.nations.find((n) => n.id === p.nation)?.major;
+  return (
+    <section>
+      <h3>{p.name}</h3>
+      <p className="small">
+        {nationName(p.nation)}{p.capital ? ' · Hauptstadt' : ''}
+        {edits.resources?.[p.name] ? ` · Grundkarte: ${RES_NAMES[b.resource]}${b.double ? ' ×2' : ''}` : ''}
+      </p>
+      <div className="editor-res">
+        {RESOURCES.map((r) => (
+          <button key={r} className={'btn small' + (p.resource === r ? ' active' : '')} onClick={() => onSet(prov, r, p.double)}>
+            <ResIcon res={r} size={16} /> {RES_NAMES[r]}
+          </button>
+        ))}
+      </div>
+      <label className="small">
+        <input type="checkbox" checked={p.double} onChange={(e) => onSet(prov, p.resource, e.target.checked)} /> doppelt
+      </label>
+      <h3>{nationName(p.nation)}{major ? ' (Großmacht)' : ''}</h3>
+      <p className="small">
+        {CATEGORIES.map((k) => `${CATEGORY_NAMES[k]} ${pct(c.shares[k])}`).join(' · ')}
+        <br />Doppelprovinzen: {c.doubles} · Öl: {c.oil} · {c.provinces} Provinzen
+      </p>
+      {major && <p className="small muted">Großmächte: jede Kategorie {pct(NATION_MIN)}–{pct(NATION_MAX)}, genau 2 Doppelprovinzen.</p>}
+      {c.problems.map((x) => <p key={x} className="small warn">⚠ {x}</p>)}
+      <h3>Nächstes Feld ab Hauptstadt</h3>
+      {RESOURCES.map((r) => (
+        <div key={r} className={'editor-row small' + (c.nearest[r].km > FAR_KM ? ' warn' : '')}>
+          <span><ResIcon res={r} size={14} /> {RES_NAMES[r]}</span>
+          <span>{c.nearest[r].km === 0 ? 'eigen' : c.nearest[r].province >= 0 ? `${Math.round(c.nearest[r].km)} km (${map.provinces[c.nearest[r].province].name})` : '–'}</span>
+        </div>
+      ))}
+    </section>
   );
 }

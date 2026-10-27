@@ -27,7 +27,7 @@ describe('Karte', () => {
 
   it('gibt jeder Spielernation 10 Provinzen mit genau 2 Doppelprovinzen, Kleinstaaten weniger', () => {
     expect(map.provinces.length).toBeGreaterThanOrEqual(160);
-    expect(map.provinces.length).toBeLessThanOrEqual(180);
+    expect(map.provinces.length).toBeLessThanOrEqual(195);
     for (const n of map.nations) {
       const own = map.provinces.filter((p) => p.nation === n.id);
       if (n.major) {

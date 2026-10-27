@@ -588,3 +588,5 @@ svg.flag { vertical-align: -2px; border-radius: 1px; box-shadow: 0 1px 1px rgba(
 .overview-msg { color: var(--ink); font-weight: bold; }
 .link-btn { background: none; border: none; padding: 0; font: inherit; color: var(--ink); cursor: pointer; text-align: left; }
 .link-btn:hover { text-decoration: underline; }
+.editor-res { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin: 6px 0; }
+.editor-res .btn { display: flex; align-items: center; gap: 4px; justify-content: flex-start; }

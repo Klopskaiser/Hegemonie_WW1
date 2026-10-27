@@ -57,12 +57,14 @@ Kartenbau nötig, nicht zur Laufzeit.
   `scripts/headless.ts`, Beispielmodell `scripts/example-model.ts` (devDependency `ws`).
 - `src/persist/db.ts` – IndexedDB (`meta` für das Menü, `saves` für den Zustand).
 - `src/ui/` – React-Oberfläche, `MapCanvas.tsx` zeichnet die Karte auf Canvas (Lasso, Rechtsklick-Befehle).
-  `MapEditor.tsx` Karteneditor (nur Dev-Server, Endpunkte in `vite.config.ts`, Logik in `src/game/mapedits.ts`).
+  `MapEditor.tsx` Karteneditor (nur Dev-Server, Endpunkte in `vite.config.ts`, Logik in `src/game/mapedits.ts`,
+  Rohstoffprüfung in `src/game/mapcheck.ts`).
   Bilder unter `public/images` (Platzhalter, solange Dateien fehlen; Liste in `public/images/README.md`).
 - `scripts/build-map.ts` + `scripts/maps/<id>.ts` – Kartenpipeline: Admin-1-Regionen →
   Grenzen von 1914 → Topologie/Vereinfachung → Projektion (km) → feste Provinzzahl je Nation
-  (Großmacht 10, Kleinstaat nach Fläche) per gewichtetem k-Means + Voronoi → Nachbarn,
-  Küsten, Ressourcen, Doppelprovinzen. Neue Karte = alte Spielstände ungültig (Worker meldet das).
+  (Großmacht 10, Kleinstaat nach Fläche oder `provinces`) per gewichtetem k-Means + Voronoi → Nachbarn,
+  Küsten, Ressourcen, Doppelprovinzen → Maßstab (`scale`). Rohstoffe der Grundkarte werden beim Neubau
+  übernommen (`--new-resources` verteilt neu). Neue Karte = alte Spielstände ungültig (Worker meldet das).
 
 ## Stand der Meilensteine
 
