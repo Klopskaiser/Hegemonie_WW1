@@ -12,7 +12,7 @@ export interface NewGameOptions {
   speed: number;
   seed: number;
   now: number;
-  /** standard: nur Wehramt und 10 Infanterie je Provinz; test: ausgebaute Provinzen, große Vorräte */
+  /** standard: nur Wehramt und 10 Infanterie je Provinz; test: ausgebaute Provinzen, große Vorräte, ohne Nebel */
   scenario?: Scenario;
   difficulty?: Difficulty;
   /** Rechenweise der Kampfmoral (Standard DEFAULT_COMBAT_MORALE) */
@@ -25,7 +25,7 @@ export type Scenario = 'standard' | 'test';
 
 export const SCENARIOS: { id: Scenario; name: string; description: string }[] = [
   { id: 'standard', name: 'Standard', description: 'Jede Provinz mit Wehramt und 10 Infanterie, sonst keine Gebäude.' },
-  { id: 'test', name: 'Testszenario', description: 'Ausgebaute Provinzen (Eisenbahn, Fabrik 2, Kaserne, Hafen, Festung) und große Vorräte.' },
+  { id: 'test', name: 'Testszenario', description: 'Ausgebaute Provinzen (Eisenbahn, Fabrik 2, Kaserne, Hafen, Festung), große Vorräte, ohne Nebel des Krieges.' },
 ];
 
 const noBuildings = (): Record<Building, number> => ({
@@ -92,6 +92,7 @@ export function createGame(map: MapData, opt: NewGameOptions): GameState {
     difficulty: opt.difficulty ?? 'normal',
     ...(opt.combatMorale && opt.combatMorale !== DEFAULT_COMBAT_MORALE ? { combatMorale: opt.combatMorale } : {}),
     ...(opt.superiority === false ? { superiority: false } : {}),
+    ...(scenario === 'test' ? { revealed: true } : {}),
     aiProfiles: Object.fromEntries(map.nations.map((n) => [n.id, {
       aggression: Math.round((0.7 + rnd() * 0.6) * 100) / 100,
       caution: Math.round((0.8 + rnd() * 0.4) * 100) / 100,

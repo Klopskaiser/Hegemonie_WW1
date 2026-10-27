@@ -98,6 +98,23 @@ export function canEnter(state: GameState, map: MapData, a: Army, node: number):
   return owner === a.owner || atWar(state, a.owner, owner) || hasRightOfWay(state, a.owner, owner) || !!a.warOn?.includes(owner);
 }
 
+/**
+ * Wie weit (Anteil des Weges) eine Armee von u aus in Richtung v kommt, ohne v zu betreten. Wege sind frei (auch
+ * im Friedensgebiet, nur die fremde Stadt verlangt Krieg); Eisenbahngeschütze fahren nur bis knapp vor die Grenze
+ * des eigenen Bahnnetzes.
+ */
+export function roadLimit(state: GameState, map: MapData, a: Army, u: number, v: number): number {
+  if (!isRailOnly(a) || canTraverse(state, map, a, u, v)) return 1;
+  if (!canEnter(state, map, a, u)) return 0;
+  const [l1, len] = edgeParts(map, u, v);
+  const t = edgeThrough(map, u, v);
+  const own = Math.min(l1, t ? t.f0 * len : l1);
+  return Math.max(0, (own - BORDER_GAP_KM) / len);
+}
+
+/** Abstand zur Grenze, an dem ein Marsch auf einem Weg endet, der nicht weiter darf (km) */
+const BORDER_GAP_KM = 0.5;
+
 /** Länge des Landstücks eines Hafenweges: von der Stadt bis zum Hafenpunkt */
 export function harborLeg(map: MapData, u: number, v: number): number {
   const pts = edgePoints(map, u, v);
@@ -387,9 +404,11 @@ export function planRoute(state: GameState, map: MapData, a: Army, time: number,
     const r = from.road, t = to.road;
     const same = r.a === t.a && r.b === t.b ? t.f : r.a === t.b && r.b === t.a ? 1 - t.f : null;
     if (same !== null) {
-      if (Math.abs(same - r.f) < 1e-6) return null;
-      if (same > r.f) return { path: [r.a, r.b], startFrac: r.f, endFrac: same, hours: seg(r.a, r.b) * (same - r.f) };
-      return { path: [r.b, r.a], startFrac: 1 - r.f, endFrac: 1 - same, hours: seg(r.b, r.a) * (r.f - same) };
+      // nicht über die Grenze hinaus, wenn das Land dahinter nicht betreten werden darf
+      const ahead = same > r.f ? Math.min(same, roadLimit(state, map, a, r.a, r.b)) : Math.max(same, 1 - roadLimit(state, map, a, r.b, r.a));
+      if (Math.abs(ahead - r.f) < 1e-6 || (ahead - r.f) * (same - r.f) <= 0) return null;
+      if (ahead > r.f) return { path: [r.a, r.b], startFrac: r.f, endFrac: ahead, hours: seg(r.a, r.b) * (ahead - r.f) };
+      return { path: [r.b, r.a], startFrac: 1 - r.f, endFrac: 1 - ahead, hours: seg(r.b, r.a) * (r.f - ahead) };
     }
   }
   const starts: Leg[] = 'node' in from
@@ -411,16 +430,31 @@ export function planRoute(state: GameState, map: MapData, a: Army, time: number,
       if (!canEnter(state, map, a, e.node) && e.node !== s.node) continue;
       const mid = pathTo(tree, e.node);
       if (!mid) continue;
-      const hours = s.hours + tree.hours[e.node] + e.hours;
-      if (best && hours >= best.hours) continue;
+      let hours = s.hours + tree.hours[e.node] + e.hours;
       let path = [...s.path.slice(0, -1), ...mid];
       if (e.path.length > 1) path = [...path, e.path[1]];
       // Hin und gleich wieder zurück auf demselben Weg vermeiden
       if (path.length < 2) continue;
+      let endFrac = e.path.length > 1 ? e.frac : undefined;
+      if (endFrac !== undefined) {
+        // Wegziel jenseits einer Grenze, die nicht überschritten werden darf: bis knapp davor
+        const u = path[path.length - 2], v = path[path.length - 1];
+        const lim = roadLimit(state, map, a, u, v);
+        if (endFrac > lim) {
+          hours -= seg(u, v) * (endFrac - lim);
+          endFrac = lim;
+          if (lim < ROAD_EPS) {
+            path = path.slice(0, -1);
+            endFrac = undefined;
+            if (path.length < 2) continue;
+          }
+        }
+      }
+      if (best && hours >= best.hours) continue;
       best = {
         path, hours,
         ...(s.path.length > 1 ? { startFrac: s.frac } : {}),
-        ...(e.path.length > 1 ? { endFrac: e.frac } : {}),
+        ...(endFrac !== undefined ? { endFrac } : {}),
       };
     }
   }
@@ -710,7 +744,9 @@ export function processArrivals(ctx: MilitaryContext): void {
         break;
       }
       const next = m.path[m.seg + 1];
-      if (!canTraverse(state, map, a, node, next)) {
+      // letztes Teilstück zu einem Wegpunkt: nur bis dorthin (darf vor einer Grenze enden)
+      const partial = m.seg + 1 === m.path.length - 1 && m.endFrac !== undefined && m.endFrac < 1;
+      if (partial ? m.endFrac! > roadLimit(state, map, a, node, next) + 1e-9 : !canTraverse(state, map, a, node, next)) {
         a.move = null;
         break;
       }

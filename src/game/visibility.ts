@@ -18,9 +18,12 @@ export class Sight extends Set<number> {
   circles: [number, number, number][] = [];
   /** Provinzen, in deren Gebiet eigene (oder Partner-)Truppen stehen oder marschieren */
   inside = new Set<number>();
+  /** ohne Nebel: alles in Sicht (Testszenario) */
+  all = false;
 
   /** Liegt ein Punkt in Sicht (ganz einsehbare Provinz oder Sichtkreis)? */
   sees(x: number, y: number, province?: number): boolean {
+    if (this.all) return true;
     if (province !== undefined && this.full.has(province)) return true;
     return this.circles.some(([cx, cy, r]) => Math.hypot(cx - x, cy - y) <= r);
   }
@@ -31,12 +34,13 @@ export function sightRange(a: Army): number {
   return Math.max(MILITARY.viewRange, ...unitTypes(a).map((u) => UNITS[u].sight ?? 0));
 }
 
-/** Sicht einer Nation einschließlich der Partner mit geteilter Karte. */
+/** Sicht einer Nation einschließlich der Partner mit geteilter Karte; im Testszenario sieht der Spieler alles. */
 export function visibleNodes(state: GameState, map: MapData, nation: string): Sight {
   const sight = new Sight();
+  sight.all = !!state.revealed && nation === state.playerNation;
   const who = new Set([nation, ...Object.keys(state.nations).filter((n) => n !== nation && sharesMap(state, nation, n))]);
   state.provinces.forEach((ps, i) => {
-    if (who.has(ps.owner)) sight.full.add(i);
+    if (sight.all || who.has(ps.owner)) sight.full.add(i);
   });
   for (const a of state.armies) {
     if (!who.has(a.owner)) continue;
@@ -64,7 +68,7 @@ export function armyVisible(state: GameState, map: MapData, nation: string, a: A
   if (!vis.sees(x, y, province)) return false;
   if (!a.move && !a.pos && province !== undefined) {
     const ps = state.provinces[province];
-    if (ps.owner === a.owner && ps.buildings.fortress >= 2 && !vis.full.has(province) && !vis.inside.has(province)) return false;
+    if (!vis.all && ps.owner === a.owner && ps.buildings.fortress >= 2 && !vis.full.has(province) && !vis.inside.has(province)) return false;
   }
   return true;
 }

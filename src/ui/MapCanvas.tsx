@@ -358,7 +358,7 @@ export function MapCanvas(props: Props) {
     ctx.drawImage(base, 0, 0);
 
     // Nebel des Krieges: fremde Provinzen abdunkeln, ausgenommen die Sichtkreise der eigenen Armeen
-    if (p.visible) {
+    if (p.visible && !p.visible.all) {
       const vis = p.visible;
       let fogKey = viewKey + '|';
       for (let i = 0; i < map.provinces.length; i++) fogKey += vis.full.has(i) ? '1' : '0';

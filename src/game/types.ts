@@ -289,6 +289,8 @@ export interface GameState {
   winner: string | null;
   /** öffentliche Meldungen seit der letzten Zeitungsausgabe */
   newsFeed: NewsEvent[];
+  /** ohne Nebel des Krieges für den Spieler (Testszenario) */
+  revealed?: boolean;
   /** Stärke der eingebauten KI */
   difficulty: Difficulty;
   /** Rechenweise der Kampfmoral (TROOP_MORALE bzw. COMBAT_MORALE_V2); fehlt das Feld, gilt DEFAULT_COMBAT_MORALE */

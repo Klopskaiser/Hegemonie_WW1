@@ -99,7 +99,8 @@
 - Kartendaten: Natural Earth (Public Domain), Grenzen von 1914 per Regionszuordnung.
 - Spielstart: jede Provinz mit Wehramt und 10 Infanterie an der Stadt, sonst keine Gebäude.
   Vorräte für alle gleich: 6000 je Rohstoff, +1000 beim häufigsten eigenen Rohstoff (Gleichstand
-  per Zufall), 100.000 Geld. Wählbares Testszenario mit ausgebauten Provinzen und 50.000 je Wert.
+  per Zufall), 100.000 Geld. Wählbares Testszenario mit ausgebauten Provinzen und 50.000 je Wert,
+  ohne Nebel des Krieges für den Spieler (`revealed`, die KI sieht weiter nur ihr Gebiet).
 - Infanterie entsteht nur automatisch: Wehramt 16 h je Infanterie bei 100 % Moral, Kaserne 1: 8 h,
   Kaserne 2: 4 h, Kaserne kostet 1000 Getreide je Stufe und Tag; Kaserne braucht Wehramt, ohne Wehramt halbes Tempo;
   ohne beide keine Infanterie. Fertigung nur für Fabrikeinheiten: Artillerie/Panzerwagen Fabrik 1,
@@ -348,7 +349,7 @@
   keine Einheiten, fällt ihre letzte Einheit nicht durch Fernkampf – die Moral sinkt weiter (bis 10 %), die
   Provinz gilt als umkämpft. Städte fallen nur im Nahkampf; unterwegs oder im gleichzeitigen Nahkampf wird
   die letzte Einheit normal vernichtet.
-- Reichweiten (Vorgabe): Artillerie 65 km, Eisenbahngeschütz 195 km, Schlachtschiff 100 km. Kampfkraft je Moral linear:
+- Reichweiten (Vorgabe): Artillerie 65 km, Eisenbahngeschütz 200 km, Schlachtschiff 100 km. Kampfkraft je Moral linear:
   1,2 × Moral: 10 % → 0,12 bis 100 % → 1,2 (1,0 bei 83,3 %). Das Armeefenster zeigt Ziel und Gründe.
 - Spielbeginn: alle Provinzen und Truppen haben 70 % Moral (Startgeld 100.000).
 - Kämpfe und Eroberungen gelten im Umkreis von 1 km (siehe Nahkampfreichweite): eine Armee weiter draußen auf
@@ -376,6 +377,9 @@
 - Krieg beim Marsch: Die Kriegserklärung (mit Rückfrage) ist nur nötig, wenn das Ziel eine Stadt einer
   Nation im Frieden ist oder der Weg zwingend durch eine ihrer Städte führt. Wege und Wegpunkte in ihrem
   Gebiet und der Abzug von dort sind frei; Begegnungen mit ihren Armeen an Land lösen weiterhin Kampf aus.
+  Ein Marsch zu einem Wegpunkt hinter der letzten eigenen Stadt läuft bis dorthin durch (früher blieb die Armee
+  in dieser Stadt stehen). Eisenbahngeschütze fahren nur im eigenen Bahnnetz: ein Wegpunkt jenseits der Grenze
+  wird bis knapp davor angefahren (`roadLimit`).
 - Nahkampf (Vorgabe): je Armee kämpfen die stärksten Einheiten vorne (Panzer, Panzerwagen, dann Infanterie,
   Fernkampfeinheiten mit halbem Wert zuletzt). Platz 1–20 zählt voll, Platz 21–50 linear weniger
   ((51 − Platz)/31), ab Platz 51 nichts – höchstens 35 „volle“ Einheiten. Fernkampf hat keine Grenze.

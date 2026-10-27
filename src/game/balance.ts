@@ -252,7 +252,7 @@ export const UNITS: Record<UnitType, UnitDef> = {
   },
   railgun: {
     name: 'Eisenbahngeschütz', short: 'EBG', cost: { money: 50000, iron: 10000, lumber: 5000, coal: 5000, oil: 10000 }, hours: 62,
-    requires: { factory: 3, railroad: 1 }, speed: 12.5, attack: 6, defense: 1, hp: 30, range: 195,
+    requires: { factory: 3, railroad: 1 }, speed: 12.5, attack: 6, defense: 1, hp: 30, range: 200,
     upkeep: { oil: 10, coal: 40 }, railOnly: true, sight: 200,
   },
   battleship: {

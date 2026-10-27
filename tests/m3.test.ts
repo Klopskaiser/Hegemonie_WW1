@@ -41,6 +41,18 @@ describe('Diplomatie-Stufen', () => {
     expect(findPath(sim.state, map, army, army.node, target)).not.toBeNull();
   });
 
+  it('Testszenario: der Spieler sieht alles, die KI weiter mit Nebel', () => {
+    const state = createGame(map, { id: 't', name: 'Test', playerNation: 'DE', speed: 1, seed: 3, now: 0, scenario: 'test' });
+    const sim = new Simulation(state, map);
+    const madrid = garrison(sim, 'ES', prov('Madrid'))!;
+    const vis = visibleNodes(sim.state, map, 'DE');
+    expect(vis.all).toBe(true);
+    expect(vis.full.size).toBe(map.provinces.length);
+    expect(armyVisible(sim.state, map, 'DE', madrid, vis)).toBe(true);
+    expect(visibleNodes(sim.state, map, 'FR').all).toBe(false);
+    expect(visibleNodes(newSim().state, map, 'DE').all).toBe(false);
+  });
+
   it('geteilte Karte zeigt die Armeen des Partners', () => {
     const sim = newSim();
     const madrid = garrison(sim, 'ES', prov('Madrid'))!;

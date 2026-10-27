@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { COMBAT_MORALE_V2, DAY, DEFAULT_COMBAT_MORALE, HOUR, MILITARY, MINUTE, SUPERIORITY, UNITS } from '../src/game/balance.ts';
-import { applyCombatMorale, armyHp, armyPosition, combatRound, forcedMarchWear, killPoints2, meleeOutput, meleePower, rangedPower, repairMachines, segmentHours, unitCount } from '../src/game/military.ts';
+import { applyCombatMorale, armyHp, armyPosition, combatRound, forcedMarchWear, killPoints2, meleeOutput, meleePower, rangedPower, repairMachines, roadLimit, segmentHours, unitCount } from '../src/game/military.ts';
 import { allRates, netRate, upkeepUse } from '../src/game/economy.ts';
 import type { MapData } from '../src/game/mapdata.ts';
 import { Simulation } from '../src/game/sim.ts';
@@ -485,5 +485,44 @@ describe('Beschuss räumt keine Stadt', () => {
     guns(s2, city);
     s2.sim.advance(DAY);
     expect(s2.sim.state.armies.includes(city)).toBe(false);
+  });
+});
+
+describe('Marsch zu einem Wegpunkt vor einer Grenze', () => {
+  const testGame = () => {
+    const state = createGame(map, { id: 't', name: 'T', playerNation: 'DE', speed: 1, seed: 7, now: 0, scenario: 'test' });
+    for (const n of Object.values(state.nations)) n.controller = 'human';
+    return new Simulation(state, map);
+  };
+  const march = (sim: Simulation, a: Army, frac: number) => {
+    const r = sim.apply('DE', { type: 'move', army: a.id, to: prov('Stuttgart'), toward: prov('Nancy'), frac });
+    if (!r.ok) throw new Error(r.error);
+    for (let k = 0; k < 6 * 24 * 6 && a.move; k++) sim.advance(10 * MINUTE);
+  };
+
+  it('ein Eisenbahngeschütz bleibt nicht in der letzten eigenen Stadt stehen, sondern fährt bis zum Wegpunkt', () => {
+    const sim = testGame();
+    const gun: Army = { id: sim.state.nextArmyId++, owner: 'DE', node: prov('München'), units: { railgun: 1 }, keepApart: true };
+    sim.state.armies.push(gun);
+    march(sim, gun, 0.3);
+    expect(gun.pos).toEqual({ a: prov('Stuttgart'), b: prov('Nancy'), f: 0.3 });
+  });
+
+  it('jenseits der Grenze: Eisenbahngeschütz bis knapp davor, Infanterie (Weg im Friedensgebiet) bis zum Wegpunkt', () => {
+    const sim = testGame();
+    const s = prov('Stuttgart'), n = prov('Nancy');
+    const gun: Army = { id: sim.state.nextArmyId++, owner: 'DE', node: prov('München'), units: { railgun: 1 }, keepApart: true };
+    const inf: Army = { id: sim.state.nextArmyId++, owner: 'DE', node: prov('München'), units: { infantry: 3 }, keepApart: true };
+    sim.state.armies.push(gun, inf);
+    const lim = roadLimit(sim.state, map, gun, s, n);
+    expect(lim).toBeGreaterThan(0.3);
+    expect(lim).toBeLessThan(0.9);
+    march(sim, gun, 0.9);
+    expect(gun.pos?.a).toBe(s);
+    expect(gun.pos?.b).toBe(n);
+    expect(gun.pos!.f).toBeCloseTo(lim, 6);
+    march(sim, inf, 0.9);
+    expect(inf.pos).toEqual({ a: s, b: n, f: 0.9 });
+    expect(roadLimit(sim.state, map, inf, s, n)).toBe(1);
   });
 });
