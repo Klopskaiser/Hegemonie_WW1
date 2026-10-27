@@ -1,7 +1,7 @@
 // Produktion, Verbrauch, Moral und Siegpunkte.
 
 import {
-  ALL_RES, BUILDING_ORDER, BUILDINGS, CATEGORIES, CATEGORY_OF, CATEGORY_RES, DEFECTION, MORALE, POINTS, PROVINCE, RECRUIT_BASE_HOURS,
+  ALL_RES, BUILDING_ORDER, BUILDINGS, CATEGORIES, CATEGORY_OF, CATEGORY_RES, DEFECTION, MORALE, POINTS, PROVINCE, RECRUIT_HOURS,
   RECRUIT_WITHOUT_OFFICE, UNITS, type Building, type Category, type Res, type UnitType,
 } from './balance.ts';
 import { RESOURCES, type MapData, type Resource } from './mapdata.ts';
@@ -195,12 +195,13 @@ export function validShares(cat: Category, shares: Partial<Record<Resource, numb
   return sum === 100;
 }
 
-/** Spielstunden je Infanterie in einer Provinz, null = es entsteht keine Infanterie. */
-export function recruitHours(ps: ProvinceState): number | null {
+/** Spielstunden je Infanterie in einer Provinz, null = es entsteht keine Infanterie (Doppelprovinz: doppelt so schnell). */
+export function recruitHours(ps: ProvinceState, double = false): number | null {
   const office = activeLevel(ps, 'recruitment') > 0;
   const barracks = activeLevel(ps, 'barracks');
   if ((!office && barracks === 0) || ps.revolt || ps.morale <= 0) return null;
-  const rate = (2 ** barracks * (office ? 1 : RECRUIT_WITHOUT_OFFICE) * ps.morale) / RECRUIT_BASE_HOURS;
+  const hours = RECRUIT_HOURS[Math.min(barracks, RECRUIT_HOURS.length - 1)];
+  const rate = ((office ? 1 : RECRUIT_WITHOUT_OFFICE) * ps.morale * (double ? 2 : 1)) / hours;
   return 1 / rate;
 }
 
@@ -260,6 +261,8 @@ export function moraleTarget(state: GameState, map: MapData, id: number): Morale
   }
   const unrest = mp.neighbors.filter((n) => state.provinces[n].owner === ps.owner && state.provinces[n].morale < DEFECTION.threshold).length;
   if (unrest > 0) parts.push({ label: `Unruhe in ${unrest} Nachbarprovinz${unrest > 1 ? 'en' : ''}`, value: -unrest * MORALE.unrestNeighbor });
+  const calm = mp.neighbors.filter((n) => state.provinces[n].owner === ps.owner && state.provinces[n].morale >= MORALE.calmMorale).length;
+  if (calm > 0) parts.push({ label: `Zufriedene Nachbarn (${calm})`, value: calm * MORALE.calmNeighbor });
   const declared = (nation?.warPenalty ?? []).filter((t) => t > state.time).length;
   // höchstens einmal, egal wie viele Kriege erklärt wurden
   if (declared > 0) parts.push({ label: 'Kriegserklärung', value: -MORALE.declareWar });

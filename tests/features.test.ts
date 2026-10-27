@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { ALL_RES, DAY, HOUR, MILITARY, MINUTE, MORALE, UNITS } from '../src/game/balance.ts';
-import { applyDamage, armyLocation, boardingWait, combatRound, conquer, damageBuildings, defections, harborLeg, inMelee, maxRange, meleeOutput, repairMachines, troopTarget, unitHp } from '../src/game/military.ts';
+import { applyDamage, armyLocation, armyPosition, boardingWait, combatRound, conquer, damageBuildings, defections, harborLeg, inMelee, maxRange, meleeOutput, repairMachines, troopTarget, unitHp } from '../src/game/military.ts';
 import { activeLevel, capitalOf, moraleTarget, nationRates, recruitHours, totalUse, useSources } from '../src/game/economy.ts';
 import type { MapData } from '../src/game/mapdata.ts';
 import { edgeParts } from '../src/game/graph.ts';
@@ -11,6 +11,7 @@ import { checkRepair, requiredWars } from '../src/game/actions.ts';
 import { priceBounds } from '../src/game/market.ts';
 import { atWar } from '../src/game/diplomacy.ts';
 import { armyName } from '../src/game/names.ts';
+import { armyVisible, visibleNodes } from '../src/game/visibility.ts';
 import { makeRng } from '../src/game/rng.ts';
 import { Simulation } from '../src/game/sim.ts';
 import { BasicAI } from '../src/game/ai.ts';
@@ -121,20 +122,23 @@ describe('Moral, Abschüsse, Namen', () => {
 });
 
 describe('Provinzmoral und Hauptstadt', () => {
-  it('Moralziel: Grundwert 80 %, kein Hauptstadtbonus, Entfernung 1 % je 120 km, Unruhe der Nachbarn −2 %', () => {
+  it('Moralziel: Grundwert 85 %, kein Hauptstadtbonus, Entfernung 1 % je 100 km (höchstens 30 %), Nachbarn −2 %/+1 %', () => {
     const sim = newSim();
     const berlin = prov('Berlin');
     const cap = moraleTarget(sim.state, map, berlin);
-    expect(cap.parts[0]).toEqual({ label: 'Grundwert', value: 0.8 });
+    expect(cap.parts[0]).toEqual({ label: 'Grundwert', value: 0.85 });
     expect(cap.parts.some((p) => p.label === 'Hauptstadt')).toBe(false);
     const far = map.provinces.filter((p) => p.nation === 'DE' && !p.capital)
       .map((p) => ({ p, d: Math.hypot(p.center[0] - map.provinces[berlin].center[0], p.center[1] - map.provinces[berlin].center[1]) }))
       .sort((x, y) => y.d - x.d)[0];
     const dist = moraleTarget(sim.state, map, far.p.id).parts.find((x) => x.label === 'Entfernung zur Hauptstadt');
-    if (far.d > MORALE.distanceFree) expect(dist!.value).toBeCloseTo(-Math.min(MORALE.distanceMax, ((far.d - MORALE.distanceFree) / 120) * 0.01), 6);
+    if (far.d > MORALE.distanceFree) expect(dist!.value).toBeCloseTo(-Math.min(0.3, ((far.d - MORALE.distanceFree) / 100) * 0.01), 6);
     const n = map.provinces[berlin].neighbors.find((x) => map.provinces[x].nation === 'DE')!;
     sim.state.provinces[n].morale = 0.2;
     expect(moraleTarget(sim.state, map, berlin).parts.find((p) => p.label.startsWith('Unruhe'))!.value).toBeCloseTo(-0.02, 9);
+    // zufriedene Nachbarn (mindestens 95 % Moral): +1 % je Provinz
+    sim.state.provinces[n].morale = 0.96;
+    expect(moraleTarget(sim.state, map, berlin).parts.find((p) => p.label.startsWith('Zufriedene'))!.value).toBeCloseTo(0.01, 9);
   });
 
   it('Moral ändert sich je Tag um höchstens 10 Prozentpunkte', () => {
@@ -638,5 +642,29 @@ describe('Wehramt abschaltbar', () => {
     const half = recruitHours(ps)!;
     sim.apply('DE', { type: 'switchBuilding', province: berlin, building: 'recruitment', on: true });
     expect(recruitHours(ps)!).toBeCloseTo(half / 2, 6);
+  });
+});
+
+describe('Festung und Sicht', () => {
+  it('Festung ab Stufe 2 verbirgt die Besatzung – aber nicht vor Truppen in derselben Provinz', () => {
+    const sim = newSim();
+    sim.apply('DE', { type: 'declareWar', nation: 'FR' });
+    const p = map.provinces.find((x) => x.nation === 'DE' && (x.links ?? []).some((n) => map.provinces[n].nation === 'FR'))!;
+    const q = p.links!.find((n) => map.provinces[n].nation === 'FR')!;
+    sim.state.provinces[q].buildings.fortress = 2;
+    sim.state.armies = sim.state.armies.filter((a) => a.node !== q);
+    const fr: Army = { id: sim.state.nextArmyId++, owner: 'FR', node: q, units: { infantry: 5 } };
+    sim.state.armies.push(fr);
+    // deutsche Späher direkt vor der Grenze, noch im eigenen Gebiet: Besatzung verborgen
+    const [l1, len] = edgeParts(map, p.id, q);
+    const scout: Army = { id: sim.state.nextArmyId++, owner: 'DE', node: p.id, pos: { a: p.id, b: q, f: (l1 / len) * 0.99 }, units: { infantry: 1 } };
+    sim.state.armies.push(scout);
+    let vis = visibleNodes(sim.state, map, 'DE');
+    const near = Math.hypot(...([0, 1].map((k) => map.provinces[q].center[k] - armyPosition(map, scout, sim.state.time)[k]) as [number, number]));
+    if (near <= 100) expect(armyVisible(sim.state, map, 'DE', fr, vis)).toBe(false);
+    // deutsche Truppen in der Stadt (im Kampf): Besatzung sichtbar
+    sim.state.armies.push({ id: sim.state.nextArmyId++, owner: 'DE', node: q, units: { infantry: 10 } });
+    vis = visibleNodes(sim.state, map, 'DE');
+    expect(armyVisible(sim.state, map, 'DE', fr, vis)).toBe(true);
   });
 });

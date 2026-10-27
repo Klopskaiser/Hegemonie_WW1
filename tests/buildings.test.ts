@@ -77,8 +77,13 @@ describe('Bauamt und Manufaktur', () => {
     expect(checkBuild(sim.state, map, 'DE', berlin, 'railroad').hours).toBe(54);
     expect(BUILDINGS.office.hours(1)).toBe(48);
     expect(BUILDINGS.office.cost(1)).toEqual({ money: 30000, lumber: 500 });
-    sim.invalidate();
-    expect(allRates(sim.state, map).DE.cons.money).toBe(2000);
+    // Unterhalt: das Bauamt kostet 2000 Geld zusätzlich (Wehrämter und Kasernen kosten eigenes Geld)
+    ps.buildings.office = 0;
+    const without = allRates(sim.state, map).DE.cons.money;
+    ps.buildings.office = 1;
+    expect(allRates(sim.state, map).DE.cons.money - without).toBe(2000);
+    // Moral +2 % für die Provinz
+    expect(BUILDINGS.office.morale(1)).toBeCloseTo(0.02, 9);
   });
 
   it('Manufaktur: +10 % Rohstoffe je Stufe, nicht Geld; schließt Fabrik aus und stellt keine Einheiten her', () => {

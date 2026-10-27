@@ -285,7 +285,7 @@ export class Simulation {
   /** Stündlich: Wehramt und Kaserne stellen Infanterie auf (ohne Kosten). */
   private recruitInfantry(): void {
     this.state.provinces.forEach((ps, i) => {
-      const h = recruitHours(ps);
+      const h = recruitHours(ps, this.map.provinces[i].double);
       if (h === null) return;
       ps.recruit += 1 / h;
       while (ps.recruit >= 1) {

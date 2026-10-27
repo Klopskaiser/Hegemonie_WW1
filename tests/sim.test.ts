@@ -122,16 +122,20 @@ describe('Simulation', () => {
     expect(sim.apply('DE', { type: 'enqueue', province: capitalDE, unit: 'infantry' }).ok).toBe(false);
   });
 
-  it('Wehramt und Kaserne stellen Infanterie auf (16/8/4 h bei 100 % Moral)', () => {
+  it('Wehramt und Kaserne stellen Infanterie auf (32/21/16 h bei 100 % Moral, Doppelprovinz doppelt so schnell)', () => {
     const ps = { ...newSim().state.provinces[capitalDE], morale: 1, revolt: false };
     ps.buildings = { ...ps.buildings, recruitment: 1, barracks: 0 };
-    expect(recruitHours(ps)).toBeCloseTo(16);
+    expect(recruitHours(ps)).toBeCloseTo(32);
+    expect(recruitHours(ps, true)).toBeCloseTo(16);
     ps.buildings.barracks = 1;
-    expect(recruitHours(ps)).toBeCloseTo(8);
+    expect(recruitHours(ps)).toBeCloseTo(21);
     ps.buildings.barracks = 2;
-    expect(recruitHours(ps)).toBeCloseTo(4);
+    expect(recruitHours(ps)).toBeCloseTo(16);
+    // Moral wirkt anteilig
+    expect(recruitHours({ ...ps, morale: 0.5 })).toBeCloseTo(32);
+    // Kaserne ohne Wehramt: halb so schnell
     ps.buildings.recruitment = 0;
-    expect(recruitHours(ps)).toBeCloseTo(8);
+    expect(recruitHours(ps)).toBeCloseTo(32);
     ps.buildings.barracks = 0;
     expect(recruitHours(ps)).toBeNull();
   });

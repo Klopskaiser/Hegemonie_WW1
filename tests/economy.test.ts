@@ -16,15 +16,16 @@ function newSim() {
 }
 
 describe('Geld und Unterhalt', () => {
-  it('Geld: 3200 je Provinz bei 100 % Moral, Doppelprovinz das Doppelte', () => {
+  it('Geld: 1600 je Provinz bei 100 % Moral, Doppelprovinz das Doppelte; Rohstoff 3150', () => {
     const sim = newSim();
     const single = map.provinces.find((p) => !p.double)!, double = map.provinces.find((p) => p.double)!;
-    const ps = { ...sim.state.provinces[single.id], morale: 1 };
-    expect(provinceOutput(map, ps, single.id).money).toBe(3200);
-    expect(provinceOutput(map, { ...sim.state.provinces[double.id], morale: 1 }, double.id).money).toBe(6400);
+    const ps = { ...sim.state.provinces[single.id], morale: 1, buildings: { ...sim.state.provinces[single.id].buildings, railroad: 0, harbor: 0, factory: 0, manufactory: 0 } };
+    expect(provinceOutput(map, ps, single.id).money).toBe(1600);
+    expect(provinceOutput(map, ps, single.id).amount).toBe(3150);
+    expect(provinceOutput(map, { ...sim.state.provinces[double.id], morale: 1 }, double.id).money).toBe(3200);
   });
 
-  it('Provinzunterhalt 266 je Kategorie, Eisenbahn 500 Kohle', () => {
+  it('Provinzunterhalt 800 je Kategorie, Eisenbahn 500 Kohle', () => {
     const sim = newSim();
     const own = sim.state.provinces.filter((p) => p.owner === 'DE').length;
     const r = allRates(sim.state, map).DE;

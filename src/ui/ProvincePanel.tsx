@@ -36,7 +36,7 @@ export function ProvincePanel({ map, state, id, armies: visibleArmies, act, onSe
   const remaining = (end: number) => (state.paused ? 'pausiert' : fmtDuration((end - state.time) / state.speed));
   /** Spielstunden als Echtzeit */
   const remainingHours = (h: number) => (state.paused ? `${Math.round(h)} h Spielzeit` : fmtDuration((h * 3600_000) / state.speed));
-  const infantryHours = recruitHours(ps);
+  const infantryHours = recruitHours(ps, mp.double);
 
   const run = async (a: Action) => {
     const r = await act(a);

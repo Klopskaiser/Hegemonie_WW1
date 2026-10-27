@@ -125,7 +125,8 @@
   Gegner; Hauptstadtfall: Moral +10 % Sieger / −15 % Verlierer. Aufständische ab Moral < 25 %.
 - Nebel: eigene Provinzen (und die von Partnern mit geteilter Karte) sind ganz einsehbar, sonst nur
   ein Kreis von 100 km um jede eigene Armee (Eisenbahngeschütz und Schlachtschiff 200 km). Festung ab
-  Stufe 2 verbirgt die Truppen ihres Besitzers in dessen Provinz.
+  Stufe 2 verbirgt die Truppen ihres Besitzers in dessen Stadt – nicht vor Nationen, die selbst mit
+  Truppen in dieser Provinz stehen.
 - KI (M2): Kriege erst nach 3 Tagen Friedenszeit, Großmächte gegen deutlich schwächere Nachbarn,
   5 Tage Waffenstillstand nach Frieden. Kleinstaaten starten mit Besatzung in jeder Provinz und
   Festung 2 in der Hauptstadt. Flotten bewegt die KI noch nicht (M4).
@@ -148,7 +149,7 @@
   `reset`/`step` (Belohnung = Zuwachs des laufenden Punktestands), Batch mit JSONL-Aufzeichnung
   und stdio-Modus für Python. Protokoll: `docs/EXTERNAL_MODELS.md`.
 - Wirtschaft (Vorgabe): Geld 3200 je Provinz bei 100 % Moral, Doppelprovinz 6400 (unabhängig von
-  Stadt/Hauptstadt, Gebäude erhöhen Geld nicht). Provinzunterhalt 266 je Provinz und Tag in jeder
+  Stadt/Hauptstadt, Gebäude erhöhen Geld nicht). Provinzunterhalt 800 je Provinz und Tag in jeder
   Kategorie (Nahrung, Baustoffe, Energie), ersetzt den bisherigen Nahrungsbedarf 100/200.
   Verbrauchsregler je Nation (Wirtschaftsfenster, Aktion `setConsumption`): Anteil jedes Rohstoffs
   am Provinzunterhalt seiner Kategorie; fehlt ein eingestellter Rohstoff, springen die anderen
@@ -361,3 +362,11 @@
 - Provinzübersicht im Vollbild (Knopf „Provinzen“): je eigene Provinz Ertrag, Moral, Gebäude als Bilder (Stufe,
   abgeschaltet grau, beschädigt rot), Schalter für Wehramt/Kaserne/Eisenbahn, Bauen und Technik in Auftrag geben;
   unten „Überall Wehrämter bauen“ sowie alle Kasernen aktivieren/deaktivieren (`ProvinceOverview.tsx`).
+- Wirtschaft (Vorgabe, neu): Rohstoffertrag je Provinz 3150 pro Tag bei 100 % Moral (Doppelprovinz 6300),
+  Grundbedarf je Provinz 800 pro Kategorie (Nahrung, Baustoffe, Energie) und Tag. Geld je Provinz 1600
+  (Doppelprovinz 3200).
+- Moral (Vorgabe, neu): Grundwert 85 %, Entfernung zur Hauptstadt −1 % je 100 km ab 300 km (höchstens −30 %),
+  +1 % je angrenzender eigener Provinz mit mindestens 95 % Moral, Bauamt +2 %.
+- Gebäude: Kaserne Unterhalt 1000 Getreide und 1000 Geld je Stufe; Wehramt Bauzeit 10 min, Unterhalt 500 Geld.
+- Infanterie-Rekrutierung bei 100 % Moral: nur Wehramt 32 h, mit Kaserne 21 h, Kaserne Stufe 2 16 h; Kaserne
+  ohne Wehramt halb so schnell; die Moral wirkt anteilig, Doppelprovinzen stellen doppelt so schnell auf.

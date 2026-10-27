@@ -31,11 +31,11 @@ export const CATEGORY_RES: Record<Category, Resource[]> = {
 
 export const PROVINCE = {
   /** Rohstoffproduktion pro Tag bei 100 % Moral */
-  resourceBase: 1800,
+  resourceBase: 3150,
   /** Geld pro Tag bei 100 % Moral; Doppelprovinz das Doppelte */
-  money: 3200,
+  money: 1600,
   /** Unterhalt je Provinz und Tag in jeder Kategorie (Nahrung, Baustoffe, Energie), verteilt nach Verbrauchsregler */
-  upkeep: 266,
+  upkeep: 800,
 };
 
 // ---------------------------------------------------------------- Gebäude
@@ -116,26 +116,27 @@ export const BUILDINGS: Record<Building, BuildingDef> = {
     prodBonus: () => 0,
     morale: () => 0,
     requires: { recruitment: 1 },
-    upkeep: { grain: 1000 },
+    upkeep: { grain: 1000, money: 1000 },
     switchable: true,
-    describe: (l) => `Infanterie bei 100 % Moral alle ${RECRUIT_BASE_HOURS / 2 ** l} h. Arbeitet auch ohne Wehramt, dann halb so schnell. Unterhalt 1000 Getreide je Stufe und Tag.`,
+    describe: (l) => `Infanterie bei 100 % Moral alle ${RECRUIT_HOURS[l]} h (mit Wehramt; ohne halb so schnell, Doppelprovinz doppelt so schnell). Unterhalt 1000 Getreide und 1000 Geld je Stufe und Tag.`,
   },
   recruitment: {
     name: 'Wehramt', maxLevel: 1, switchable: true,
     cost: () => ({ money: 2000, lumber: 125, iron: 125 }),
-    hours: () => 2,
+    hours: () => 1 / 6,
     prodBonus: () => 0,
     morale: () => 0,
-    describe: () => `Stellt kostenlos Infanterie auf, bei 100 % Moral alle ${RECRUIT_BASE_HOURS} h. Ohne Wehramt und Kaserne keine Infanterie.`,
+    upkeep: { money: 500 },
+    describe: () => `Stellt kostenlos Infanterie auf, bei 100 % Moral alle ${RECRUIT_HOURS[0]} h (Doppelprovinz doppelt so schnell). Ohne Wehramt und Kaserne keine Infanterie. Unterhalt 500 Geld/Tag.`,
   },
   office: {
     name: 'Bauamt', maxLevel: 1,
     cost: () => ({ money: 30000, lumber: 500 }),
     hours: () => 48,
     prodBonus: () => 0,
-    morale: () => 0,
+    morale: () => 0.02,
     upkeep: { money: 2000 },
-    describe: () => `Bauzeiten von Gebäuden in dieser Provinz −${Math.round(OFFICE_SPEEDUP * 100)} %. Unterhalt 2000 Geld/Tag.`,
+    describe: () => `Bauzeiten von Gebäuden in dieser Provinz −${Math.round(OFFICE_SPEEDUP * 100)} %, Moral +2 %. Unterhalt 2000 Geld/Tag.`,
   },
   fortress: {
     name: 'Festung', maxLevel: 5, lives: 1,
@@ -157,8 +158,11 @@ export const OFFICE_SPEEDUP = 0.25;
 /** Bauschleife: höchstens so viele geplante Gebäude je Provinz (ohne den laufenden Bau) */
 export const BUILD_QUEUE_LIMIT = 6;
 
-/** Stunden je Infanterie mit Wehramt bei 100 % Moral; jede Kasernenstufe halbiert die Zeit (16/8/4 h) */
-export const RECRUIT_BASE_HOURS = 16;
+/**
+ * Stunden je Infanterie mit Wehramt bei 100 % Moral, je Kasernenstufe (0, 1, 2); die Moral wirkt anteilig,
+ * Doppelprovinzen stellen doppelt so schnell auf
+ */
+export const RECRUIT_HOURS = [32, 21, 16];
 /** Kaserne ohne Wehramt: halbes Tempo */
 export const RECRUIT_WITHOUT_OFFICE = 0.5;
 /** Kampf in einer Provinz: Wahrscheinlichkeit je Stunde und Gebäude, eine Stufe zu verlieren */
@@ -273,17 +277,20 @@ export const FACTORY_SPEEDUP = 0.25;
 // ---------------------------------------------------------------- Moral
 
 export const MORALE = {
-  base: 0.8,
+  base: 0.85,
   /** Abzug je `distanceStep` km Entfernung zur Hauptstadt ab `distanceFree` km; ohne Hauptstadt der volle Abzug */
   distancePerStep: 0.01,
-  distanceStep: 120,
+  distanceStep: 100,
   distanceFree: 300,
-  distanceMax: 0.35,
+  distanceMax: 0.3,
   /** Kämpfe in der Provinz: je Tag in Folge mit Kampf dieser Abzug, höchstens battleMax */
   battle: 0.1,
   battleMax: 0.3,
   /** je angrenzende eigene Provinz mit Moral unter DEFECTION.threshold */
   unrestNeighbor: 0.02,
+  /** je angrenzende eigene Provinz mit mindestens `calmMorale` Moral */
+  calmNeighbor: 0.01,
+  calmMorale: 0.95,
   /** Kriegserklärung: Abzug am Moralziel des Erklärenden für so viele Tage (mehrere Erklärungen zählen nicht mehrfach) */
   declareWar: 0.05,
   declareWarDays: 2,
