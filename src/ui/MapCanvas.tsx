@@ -244,19 +244,25 @@ export function MapCanvas(props: Props) {
     return { paths, boxes, coast, colors, names, seaBorders, harborSpots, edges };
   }, [map]);
 
-  const ownerKey = owners.join(',');
-  const borderPaths = useMemo(() => {
+  /**
+   * Provinz- und Staatsgrenzen zum Besitz `key`, zwischengespeichert. Die Zeichenroutine holt sie mit dem
+   * aktuellen Besitz aus propsRef – nie aus einem älteren Renderdurchlauf, sonst landen veraltete Grenzen
+   * in der gespeicherten Linienebene.
+   */
+  const borderCache = useRef<{ map: MapData; key: string; internal: Path2D; national: Path2D } | null>(null);
+  const bordersFor = (own: string[], key: string) => {
+    const c = borderCache.current;
+    if (c && c.map === map && c.key === key) return c;
     const internal: number[] = [], national: number[] = [];
     for (const b of map.borders) {
       if (b.b < 0) continue;
-      (owners[b.a] === owners[b.b] ? internal : national).push(...b.segs);
+      (own[b.a] === own[b.b] ? internal : national).push(...b.segs);
     }
     const pi = new Path2D(), pn = new Path2D();
     buildPath(internal, pi);
     buildPath(national, pn);
-    return { internal: pi, national: pn };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [map, ownerKey]);
+    return (borderCache.current = { map, key, internal: pi, national: pn });
+  };
 
   const fit = () => {
     const el = wrapRef.current;
@@ -308,6 +314,7 @@ export function MapCanvas(props: Props) {
     const cw = canvas.width, ch = canvas.height;
     const viewKey = `${cw}x${ch}@${dpr}|${s}|${ox}|${oy}|${compact ? 1 : 0}`;
     const ownerKey = owners.join(',');
+    const borderPaths = bordersFor(owners, ownerKey);
     const world = (g: CanvasRenderingContext2D) => g.setTransform(dpr * s, 0, 0, dpr * s, dpr * ox, dpr * oy);
 
     // Grund: Meer, Küstenschimmer, Provinzflächen, Papierstruktur, Vignette

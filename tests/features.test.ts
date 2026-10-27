@@ -703,7 +703,7 @@ describe('Festung und Sicht', () => {
 describe('Kampfmoral und Flächenschaden', () => {
   const army = (owner: string, node: number, infantry: number, morale = 0.7): Army => ({ id: Math.floor(Math.random() * 1e9), owner, node, units: { infantry }, morale });
 
-  it('Moral je Kampfrunde: Verluste höchstens −4 %, Abschüsse höchstens +4 %', () => {
+  it('Mechanik 1, Moral je Kampfrunde: Verluste höchstens −4 %, Abschüsse höchstens +4 %', () => {
     const a = (m = 0.5) => army('DE', 0, 10, m);
     const cases: [Partial<{ foes: number; shelled: boolean; kills: number }>, number][] = [
       [{ foes: 1 }, -0.02], // Nahkampf
@@ -717,7 +717,7 @@ describe('Kampfmoral und Flächenschaden', () => {
     ];
     for (const [e, d] of cases) {
       const x = a();
-      applyCombatMorale(new Map([[x, { foes: 0, shelled: false, kills: 0, ...e }]]));
+      applyCombatMorale(new Map([[x, { foes: 0, shelled: false, kills: 0, ...e }]]), 1);
       expect(x.morale! - 0.5, JSON.stringify(e)).toBeCloseTo(d, 9);
     }
   });

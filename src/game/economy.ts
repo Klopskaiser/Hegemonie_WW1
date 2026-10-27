@@ -308,3 +308,31 @@ export function provinceCounts(state: GameState): Record<string, number> {
   for (const ps of state.provinces) out[ps.owner] = (out[ps.owner] ?? 0) + 1;
   return out;
 }
+
+/**
+ * Regler einer Kategorie mit Fokus: die anderen Rohstoffe tragen so viel Provinzunterhalt, wie ihr laufender
+ * Überschuss (Produktion minus fester Verbrauch) hergibt – anteilig zu diesem Überschuss –, der Fokus-Rohstoff
+ * nur den Rest. Vorräte werden nicht eingeplant (die Einstellung trägt sich dauerhaft). Ganze Prozent, Summe 100;
+ * die anderen werden abgerundet, damit sie nie mehr zahlen, als sie hergeben.
+ */
+export function focusShares(cat: Category, focus: Resource, r: NationRates): Partial<Record<Resource, number>> {
+  const others = CATEGORY_RES[cat].filter((x) => x !== focus);
+  const avail = others.map((x) => Math.max(0, r.prod[x] - r.cons[x]));
+  const total = avail.reduce((a, b) => a + b, 0);
+  const out: Partial<Record<Resource, number>> = {};
+  if (r.upkeep <= 0) {
+    for (const x of others) out[x] = 0;
+    out[focus] = 100;
+    return out;
+  }
+  // Anteil, den die anderen zusammen tragen können (höchstens alles)
+  const carry = Math.min(1, total / r.upkeep);
+  let sum = 0;
+  others.forEach((x, i) => {
+    const v = total > 0 ? Math.floor(((avail[i] / total) * carry) * 100) : 0;
+    out[x] = v;
+    sum += v;
+  });
+  out[focus] = 100 - sum;
+  return out;
+}

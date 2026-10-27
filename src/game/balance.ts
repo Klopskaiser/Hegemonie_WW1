@@ -96,7 +96,7 @@ export const BUILDINGS: Record<Building, BuildingDef> = {
   },
   tradepost: {
     name: 'Handelsposten', maxLevel: 1, inland: true,
-    cost: () => ({ money: 12000, iron: 1500, lumber: 2500 }),
+    cost: () => ({ money: 12000, iron: 500, lumber: 2500 }),
     hours: () => 48,
     prodBonus: (l) => (l >= 1 ? 0.07 : 0),
     morale: (l) => (l >= 1 ? 0.03 : 0),
@@ -368,12 +368,37 @@ export const TROOP_MORALE = {
   outnumbered: 0.01,
   shelled: 0.02,
   lossMax: 0.04,
-  /** Zuwachs je vernichteter feindlicher Einheit, höchstens killMax je Runde (gegen den Verlust gerechnet) */
+  /** Zuwachs je vernichteter feindlicher Einheit, höchstens killMax je Runde (gegen den Verlust gerechnet; Mechanik 1) */
   perKill: 0.01,
   killMax: 0.04,
   /** Kampfkraft (und Lebenspunkte) der Infanterie: 1,2 × Moral – 10 % → 0,12, 100 % → 1,2 (1,0 bei 83,3 %) */
   strength: [[0, 0], [1, 1.2]] as [number, number][],
   min: 0.1,
+};
+
+/**
+ * Übermacht im Nahkampf: hat eine Seite einer Schlacht mindestens `ratio`-mal so viele Einheiten wie die andere
+ * (Verbündete addiert, gezählt nach Einheiten, nicht nach Stärke), bekommt jede ihrer Armeen je Runde `boost`
+ * Moral, jede Armee der unterlegenen Seite verliert `malus` – zusätzlich und außerhalb der Rundengrenzen.
+ */
+export const SUPERIORITY = { ratio: 2, boost: 0.005, malus: 0.003 };
+
+/** Rechenweise der Kampfmoral, wenn der Spielstand keine festlegt (1: TROOP_MORALE, 2: COMBAT_MORALE_V2) */
+export const DEFAULT_COMBAT_MORALE = 2;
+
+/**
+ * Kampfmoral, Mechanik 2 (Vorgabe, im Spielstand wählbar): im Kampf je Runde base (Nahkampf, beschossen
+ * oder Fernkampf gegen Fernkampf); Beschuss zusätzlich zum Nahkampf oder eine zweite gegnerische Armee bringen
+ * extra, zusammen höchstens lossMax. Zuwachs: die ersten fullKills Punkte je 1 Abschuss, jeder weitere Punkt bis
+ * maxPoints kostet killsPerExtra Abschüsse (abgerundet). Jede vernichtete Einheit zählt als ein Abschuss.
+ */
+export const COMBAT_MORALE_V2 = {
+  base: 0.025,
+  extra: 0.015,
+  lossMax: 0.04,
+  fullKills: 3,
+  killsPerExtra: 2,
+  maxPoints: 5,
 };
 
 // ---------------------------------------------------------------- Überlaufen von Provinzen

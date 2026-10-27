@@ -6,12 +6,11 @@ import {
   type Action, type ActionContext, type ActionResult,
 } from './actions.ts';
 import { BasicAI } from './ai.ts';
-import {
-  ALL_RES, BUILDINGS, CATEGORIES, CATEGORY_OF, CATEGORY_RES, DAY, DEFECTION, DIFFICULTY, HOUR, MINUTE, TICKS_PER_DAY, TROOP_MORALE, UNITS, VICTORY_SHARE,
+import { DEFAULT_COMBAT_MORALE, ALL_RES, BUILDINGS, CATEGORIES, CATEGORY_OF, CATEGORY_RES, DAY, DEFECTION, DIFFICULTY, HOUR, MINUTE, TICKS_PER_DAY, TROOP_MORALE, UNITS, VICTORY_SHARE,
   type Category, type UnitType,
 } from './balance.ts';
 import { observe, type Controller, type NationView, type Observation } from './controller.ts';
-import { allRates, defaultConsumption, moraleTarget, provincePoints, recruitHours, stepMorale, type NationRates, provinceCounts } from './economy.ts';
+import { allRates, defaultConsumption, moraleTarget, provincePoints, recruitHours, stepMorale, type NationRates, provinceCounts, focusShares } from './economy.ts';
 import type { MapData } from './mapdata.ts';
 import {
   applyCombatMorale, combatRound, type CombatTally, defections, encounters, forcedMarchWear, mergeNearby, pursue, splitParts, engageRanged, isNaval, mixMorale, processArrivals, rangedRound, rejoinSplits, updateRevoltFlags, nextTroopMorale, repairMachines, resumeOrders, troopTarget,
@@ -99,6 +98,7 @@ export class Simulation {
   apply(nation: string, action: Action): ActionResult {
     const r = applyAction(this.ctx, nation, action);
     if (r.ok && !MOVE_ONLY.has(action.type)) this.ratesDirty = true;
+    if (r.ok && action.type === 'setConsumptionFocus') this.applyFocus(nation);
     if (r.ok && action.type === 'enqueue') this.startOrder(action.province);
     if (r.ok && action.type === 'cancelBuild') this.startBuild(action.province);
     this.refresh();
@@ -172,12 +172,13 @@ export class Simulation {
       const tally: CombatTally = new Map();
       combatRound(this.ctx, tally);
       rangedRound(this.ctx, tally);
-      applyCombatMorale(tally);
+      applyCombatMorale(tally, s.combatMorale ?? DEFAULT_COMBAT_MORALE);
       forcedMarchWear(this.ctx);
       rejoinSplits(this.ctx);
       if (updateRevoltFlags(s)) this.dirty = true;
       expireOffers(s);
       this.recruitInfantry();
+      for (const id of this.nationIds) this.applyFocus(id);
       this.runControllers();
     }
     if (s.time % DAY === 0) this.dayChange();
@@ -339,6 +340,31 @@ export class Simulation {
   observation(id: string): Observation {
     this.refresh();
     return observe({ state: this.state, map: this.map, nation: id, rates: this.rates[id], random: () => nextRandom(this.state) });
+  }
+
+  /** Regler mit Fokus nach den aktuellen Raten einstellen (siehe focusShares) */
+  private applyFocus(id: string): void {
+    const n = this.state.nations[id];
+    if (!n.consumptionFocus || !n.alive) return;
+    this.refresh();
+    const r = this.rates[id];
+    if (!r) return;
+    let changed = false;
+    for (const cat of Object.keys(n.consumptionFocus) as Category[]) {
+      const focus = n.consumptionFocus[cat];
+      if (!focus) continue;
+      const shares = focusShares(cat, focus, r);
+      for (const x of CATEGORY_RES[cat]) {
+        if ((n.consumption[x] ?? 0) !== (shares[x] ?? 0)) {
+          n.consumption[x] = shares[x] ?? 0;
+          changed = true;
+        }
+      }
+    }
+    if (changed) {
+      this.invalidateRates();
+      this.refresh();
+    }
   }
 
   private runControllers(): void {

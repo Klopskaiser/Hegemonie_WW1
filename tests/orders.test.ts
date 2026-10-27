@@ -1,8 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { DAY, HOUR, MILITARY, MINUTE, UNITS } from '../src/game/balance.ts';
-import { armyHp, armyPosition, forcedMarchWear, meleeOutput, meleePower, rangedPower, repairMachines, segmentHours, unitCount } from '../src/game/military.ts';
+import { COMBAT_MORALE_V2, DAY, DEFAULT_COMBAT_MORALE, HOUR, MILITARY, MINUTE, SUPERIORITY, UNITS } from '../src/game/balance.ts';
+import { applyCombatMorale, armyHp, armyPosition, combatRound, forcedMarchWear, killPoints2, meleeOutput, meleePower, rangedPower, repairMachines, segmentHours, unitCount } from '../src/game/military.ts';
 import { allRates, netRate, upkeepUse } from '../src/game/economy.ts';
 import type { MapData } from '../src/game/mapdata.ts';
 import { Simulation } from '../src/game/sim.ts';
@@ -316,11 +316,102 @@ describe('Zwei Armeen aus verschiedenen Richtungen', () => {
     const a2 = add({ owner: 'DE', node: r2, units: { infantry: 15 } });
     expect(sim.apply('DE', { type: 'move', army: a1.id, to: q }).ok).toBe(true);
     expect(sim.apply('DE', { type: 'move', army: a2.id, to: q }).ok).toBe(true);
-    // bis beide angekommen sind (angehalten oder schon zusammengefasst)
-    for (let k = 0; k < 4 * 24 * 60 && sim.state.armies.some((x) => (x === a1 || x === a2) && x.move); k++) sim.advance(MINUTE);
-    sim.advance(10 * MINUTE);
+    // bis beide angekommen sind und eine die andere aufnimmt: in dem Moment wächst die verbleibende sprunghaft
+    let jump = 0;
+    for (let k = 0; k < 4 * 24 * 60 + 10 && [a1, a2].filter((x) => sim.state.armies.includes(x)).length === 2; k++) {
+      const before = new Map([a1, a2].map((x) => [x, unitCount(x)]));
+      sim.advance(MINUTE);
+      const gone = [a1, a2].find((x) => !sim.state.armies.includes(x));
+      const kept = [a1, a2].find((x) => sim.state.armies.includes(x));
+      if (gone && kept) jump = unitCount(kept) - before.get(kept)!;
+    }
     const both = [a1, a2].filter((x) => sim.state.armies.includes(x));
     expect(both.length).toBe(1);
-    expect(unitCount(both[0])).toBeGreaterThan(20);
+    expect(jump).toBeGreaterThan(0);
+  });
+});
+
+describe('Kampfmoral Mechanik 2', () => {
+  it('ist die Vorgabe; Mechanik 1 nur noch ausdrücklich', () => {
+    expect(DEFAULT_COMBAT_MORALE).toBe(2);
+    const opt = { id: 't', name: 'T', playerNation: 'DE', speed: 1, seed: 7, now: 0 };
+    expect(createGame(map, opt).combatMorale).toBeUndefined();
+    expect(createGame(map, { ...opt, combatMorale: 1 }).combatMorale).toBe(1);
+    const x: Army = { id: 1, owner: 'DE', node: 0, units: { infantry: 10 }, morale: 0.5 };
+    applyCombatMorale(new Map([[x, { foes: 1, shelled: false, kills: 0 }]]));
+    expect(x.morale! - 0.5).toBeCloseTo(-COMBAT_MORALE_V2.base, 9);
+  });
+
+  it('Verlust −2,5 %, Beschuss oder zweite Armee −1,5 % mehr, höchstens −4 %; Zuwachs 1/2/3, dann je 2 Abschüsse, höchstens +5 %', () => {
+    expect([0, 1, 2, 3, 4, 5, 6, 7, 8, 20, 4.9].map(killPoints2)).toEqual([0, 1, 2, 3, 3, 4, 4, 5, 5, 5, 3]);
+    const cases: [Partial<{ foes: number; shelled: boolean; kills: number }>, number][] = [
+      [{ foes: 1 }, -0.025],
+      [{ foes: 2 }, -0.04],
+      [{ foes: 1, shelled: true }, -0.04],
+      [{ foes: 3, shelled: true }, -0.04],
+      [{ shelled: true }, -0.025], // nur beschossen bzw. Fernkampf gegen Fernkampf
+      [{ foes: 1, kills: 7 }, 0.025],
+      [{ kills: 7 }, 0.05], // Schütze ohne Gegenwehr
+      [{ foes: 1, kills: 4 }, 0.005],
+    ];
+    for (const [e, d] of cases) {
+      const x: Army = { id: 1, owner: 'DE', node: 0, units: { infantry: 10 }, morale: 0.5 };
+      applyCombatMorale(new Map([[x, { foes: 0, shelled: false, kills: 0, ...e }]]), 2);
+      expect(x.morale! - 0.5, JSON.stringify(e)).toBeCloseTo(d, 9);
+    }
+  });
+
+  it('Maschinen zählen für die Moral als ein Abschuss wie Infanterie', () => {
+    const { sim, p, q, add } = setup();
+    sim.state.combatMorale = 2;
+    sim.apply('DE', { type: 'declareWar', nation: 'FR' });
+    sim.state.provinces[q].buildings.fortress = 0;
+    // ein Panzer gegen eine starke Armee: fällt er, zählt das einfach
+    const target = add({ owner: 'FR', node: q, units: { tank: 1 }, wounds: { tank: 49.9 } });
+    const a = add({ owner: 'DE', node: q, units: { infantry: 20 }, keepApart: true });
+    void p;
+    const tally = new Map();
+    combatRound(sim.ctx, tally);
+    expect(sim.state.armies.includes(target)).toBe(false);
+    expect(tally.get(a)?.kills).toBeCloseTo(1, 6);
+    expect(a.kills).toBeCloseTo(1, 6);
+  });
+});
+
+describe('Übermacht im Nahkampf', () => {
+  it('doppelt so viele Einheiten (Verbündete addiert): +0,5 Punkte für die Überlegenen, −0,3 für die Unterlegenen, außerhalb der Grenzen', () => {
+    const { sim, q, add } = setup();
+    sim.apply('DE', { type: 'declareWar', nation: 'FR' });
+    sim.apply('AU', { type: 'declareWar', nation: 'FR' });
+    sim.state.provinces[q].buildings.fortress = 0;
+    const fr = add({ owner: 'FR', node: q, units: { infantry: 10 }, keepApart: true });
+    const de = add({ owner: 'DE', node: q, units: { infantry: 10 }, keepApart: true });
+    const au = add({ owner: 'AU', node: q, units: { infantry: 5, tank: 5 }, keepApart: true });
+    const tally = new Map();
+    combatRound(sim.ctx, tally);
+    // 20 Einheiten (DE + AU, nach Anzahl, Panzer zählen wie Infanterie) gegen 10
+    expect(tally.get(de)?.boost).toBeCloseTo(SUPERIORITY.boost, 9);
+    expect(tally.get(au)?.boost).toBeCloseTo(SUPERIORITY.boost, 9);
+    expect(tally.get(fr)?.boost).toBeCloseTo(-SUPERIORITY.malus, 9);
+    // die Übermacht kommt zu den gedeckelten Werten hinzu: höchstens −4 %, dazu −0,3
+    const x: Army = { id: 1, owner: 'FR', node: 0, units: { infantry: 10 }, morale: 0.5 };
+    applyCombatMorale(new Map([[x, { foes: 3, shelled: true, kills: 0, boost: -SUPERIORITY.malus }]]), 1);
+    expect(x.morale! - 0.5).toBeCloseTo(-0.043, 9);
+  });
+
+  it('knapp unter doppelt so vielen: keine Wirkung; abgeschaltet: keine Wirkung', () => {
+    const { sim, q, add } = setup();
+    sim.apply('DE', { type: 'declareWar', nation: 'FR' });
+    const fr = add({ owner: 'FR', node: q, units: { infantry: 10 }, keepApart: true });
+    const de = add({ owner: 'DE', node: q, units: { infantry: 19 }, keepApart: true });
+    let tally = new Map();
+    combatRound(sim.ctx, tally);
+    expect(tally.get(de)?.boost ?? 0).toBe(0);
+    expect(tally.get(fr)?.boost ?? 0).toBe(0);
+    de.units.infantry = 40;
+    sim.state.superiority = false;
+    tally = new Map();
+    combatRound(sim.ctx, tally);
+    expect(tally.get(de)?.boost ?? 0).toBe(0);
   });
 });

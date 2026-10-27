@@ -211,8 +211,9 @@ const config: MapConfig = {
   ],
   // Sizilien ist eine Provinz (Palermo); die zweite süditalienische Provinz liegt auf dem Festland
   ownIslands: [[13.36, 38.12]],
-  // Patras auf die Peloponnes, damit der Weg nach Kalamata im eigenen Gebiet bleibt
-  cityAt: { Patras: [21.74, 38.24] },
+  // Patras aufs Festland (bei Naupaktos, gegenüber der echten Stadt): so bildet sich die Provinz ganz auf
+  // dem Festland, ohne Splitterstück auf der Peloponnes (die bleibt bei Kalamata)
+  cityAt: { Patras: [21.83, 38.42] },
   // Trabzon (ehemals Samsun): ein Hafen nahe der Stadt zum Schwarzen Meer II
   seaLinks: { Trabzon: ['Schwarzes Meer II'] },
   renames: {

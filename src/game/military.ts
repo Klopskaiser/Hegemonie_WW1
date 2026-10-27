@@ -1,7 +1,6 @@
 // Militär: Wegfindung, Marsch, Nah- und Fernkampf, Eroberung, Aufständische.
 
-import {
-  BUILDING_DAMAGE_CHANCE, BUILDINGS, buildingLives, DAY, DEFECTION, FORTRESS_REDUCTION, HOUR, MILITARY, MINUTE, MORALE, SPLIT_REJOIN, TROOP_MORALE, UNITS,
+import { DEFAULT_COMBAT_MORALE, SUPERIORITY, COMBAT_MORALE_V2, BUILDING_DAMAGE_CHANCE, BUILDINGS, buildingLives, DAY, DEFECTION, FORTRESS_REDUCTION, HOUR, MILITARY, MINUTE, MORALE, SPLIT_REJOIN, TROOP_MORALE, UNITS,
   type Building, type UnitType,
 } from './balance.ts';
 import { atWar, hasRightOfWay, setRelation, noteWarDeclaration } from './diplomacy.ts';
@@ -9,7 +8,7 @@ import { edgeParts, edgePoint, edgePoints, edgeSlice, edgeThrough, isSea, nodeCo
 import type { MapData } from './mapdata.ts';
 import { activeCapital, activeLevel } from './economy.ts';
 import { armyName } from './names.ts';
-import { REBELS, type Army, type GameState, type NewsInfo, type RoadPos } from './types.ts';
+import { REBELS, type Army, type GameState, type NewsInfo, type RoadPos, type CombatMoraleMode } from './types.ts';
 
 export interface MilitaryContext {
   state: GameState;
@@ -1158,7 +1157,7 @@ export function meleePower(a: Army, map: MapData, defending: boolean, sea = fals
 }
 
 /** Moralwirkung einer Kampfstunde je Armee (Nah- und Fernkampf zusammen), siehe applyCombatMorale */
-export type CombatTally = Map<Army, { foes: number; shelled: boolean; kills: number }>;
+export type CombatTally = Map<Army, { foes: number; shelled: boolean; kills: number; boost?: number }>;
 
 function tallyOf(t: CombatTally, a: Army) {
   let e = t.get(a);
@@ -1167,18 +1166,72 @@ function tallyOf(t: CombatTally, a: Army) {
 }
 
 /**
- * Moral der Infanterie nach einer Kampfstunde: Nahkampf −2 %, gegen mehrere Armeen −1 % mehr, beschossen −2 %,
- * zusammen höchstens TROOP_MORALE.lossMax – egal wie viele Armeen angreifen oder schießen. Abschüsse bringen
- * bis killMax zurück (im Nahkampf also netto höchstens +2 %, ein Schütze ohne Gegenwehr bis +4 %).
+ * Moral der Infanterie nach einer Kampfstunde.
+ * Mechanik 1: Nahkampf −2 %, gegen mehrere Armeen −1 % mehr, beschossen −2 %, zusammen höchstens
+ * TROOP_MORALE.lossMax – egal wie viele Armeen angreifen oder schießen. Abschüsse bringen bis killMax zurück
+ * (im Nahkampf also netto höchstens +2 %, ein Schütze ohne Gegenwehr bis +4 %).
+ * Mechanik 2: siehe COMBAT_MORALE_V2.
  */
-export function applyCombatMorale(t: CombatTally): void {
+export function applyCombatMorale(t: CombatTally, mode: CombatMoraleMode = DEFAULT_COMBAT_MORALE): void {
   for (const [a, e] of t) {
+    if (mode === 2) {
+      const v = COMBAT_MORALE_V2;
+      let loss = e.foes > 0 || e.shelled ? v.base : 0;
+      if (e.foes > 1 || (e.foes > 0 && e.shelled)) loss += v.extra;
+      shiftMorale(a, killPoints2(e.kills) * 0.01 - Math.min(v.lossMax, loss) + (e.boost ?? 0));
+      continue;
+    }
     let loss = 0;
     if (e.foes > 0) loss += TROOP_MORALE.melee + (e.foes > 1 ? TROOP_MORALE.outnumbered : 0);
     if (e.shelled) loss += TROOP_MORALE.shelled;
     const gain = Math.min(TROOP_MORALE.killMax, e.kills * TROOP_MORALE.perKill);
-    shiftMorale(a, gain - Math.min(TROOP_MORALE.lossMax, loss));
+    // Übermacht wirkt zusätzlich, außerhalb der Rundengrenzen
+    shiftMorale(a, gain - Math.min(TROOP_MORALE.lossMax, loss) + (e.boost ?? 0));
   }
+}
+
+/**
+ * Übermacht im Nahkampf (vor dem Schaden der Runde): Schlachten sind zusammenhängende Gruppen von Armeen im
+ * Nahkampf. Je Armee zählt ihre Seite (sie und alle, mit denen sie nicht im Krieg ist) gegen alle Gegner der
+ * Schlacht, nach Einheitenzahl. Mindestens SUPERIORITY.ratio-fach überlegen: +boost, unterlegen: −malus.
+ */
+function superiority(state: GameState, t: CombatTally, foesOf: Map<Army, Army[]>): void {
+  const parent = new Map<Army, Army>();
+  const find = (x: Army): Army => {
+    let r = x;
+    while (parent.get(r) !== r) r = parent.get(r)!;
+    parent.set(x, r);
+    return r;
+  };
+  for (const [a, foes] of foesOf) {
+    for (const x of [a, ...foes]) if (!parent.has(x)) parent.set(x, x);
+    for (const b of foes) parent.set(find(b), find(a));
+  }
+  const groups = new Map<Army, Army[]>();
+  for (const x of parent.keys()) {
+    const r = find(x);
+    (groups.get(r) ?? groups.set(r, []).get(r)!).push(x);
+  }
+  for (const group of groups.values()) {
+    for (const a of group) {
+      let own = 0, enemy = 0;
+      for (const x of group) {
+        if (atWar(state, a.owner, x.owner)) enemy += unitCount(x);
+        else own += unitCount(x);
+      }
+      if (!enemy || !own) continue;
+      const e = tallyOf(t, a);
+      if (own >= SUPERIORITY.ratio * enemy) e.boost = (e.boost ?? 0) + SUPERIORITY.boost;
+      else if (enemy >= SUPERIORITY.ratio * own) e.boost = (e.boost ?? 0) - SUPERIORITY.malus;
+    }
+  }
+}
+
+/** Mechanik 2: Moralpunkte aus (gewichteten) Abschüssen einer Runde – 1, 2, 3, dann je 2 Abschüsse ein Punkt, abgerundet */
+export function killPoints2(kills: number): number {
+  const v = COMBAT_MORALE_V2;
+  const k = Math.floor(kills + 1e-9);
+  return Math.min(k, v.fullKills) + Math.min(v.maxPoints - v.fullKills, Math.floor(Math.max(0, k - v.fullKills) / v.killsPerExtra));
 }
 
 /** Flächenschaden: alle Armeen im Krieg mit `owner` im Umkreis von MILITARY.meleeKm um `pos` */
@@ -1210,9 +1263,11 @@ export function combatRound(ctx: MilitaryContext, tally?: CombatTally): void {
   // wer wem wie viel Schaden zufügt (für die Moral durch Vernichtung und den Sieger)
   const dealt = new Map<Army, Map<Army, number>>();
   const provinces = new Set<number>();
+  const foesOf = new Map<Army, Army[]>();
   for (const a of standing) {
     const foes = hostileNear(state, map, a, undefined, cells);
     if (!foes.length) continue;
+    foesOf.set(a, foes);
     tallyOf(t, a).foes = foes.length;
     const out = meleeOutput(state, map, a) * spread(ctx);
     const mine = new Map<Army, number>();
@@ -1224,6 +1279,7 @@ export function combatRound(ctx: MilitaryContext, tally?: CombatTally): void {
     const prov = a.pos ? roadProvince(map, a.pos) : isSea(map, a.node) ? -1 : a.node;
     if (prov >= 0) provinces.add(prov);
   }
+  if (dealt.size && state.superiority !== false) superiority(state, t, foesOf);
   if (dealt.size) {
     const before = new Map([...damage.keys()].map((b) => [b, unitCount(b)]));
     const names = new Map([...dealt.keys(), ...damage.keys()].map((x) => [x, armyName(x)]));
@@ -1248,7 +1304,7 @@ export function combatRound(ctx: MilitaryContext, tally?: CombatTally): void {
     }
     cleanupHit(ctx, [...names.keys()].map((x) => x.node), names, victors);
   }
-  if (!tally) applyCombatMorale(t);
+  if (!tally) applyCombatMorale(t, state.combatMorale ?? DEFAULT_COMBAT_MORALE);
 }
 
 function distance(map: MapData, a: Army, b: Army, time: number): number {
@@ -1368,7 +1424,7 @@ export function rangedRound(ctx: MilitaryContext, tally?: CombatTally): void {
     tallyOf(t, a).kills += kills;
     cleanupHit(ctx, victims.map((b) => b.node), names, new Map(victims.map((b) => [b, a.owner])));
   }
-  if (!tally) applyCombatMorale(t);
+  if (!tally) applyCombatMorale(t, state.combatMorale ?? DEFAULT_COMBAT_MORALE);
 }
 
 /** Entfernt vernichtete Armeen (mit öffentlicher Meldung) und prüft Eroberung bzw. Aufstand am Ort. */

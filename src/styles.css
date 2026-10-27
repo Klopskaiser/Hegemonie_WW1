@@ -493,7 +493,7 @@ input.num { width: 76px; padding: 2px 4px; }
 .consumption { display: flex; flex-direction: column; gap: 8px; margin: 4px 0 8px; }
 .consumption-cat { border: 1px solid #b9a57c; border-radius: 4px; padding: 4px 6px; background: rgba(255, 250, 235, 0.5); }
 .consumption-head { font-weight: bold; display: flex; justify-content: space-between; margin-bottom: 2px; }
-.consumption-row { display: grid; grid-template-columns: 18px 64px 1fr 40px 52px; gap: 6px; align-items: center; font-size: 13px; }
+.consumption-row { display: grid; grid-template-columns: 18px 64px 1fr 40px 52px auto; gap: 6px; align-items: center; font-size: 13px; }
 .consumption-row input[type="range"] { width: 100%; accent-color: #7a5a2e; }
 .consumption-pct { text-align: right; font-variant-numeric: tabular-nums; }
 .consumption-amount { text-align: right; font-variant-numeric: tabular-nums; }
@@ -590,3 +590,6 @@ svg.flag { vertical-align: -2px; border-radius: 1px; box-shadow: 0 1px 1px rgba(
 .link-btn:hover { text-decoration: underline; }
 .editor-res { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin: 6px 0; }
 .editor-res .btn { display: flex; align-items: center; gap: 4px; justify-content: flex-start; }
+.consumption-focus { float: right; }
+.consumption-focus select { font: inherit; font-size: 12px; }
+.consumption-lock { padding: 0 4px; min-width: 0; line-height: 1.2; }

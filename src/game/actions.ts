@@ -80,7 +80,9 @@ export type CapitalAction =
 
 export type EconomyAction =
   /** Verbrauchsregler einer Kategorie: ganze Prozent je Rohstoff, Summe 100 */
-  | { type: 'setConsumption'; category: Category; shares: Partial<Record<Resource, number>> };
+  | { type: 'setConsumption'; category: Category; shares: Partial<Record<Resource, number>> }
+  /** Fokus einer Kategorie (null = Regler von Hand): die Simulation stellt den Regler danach selbst ein */
+  | { type: 'setConsumptionFocus'; category: Category; resource: Resource | null };
 
 export type Action = ProvinceAction | ArmyAction | DiplomacyAction | MarketAction | EconomyAction | CapitalAction;
 
@@ -246,6 +248,17 @@ export function applyAction(ctx: ActionContext, nation: string, action: Action):
   if (action.type === 'postOffer') return postOffer(ctx, nation, action.side, action.res, action.amount, action.price);
   if (action.type === 'cancelOffer') return cancelOffer(ctx, nation, action.id);
   if (action.type === 'acceptOffer') return acceptOffer(ctx, nation, action.id, action.amount);
+  if (action.type === 'setConsumptionFocus') {
+    if (!(action.category in CATEGORY_RES)) return { ok: false, error: 'Unbekannte Kategorie' };
+    if (action.resource !== null && !CATEGORY_RES[action.category].includes(action.resource)) return { ok: false, error: 'Rohstoff gehört nicht zu dieser Kategorie' };
+    const n = ctx.state.nations[nation];
+    const focus = { ...(n.consumptionFocus ?? {}) };
+    if (action.resource === null) delete focus[action.category];
+    else focus[action.category] = action.resource;
+    n.consumptionFocus = Object.keys(focus).length ? focus : undefined;
+    ctx.invalidate();
+    return { ok: true };
+  }
   if (action.type === 'setConsumption') {
     if (!(action.category in CATEGORY_RES) || !validShares(action.category, action.shares)) {
       return { ok: false, error: 'Ungültige Verteilung: ganze Prozent, zusammen 100' };

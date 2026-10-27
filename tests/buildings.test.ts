@@ -130,7 +130,7 @@ describe('Bauamt und Manufaktur', () => {
     const sim = newSim();
     const inland = map.provinces.find((p) => p.nation === 'DE' && !p.coastal)!.id;
     const coast = map.provinces.find((p) => p.nation === 'DE' && p.coastal)!.id;
-    expect(BUILDINGS.tradepost.cost(1)).toEqual({ money: 12000, iron: 1500, lumber: 2500 });
+    expect(BUILDINGS.tradepost.cost(1)).toEqual({ money: 12000, iron: 500, lumber: 2500 });
     expect(checkBuild(sim.state, map, 'DE', coast, 'tradepost').error).toBe('Nur in Provinzen ohne Küste');
     expect(checkBuild(sim.state, map, 'DE', inland, 'tradepost').ok).toBe(true);
     const ps = sim.state.provinces[inland];

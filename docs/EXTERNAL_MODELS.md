@@ -62,6 +62,7 @@ Typdefinitionen (maßgeblich): `src/game/bridgeProtocol.ts` (Nachrichten, Karten
 {"type":"cancelOffer","id":4}
 {"type":"acceptOffer","id":4,"amount":500}
 {"type":"setConsumption","category":"energy","shares":{"coal":30,"oil":0,"gas":70}}   // food: grain/fish, materials: iron/lumber
+{"type":"setConsumptionFocus","category":"food","resource":"grain"}   // Regler automatisch: möglichst viel Getreide, null = von Hand
 ```
 
 Jede Aktion liefert `{"ok":true}` oder `{"ok":false,"error":"…"}`.

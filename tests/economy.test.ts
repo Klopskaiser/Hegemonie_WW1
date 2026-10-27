@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { BUILDINGS, DAY, PROVINCE } from '../src/game/balance.ts';
-import { allRates, defaultConsumption, netRate, provinceOutput, toShares } from '../src/game/economy.ts';
+import { allRates, defaultConsumption, netRate, provinceOutput, toShares, type NationRates } from '../src/game/economy.ts';
 import type { MapData } from '../src/game/mapdata.ts';
 import { Simulation } from '../src/game/sim.ts';
 import { createGame } from '../src/game/state.ts';
@@ -84,3 +84,41 @@ describe('Verbrauchsregler', () => {
     expect(sim.apply('DE', { type: 'setConsumption', category: 'food', shares: { grain: 50, coal: 50 } }).ok).toBe(false);
   });
 });
+
+describe('Fokus der Verbrauchsregler', () => {
+  it('die anderen Rohstoffe tragen, was ihr Überschuss hergibt; der Fokus nur den Rest', async () => {
+    const { focusShares } = await import('../src/game/economy.ts');
+    const zero = { grain: 0, fish: 0, iron: 0, lumber: 0, coal: 0, oil: 0, gas: 0 };
+    const r = (prod: Record<string, number>, cons: Record<string, number> = {}) => ({ prod: { ...zero, ...prod }, cons: { ...zero, ...cons }, upkeep: 1000, shares: {} }) as never;
+    // Fisch kann 600 tragen: Fisch 60 %, Getreide (Fokus) 40 %
+    expect(focusShares('food', 'grain', r({ grain: 5000, fish: 600 }))).toEqual({ fish: 60, grain: 40 });
+    // Fisch kann alles tragen: Getreide 0 %
+    expect(focusShares('food', 'grain', r({ grain: 5000, fish: 3000 }))).toEqual({ fish: 100, grain: 0 });
+    // fester Verbrauch zählt: 900 Fisch, 500 davon schon verbraucht → 40 %
+    expect(focusShares('food', 'grain', r({ grain: 5000, fish: 900 }, { fish: 500 }))).toEqual({ fish: 40, grain: 60 });
+    // Energie: Kohle im Fokus, Öl und Gas anteilig zu ihrem Überschuss (abgerundet)
+    expect(focusShares('energy', 'coal', r({ coal: 9000, oil: 300, gas: 300 }))).toEqual({ oil: 30, gas: 30, coal: 40 });
+  });
+
+  it('die Simulation stellt den Regler mit Fokus selbst ein; ohne Fokus gilt wieder die Hand', () => {
+    const sim = newSim();
+    const n = sim.state.nations.DE;
+    expect(sim.apply('DE', { type: 'setConsumptionFocus', category: 'food', resource: 'fish' }).ok).toBe(true);
+    expect(sim.apply('DE', { type: 'setConsumptionFocus', category: 'food', resource: 'coal' }).ok).toBe(false);
+    const r = sim.rates.DE;
+    const want = focusSharesOf(r);
+    expect(n.consumption.grain).toBe(want.grain);
+    expect(n.consumption.fish).toBe(want.fish);
+    expect(sim.apply('DE', { type: 'setConsumptionFocus', category: 'food', resource: null }).ok).toBe(true);
+    expect(n.consumptionFocus).toBeUndefined();
+    expect(sim.apply('DE', { type: 'setConsumption', category: 'food', shares: { grain: 50, fish: 50 } }).ok).toBe(true);
+    sim.advance(2 * 60 * 60_000);
+    expect(n.consumption.grain).toBe(50);
+  });
+});
+
+function focusSharesOf(r: NationRates) {
+  const avail = Math.max(0, r.prod.grain - r.cons.grain);
+  const grain = Math.floor(Math.min(1, avail / r.upkeep) * 100);
+  return { grain, fish: 100 - grain };
+}

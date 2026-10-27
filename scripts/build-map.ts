@@ -171,6 +171,13 @@ for (const pl of allPlaces) {
   }
 }
 
+// Vorgegebene Stadtlagen (cityAt) schon vor dem Zuschnitt anwenden: die Provinz bildet sich um die verlegte
+// Stadt (kein Splitterstück dort, wo der Ort eigentlich liegt)
+for (const pl of allPlaces) {
+  const at = config.cityAt?.[pl.name];
+  if (at && pl.nation) pl.pos = project(at);
+}
+
 // Regionsnamen als Rückfall für Provinzen ohne Ort
 const regionLabels = regions.map((f) => {
   const p = f.properties;
@@ -532,6 +539,48 @@ for (const cfg of config.nations) {
 }
 console.log(`${provs.length} Provinzen`);
 
+// Splitterstücke: Nebenteile einer Provinz (nicht ihr Hauptteil), die an Land an eine andere Provinz derselben
+// Nation stoßen, gehören zu der Provinz mit der längsten gemeinsamen Grenze. Echte Inseln ohne Landnachbarn bleiben.
+{
+  const TOUCH = 0.35;
+  const segsOf = (shape: MultiPoly) => {
+    const out: [number, number, number, number][] = [];
+    for (const poly of shape) for (const ring of poly) for (let k = 0; k + 1 < ring.length; k++) out.push([ring[k][0], ring[k][1], ring[k + 1][0], ring[k + 1][1]]);
+    return out;
+  };
+  /** Länge der Grenze von `part`, die an `shape` anliegt (km) */
+  const shared = (part: MultiPoly, shape: MultiPoly) => {
+    const [ax0, ay0, ax1, ay1] = bboxOf(part), [bx0, by0, bx1, by1] = bboxOf(shape);
+    if (ax1 < bx0 - TOUCH || bx1 < ax0 - TOUCH || ay1 < by0 - TOUCH || by1 < ay0 - TOUCH) return 0;
+    const other = segsOf(shape);
+    let len = 0;
+    for (const [x0, y0, x1, y1] of segsOf(part)) {
+      const mx = (x0 + x1) / 2, my = (y0 + y1) / 2;
+      if (other.some(([u0, v0, u1, v1]) => distSegment(mx, my, u0, v0, u1, v1) < TOUCH)) len += Math.hypot(x1 - x0, y1 - y0);
+    }
+    return len;
+  };
+  const moved: string[] = [];
+  for (const pr of provs) {
+    if (pr.shape.length < 2) continue;
+    const main = pr.shape.reduce((a, b) => (polyArea(a) > polyArea(b) ? a : b));
+    for (const part of [...pr.shape]) {
+      if (part === main) continue;
+      let best: Prov | null = null, bl = 1;
+      for (const other of provs) {
+        if (other === pr || other.nation !== pr.nation || !other.shape.length) continue;
+        const l = shared([part], other.shape);
+        if (l > bl) { bl = l; best = other; }
+      }
+      if (!best) continue;
+      pr.shape = pr.shape.filter((x) => x !== part);
+      best.shape = polygonClipping.union(best.shape as never, [part] as never) as MultiPoly;
+      moved.push(`${Math.round(polyArea(part))} km² → Nachbar (${pr.nation})`);
+    }
+  }
+  console.log(`Splitterstücke an Nachbarprovinzen gegeben: ${moved.length}${moved.length ? ` (${moved.join(', ')})` : ''}`);
+}
+
 // ---------------------------------------------------------------- Grenzen, Nachbarn, Küsten
 
 interface Seg { prov: number; ax: number; ay: number; bx: number; by: number }
@@ -725,6 +774,54 @@ for (const n of config.nations) {
     movedCount++;
   }
   console.log(`Küstenorte ohne Stadt unter ${COAST_NEAR} km: ${near.length}, davon bleiben ${stay.size}, ins Innere verlegt: ${movedCount}`);
+}
+
+// Provinzstädte nicht direkt an der Grenze: Mindestabstand zur nächsten Landgrenze der eigenen Provinz (in
+// Spiel-km, nach dem Maßstab). Die CITY_NEAR_COUNT Städte, die am dichtesten an einer Grenze liegen, brauchen nur
+// CITY_NEAR_KM, alle anderen einen festen Zufallswert zwischen CITY_MIN_KM[0] und [1]. Liegt eine Stadt näher,
+// rückt nur ihr Standort zum nächstgelegenen Punkt der Provinz mit genug Abstand (sonst zum entferntesten).
+{
+  const CITY_NEAR_COUNT = 5, CITY_NEAR_KM = 5, CITY_MIN_KM = [8, 25];
+  const sc = config.scale ?? 1;
+  const landSegs = provs.map(() => [] as number[]);
+  for (const b of borderMap.values()) {
+    if (b.b < 0) continue;
+    landSegs[b.a].push(...b.segs);
+    landSegs[b.b].push(...b.segs);
+  }
+  const segDist = (segs: number[], x: number, y: number) => {
+    let d = Infinity;
+    for (let k = 0; k + 3 < segs.length; k += 4) d = Math.min(d, distSegment(x, y, segs[k], segs[k + 1], segs[k + 2], segs[k + 3]));
+    return d;
+  };
+  const dist0 = provinces.map((p) => segDist(landSegs[p.id], p.center[0], p.center[1]));
+  const withLand = provinces.filter((p) => landSegs[p.id].length).map((p) => p.id);
+  const nearest = new Set([...withLand].sort((a, b) => dist0[a] - dist0[b]).slice(0, CITY_NEAR_COUNT));
+  let moved = 0;
+  for (const i of withLand) {
+    const p = provinces[i];
+    const want = (nearest.has(i) ? CITY_NEAR_KM : CITY_MIN_KM[0] + (CITY_MIN_KM[1] - CITY_MIN_KM[0]) * makeRng(hash(p.name) ^ 0x5a17)()) / sc;
+    if (dist0[i] >= want) continue;
+    const main = provs[i].shape.reduce((a, b) => (polyArea(a) > polyArea(b) ? a : b));
+    const [x0, y0, x1, y1] = bboxOf([main]);
+    const step = Math.max(0.5, Math.min(2, Math.min(x1 - x0, y1 - y0) / 60));
+    let best: Pt | null = null, bd = Infinity, far: Pt | null = null, fd = -1;
+    for (let x = x0; x <= x1; x += step) for (let y = y0; y <= y1; y += step) {
+      if (!pointInPoly(x, y, main)) continue;
+      const d = segDist(landSegs[i], x, y);
+      if (d > fd) { fd = d; far = [x, y]; }
+      if (d < want) continue;
+      const m = Math.hypot(x - p.center[0], y - p.center[1]);
+      if (m < bd) { bd = m; best = [x, y]; }
+    }
+    const pick = best ?? far;
+    if (!pick) continue;
+    p.center = [r1(pick[0]), r1(pick[1])];
+    const ll = unproject(pick);
+    p.lonlat = [Math.round(ll[0] * 1000) / 1000, Math.round(ll[1] * 1000) / 1000];
+    moved++;
+  }
+  console.log(`Provinzstädte von der Grenze abgerückt: ${moved} (5 km: ${[...nearest].map((i) => provinces[i].name).join(', ')})`);
 }
 
 // Doppelprovinzen: Spielernationen genau 2, Kleinstaaten ab 3 Provinzen eine

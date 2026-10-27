@@ -21,6 +21,7 @@ npm test             # Vitest (tests/)
 npm run map:europe   # Karte aus Natural-Earth-Daten neu erzeugen -> data/maps/europe.base.json + public/maps/europe.json
                      # (wendet die Vorgaben aus dem Karteneditor an: scripts/maps/europe.edits.json)
 npx tsx scripts/bench.ts   # Simulationsgeschwindigkeit messen
+npm run morale:compare -- 12 3 30   # Kampfmoral-Mechaniken vergleichen (gestellte Gefechte, KI-Partien)
 npm run headless -- batch --games 4 --days 60 --record runs.jsonl   # KI-Partien ohne Browser
 npm run headless -- stdio --agents DE   # JSON-Zeilen-Schnittstelle für Modelle (Python)
 npm run model:example   # Beispielmodell als WebSocket-Server auf ws://127.0.0.1:8765

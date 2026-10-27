@@ -1,9 +1,9 @@
 import { RESOURCES } from './mapdata.ts';
-import { START_BONUS, START_INFANTRY, START_MORALE, START_STOCK, type Building } from './balance.ts';
+import { DEFAULT_COMBAT_MORALE, START_BONUS, START_INFANTRY, START_MORALE, START_STOCK, type Building } from './balance.ts';
 import { makeRng } from './rng.ts';
 import { defaultConsumption, provincePoints } from './economy.ts';
 import type { MapData } from './mapdata.ts';
-import type { Difficulty, GameMeta, GameState, NationState, ProvinceState } from './types.ts';
+import type { CombatMoraleMode, Difficulty, GameMeta, GameState, NationState, ProvinceState } from './types.ts';
 
 export interface NewGameOptions {
   id: string;
@@ -15,6 +15,10 @@ export interface NewGameOptions {
   /** standard: nur Wehramt und 10 Infanterie je Provinz; test: ausgebaute Provinzen, große Vorräte */
   scenario?: Scenario;
   difficulty?: Difficulty;
+  /** Rechenweise der Kampfmoral (Standard DEFAULT_COMBAT_MORALE) */
+  combatMorale?: CombatMoraleMode;
+  /** Übermacht im Nahkampf berücksichtigen (Standard an) */
+  superiority?: boolean;
 }
 
 export type Scenario = 'standard' | 'test';
@@ -86,6 +90,8 @@ export function createGame(map: MapData, opt: NewGameOptions): GameState {
     winner: null,
     newsFeed: [],
     difficulty: opt.difficulty ?? 'normal',
+    ...(opt.combatMorale && opt.combatMorale !== DEFAULT_COMBAT_MORALE ? { combatMorale: opt.combatMorale } : {}),
+    ...(opt.superiority === false ? { superiority: false } : {}),
     aiProfiles: Object.fromEntries(map.nations.map((n) => [n.id, {
       aggression: Math.round((0.7 + rnd() * 0.6) * 100) / 100,
       caution: Math.round((0.8 + rnd() * 0.4) * 100) / 100,

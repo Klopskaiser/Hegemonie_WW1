@@ -205,6 +205,11 @@ export interface NationState {
   controller: ControllerKind;
   /** Verbrauchsregler: Anteil (Prozent) jedes Rohstoffs am Provinzunterhalt seiner Kategorie, je Kategorie Summe 100 */
   consumption: Record<Resource, number>;
+  /**
+   * Fokus je Kategorie: dieser Rohstoff soll möglichst im Plus bleiben – die anderen tragen so viel Unterhalt,
+   * wie ihr laufender Überschuss hergibt (stündlich neu eingestellt). Ohne Eintrag gilt der Regler von Hand.
+   */
+  consumptionFocus?: Partial<Record<Category, Resource>>;
   alive: boolean;
   points: number;
   /** Engpässe seit dem letzten Tageswechsel */
@@ -281,6 +286,10 @@ export interface GameState {
   newsFeed: NewsEvent[];
   /** Stärke der eingebauten KI */
   difficulty: Difficulty;
+  /** Rechenweise der Kampfmoral (TROOP_MORALE bzw. COMBAT_MORALE_V2); fehlt das Feld, gilt DEFAULT_COMBAT_MORALE */
+  combatMorale?: CombatMoraleMode;
+  /** Übermacht im Nahkampf (SUPERIORITY) wirkt auf die Moral; fehlt das Feld, ist sie an */
+  superiority?: boolean;
   /** Persönlichkeit je KI-Nation */
   aiProfiles: Record<string, AIProfile>;
   /** WebSocket-Adresse für externe Entscheidungsmodelle (leer = aus) */
@@ -309,3 +318,6 @@ export interface GameMeta {
   lastRealTime: number;
   createdAt: number;
 }
+
+/** 1: Nahkampf −2 %, Unterzahl −1 %, Beschuss −2 %, Abschüsse je +1 % bis +4 %; 2: siehe COMBAT_MORALE_V2 */
+export type CombatMoraleMode = 1 | 2;

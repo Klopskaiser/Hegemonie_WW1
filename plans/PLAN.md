@@ -179,7 +179,7 @@
 - Bauamt (Vorgabe): 2 Tage, 30000 Geld + 500 Holz, Unterhalt 2000 Geld/Tag, Gebäudebauzeiten
   in seiner Provinz −25 % (bestätigt: nur Gebäude, nur eigene Provinz; Einheiten unverändert).
   Abschaltbar wie Kaserne, Wehramt und Eisenbahn (aus: kein Unterhalt, keine Wirkung).
-- Handelsposten (Vorgabe): 1 Stufe, nur in Provinzen ohne Küste (kein Hafen möglich), 12000 Geld, 1500 Eisen,
+- Handelsposten (Vorgabe): 1 Stufe, nur in Provinzen ohne Küste (kein Hafen möglich), 12000 Geld, 500 Eisen,
   2500 Holz, Bauzeit 48 h, Rohstoffproduktion +7 % (nicht Geld), Moral +3 %, Unterhalt 20 Fisch/Tag.
 - Werkstatt (Vorgabe): 1 Stufe, 1 Tag, 5000 Geld, 1500 Eisen, 500 Holz, Moral +1 %, mechanische
   Einheiten (alles außer Infanterie) in der Provinz +10 % Bautempo (Fertigungszeit ÷ 1,1),
@@ -272,7 +272,12 @@
 - Landwege durch eine dritte Provinz werden gestrichen, sofern beide Provinzen mindestens 2 Wege behalten
   (Provinzen mit 2 Wegen bekommen vorher einen sauberen Ersatz); als Ausgleich entstehen kurze, saubere
   Wege anderswo (Gesamtzahl gleich). Gebündelte Wege und Abkürzungen durch dritte Provinzen entfallen.
-  Patras liegt auf der Peloponnes (`cityAt`), damit Patras–Kalamata im eigenen Gebiet bleibt.
+  Patras liegt auf dem Festland (`cityAt`, Vorgabe; vor dem Zuschnitt angewendet): die Provinz hat kein
+  Splitterstück auf der Peloponnes, die ganz zu Kalamata gehört.
+- Kartenbau (Vorgabe): Nebenteile einer Provinz, die an Land an eine andere Provinz derselben Nation stoßen,
+  gehören zu der Nachbarprovinz mit der längsten gemeinsamen Grenze (echte Inseln bleiben). Provinzstädte haben
+  einen Mindestabstand zur nächsten Landgrenze ihrer Provinz: die 5 heute dichtesten 5 km, alle anderen einen
+  festen Zufallswert von 8–25 km (Spiel-km); liegt eine Stadt näher, rückt nur ihr Standort ins Innere.
 - Samsun hat genau einen Hafen nahe der Stadt zum Schwarzen Meer II (`seaLinks`).
 - Begegnungen auf Wegen: Armeen, die auf demselben Weg aneinander vorbeiziehen, sich überholen oder auf
   eine dort stehende Armee treffen (bis auf 1 km), bleiben am Treffpunkt stehen und kämpfen – im Krieg überall, an Land
@@ -437,3 +442,23 @@
   Papier, Vignette), Nebel und Linien (Grenzen, Rahmen, Wege) als Ebenen und zeichnet sie nur bei geänderter
   Ansicht, Besitz oder Sicht neu; je Bild bleiben Armeen, Symbole und Geschosse (gemessen im Spiel Tag 44:
   etwa 10 ms je Bild statt rund 70–80 ms für ein komplettes Neuzeichnen).
+- Verbrauchsregler (Vorgabe): 2-%-Schritte; bei Kategorien mit drei Rohstoffen (Energie) lässt sich ein Regler
+  sperren – Änderungen gleichen dann nur die beiden anderen aus (Bedienhilfe, nicht gespeichert). Fokus je
+  Kategorie (`consumptionFocus`, Aktion `setConsumptionFocus`): die anderen Rohstoffe tragen so viel
+  Provinzunterhalt, wie ihr laufender Überschuss (Produktion minus fester Verbrauch) hergibt, nie ins Minus; der
+  Fokus-Rohstoff zahlt nur den Rest (reicht die Kategorie insgesamt nicht, trägt er den Fehlbetrag). Die
+  Simulation stellt den Regler stündlich und sofort nach dem Setzen ein; ohne Fokus gilt der Regler von Hand.
+- Kampfmoral-Varianten: im Spielstand wählbar (`combatMorale`). Vorgabe ist Mechanik 2 mit Übermacht
+  (`DEFAULT_COMBAT_MORALE`, gilt auch für Spielstände ohne das Feld); Mechanik 1 (`TROOP_MORALE`) nur noch mit
+  `combatMorale: 1`. Mechanik 2 (`COMBAT_MORALE_V2`):
+  im Kampf je Runde −2,5 % (Nahkampf, beschossen, Fernkampf gegen Fernkampf), Beschuss zusätzlich zum Nahkampf
+  oder eine zweite gegnerische Armee −1,5 %, höchstens −4 %; Zuwachs 1/2/3 Punkte je Abschuss, Punkt 4 und 5 je
+  zwei Abschüsse (abgerundet), höchstens +5 %; jede vernichtete Einheit zählt als ein Abschuss (Maschinen zählten
+  zuerst doppelt, auf Vorgabe zurückgenommen).
+  Vergleich ohne Browser: `npm run morale:compare -- <Läufe> <Partien> <Tage>`.
+- Übermacht im Nahkampf (Vorgabe, `SUPERIORITY`, im Spielstand abschaltbar über `superiority: false`, Standard an):
+  Je Schlacht (zusammenhängende Gruppe im Nahkampf) zählt jede Armee die Einheiten ihrer Seite (sie und alle, mit
+  denen sie nicht im Krieg ist) gegen alle Gegner der Schlacht – nach Anzahl, nicht nach Stärke. Mindestens doppelt
+  so viele: +0,5 Prozentpunkte Moral je Runde; höchstens halb so viele: −0,3 Punkte – zusätzlich zu und außerhalb
+  der Rundengrenzen der Kampfmoral (die Moral bleibt in 10–100 %). Vergleich der Varianten in
+  `plans/kampfmoral-vergleich.md` (`npm run morale:compare`).
