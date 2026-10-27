@@ -136,9 +136,18 @@ describe('Provinzmoral und Hauptstadt', () => {
     const n = map.provinces[berlin].neighbors.find((x) => map.provinces[x].nation === 'DE')!;
     sim.state.provinces[n].morale = 0.2;
     expect(moraleTarget(sim.state, map, berlin).parts.find((p) => p.label.startsWith('Unruhe'))!.value).toBeCloseTo(-0.02, 9);
-    // zufriedene Nachbarn (mindestens 95 % Moral): +1 % je Provinz
-    sim.state.provinces[n].morale = 0.96;
+    // zufriedene Nachbarn (mindestens 91 % Moral): +1 % je Provinz
+    sim.state.provinces[n].morale = 0.9;
+    expect(moraleTarget(sim.state, map, berlin).parts.some((p) => p.label.startsWith('Zufriedene'))).toBe(false);
+    sim.state.provinces[n].morale = 0.91;
     expect(moraleTarget(sim.state, map, berlin).parts.find((p) => p.label.startsWith('Zufriedene'))!.value).toBeCloseTo(0.01, 9);
+    // starke Besatzung (mehr als 20 Stärke in der Stadt): +3 %
+    const garrison = () => moraleTarget(sim.state, map, berlin).parts.find((p) => p.label === 'Starke Besatzung')?.value;
+    sim.state.armies = sim.state.armies.filter((a) => a.node !== berlin);
+    sim.state.armies.push({ id: sim.state.nextArmyId++, owner: 'DE', node: berlin, units: { infantry: 16 } });
+    expect(garrison()).toBeUndefined(); // 16 Infanterie = Stärke 20, nicht mehr als 20
+    sim.state.armies.push({ id: sim.state.nextArmyId++, owner: 'DE', node: berlin, units: { infantry: 1 } });
+    expect(garrison()).toBeCloseTo(0.03, 9);
   });
 
   it('Moral ändert sich je Tag um höchstens 10 Prozentpunkte', () => {

@@ -290,7 +290,10 @@ export const MORALE = {
   unrestNeighbor: 0.02,
   /** je angrenzende eigene Provinz mit mindestens `calmMorale` Moral */
   calmNeighbor: 0.01,
-  calmMorale: 0.95,
+  calmMorale: 0.91,
+  /** eigene Truppen mit mehr als `garrisonStrength` Stärke in der Stadt */
+  garrison: 0.03,
+  garrisonStrength: 20,
   /** Kriegserklärung: Abzug am Moralziel des Erklärenden für so viele Tage (mehrere Erklärungen zählen nicht mehrfach) */
   declareWar: 0.05,
   declareWarDays: 2,

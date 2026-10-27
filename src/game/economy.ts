@@ -6,6 +6,7 @@ import {
 } from './balance.ts';
 import { RESOURCES, type MapData, type Resource } from './mapdata.ts';
 import { warCount } from './diplomacy.ts';
+import { garrisonStrength } from './military.ts';
 import type { GameState, ProvinceState } from './types.ts';
 
 export interface ProvinceOutput {
@@ -263,6 +264,7 @@ export function moraleTarget(state: GameState, map: MapData, id: number): Morale
   if (unrest > 0) parts.push({ label: `Unruhe in ${unrest} Nachbarprovinz${unrest > 1 ? 'en' : ''}`, value: -unrest * MORALE.unrestNeighbor });
   const calm = mp.neighbors.filter((n) => state.provinces[n].owner === ps.owner && state.provinces[n].morale >= MORALE.calmMorale).length;
   if (calm > 0) parts.push({ label: `Zufriedene Nachbarn (${calm})`, value: calm * MORALE.calmNeighbor });
+  if (garrisonStrength(state, id) > MORALE.garrisonStrength) parts.push({ label: 'Starke Besatzung', value: MORALE.garrison });
   const declared = (nation?.warPenalty ?? []).filter((t) => t > state.time).length;
   // höchstens einmal, egal wie viele Kriege erklärt wurden
   if (declared > 0) parts.push({ label: 'Kriegserklärung', value: -MORALE.declareWar });

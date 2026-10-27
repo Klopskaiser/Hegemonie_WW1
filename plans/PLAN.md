@@ -366,7 +366,8 @@
   Grundbedarf je Provinz 800 pro Kategorie (Nahrung, Baustoffe, Energie) und Tag. Geld je Provinz 1600
   (Doppelprovinz 3200).
 - Moral (Vorgabe, neu): Grundwert 85 %, Entfernung zur Hauptstadt −1 % je 100 km ab 300 km (höchstens −30 %),
-  +1 % je angrenzender eigener Provinz mit mindestens 95 % Moral, Bauamt +2 %.
+  +1 % je angrenzender eigener Provinz mit mindestens 91 % Moral, Bauamt +2 %, +3 % bei eigenen Truppen mit
+  mehr als 20 Stärke in der Stadt.
 - Gebäude: Kaserne Unterhalt 1000 Getreide und 1000 Geld je Stufe; Wehramt Bauzeit 10 min, Unterhalt 500 Geld.
 - Infanterie-Rekrutierung bei 100 % Moral: nur Wehramt 32 h, mit Kaserne 21 h, Kaserne Stufe 2 16 h; Kaserne
   ohne Wehramt halb so schnell; die Moral wirkt anteilig, Doppelprovinzen stellen doppelt so schnell auf.
