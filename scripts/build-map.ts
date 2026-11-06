@@ -640,12 +640,17 @@ for (const b of borderMap.values()) {
 
 // ---------------------------------------------------------------- Seegebiete
 
+// Seeknoten (config.seaNodes): dieselben Bausteine, nur viele kleine Einzugsbereiche; die Knoten sind deren
+// Mittelpunkte, benachbarte Bereiche sind verbundene Knoten, Grenzen dazwischen gibt es nicht.
+const nodeSeas = !!config.seaNodes;
 const seaZones = buildSeas(rectPoly, [...nationShapes.values()], {
-  count: config.seaCount,
+  count: config.seaNodes?.count ?? config.seaCount,
   minArea: 25000,
   names: config.seaNames.map((n) => ({ name: n.name, pos: project(n.at) })),
+  nodes: nodeSeas,
 }, makeRng(hash(config.id + ':see')));
 const seaBorders = linkSeas(seaZones, provs.map((p) => p.shape));
+if (nodeSeas) seaBorders.length = 0;
 // Mitte jedes Seegebiets muss im Wasser liegen (bei verwinkelten Gebieten fällt der Schwerpunkt sonst aufs Land)
 for (const z of seaZones) {
   if (!pointInMulti(z.center[0], z.center[1], z.shape)) z.center = interiorPoint(z.shape);
@@ -666,7 +671,7 @@ function uniqueName(n: string): string {
 }
 
 const hotspots = config.hotspots.map((h) => ({ r: h.r, pos: project(h.at) }));
-const rnd = makeRng(hash(config.id));
+const rnd = makeRng(hash(config.seed ?? config.id));
 
 const biggestPop: number[] = [];
 const provinces: MapProvince[] = provs.map((pr, i) => {
@@ -852,7 +857,9 @@ const byName = (name: string) => {
 // Die festen Vorgaben der Konfiguration gelten danach in jedem Fall.
 {
   // aus der Grundkarte, damit Vorgaben aus dem Karteneditor nicht in die Grundkarte wandern
-  const prev = path.join(ROOT, 'data', 'maps', `${config.id}.base.json`);
+  // eigene Grundkarte; fehlt sie, die der Saatkarte (gleicher Landzuschnitt, z. B. europa_real ← europe)
+  let prev = path.join(ROOT, 'data', 'maps', `${config.id}.base.json`);
+  if (!fs.existsSync(prev) && config.seed) prev = path.join(ROOT, 'data', 'maps', `${config.seed}.base.json`);
   if (!process.argv.includes('--new-resources') && fs.existsSync(prev)) {
     const old = JSON.parse(fs.readFileSync(prev, 'utf8')) as MapData;
     const byOldName = new Map(old.provinces.map((p) => [p.name, p]));
@@ -1224,9 +1231,11 @@ function routeOnLand(u: number, v: number, via: Pt, wide = false): { a: number; 
     for (const poly of seaZones[z].shape) for (const ring of poly) for (const v of ring) best = Math.min(best, dist(p.center as Pt, v));
     return best;
   };
+  // Seeknoten: genau ein Hafen, am nächstgelegenen Knoten (unter denen, deren Einzugsbereich an die Küste stößt)
+  const nodeDist = (p: MapProvince, z: number) => dist(p.center as Pt, seaZones[z].center);
   for (const p of provinces) {
-    const max = p.neighbors.length === 0 ? 4 : 2;
-    p.seaLinks = [...p.seas].sort((a, b) => seaDist(p, a) - seaDist(p, b)).slice(0, max).sort((a, b) => a - b);
+    const max = nodeSeas ? 1 : p.neighbors.length === 0 ? 4 : 2;
+    p.seaLinks = [...p.seas].sort((a, b) => (nodeSeas ? nodeDist(p, a) - nodeDist(p, b) : seaDist(p, a) - seaDist(p, b))).slice(0, max).sort((a, b) => a - b);
     // feste Vorgabe aus der Konfiguration
     const fixed = config.seaLinks?.[p.name];
     if (fixed) p.seaLinks = fixed.map((n) => seaZones.findIndex((z) => z.name === n)).filter((z) => z >= 0 && p.seas.includes(z));
@@ -1260,6 +1269,7 @@ const data: MapData = {
   })),
   seaBorders,
   roads,
+  ...(nodeSeas ? { seaNodes: true } : {}),
 };
 
 // Seewege durchs Wasser, danach Wegbündel mit Kreuzungen und Abkürzungen (je auf frischer Geometrie)
@@ -1283,8 +1293,9 @@ const data: MapData = {
     if (!old || scLen(s) < scLen(old)) bestSc.set(k, s);
   }
   data.shortcuts = [...bestSc.values()];
-  // Seewege zusammenlegen (auf der Geometrie nach dem Bündeln)
-  const snapped = snapSeaLanes({ ...data });
+  // Seewege zusammenlegen (auf der Geometrie nach dem Bündeln); Seeknoten sind schon die gemeinsamen
+  // Punkte, ihre Wege bleiben gerade
+  const snapped = nodeSeas ? { roads: [], junctions: [] } : snapSeaLanes({ ...data });
   const snappedKeys = new Set(snapped.roads.map((r) => key(r.a, r.b)));
   data.roads = [...data.roads.filter((r) => !snappedKeys.has(key(r.a, r.b))), ...snapped.roads];
   // Kreuzungspunkte dicht beieinander (unter 20 km) zusammenfassen

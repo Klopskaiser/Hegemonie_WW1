@@ -1,0 +1,96 @@
+{
+  "paths": {
+    "Biskaya 4|Biskaya 5": [],
+    "Keltische See 2|Atlantik 4": [
+      [-1849, -75.6]
+    ],
+    "Atlantik 1|Atlantik 3": [],
+    "Nordatlantik 5|Atlantik 1": [],
+    "Atlantik 1|Nordatlantik 1": [],
+    "Nordatlantik 1|Nordatlantik 3": [],
+    "Nordatlantik 4|Nordatlantik 3": [],
+    "Nordatlantik 2|Nordatlantik 4": [],
+    "Nordatlantik 6|Islandsee 3": [],
+    "Nordatlantik 9|Islandsee 3": [],
+    "Islandsee 3|Nordatlantik 10": [],
+    "Nordatlantik 12|Nordatlantik 15": [],
+    "Nordatlantik 12|Islandsee 7": [],
+    "Islandsee 11|Islandsee 8": [
+      [-1074.7, -1656.4]
+    ],
+    "Islandsee 10|Europäisches Nordmeer 2": [],
+    "Europäisches Nordmeer 6|Europäisches Nordmeer 4": [
+      [-528.3, -1854.6]
+    ],
+    "Europäisches Nordmeer 6|Europäisches Nordmeer 8": [],
+    "Europäisches Nordmeer 9|Europäisches Nordmeer 12": [
+      [-254.6, -1751.7]
+    ],
+    "Europäisches Nordmeer 8|Europäisches Nordmeer 4": [
+      [-388.1, -1633.5]
+    ],
+    "Europäisches Nordmeer 5|Europäisches Nordmeer 4": [
+      [-388.1, -1633.5]
+    ],
+    "Europäisches Nordmeer 5|Europäisches Nordmeer 1": [
+      [-618.9, -1518.4]
+    ],
+    "Nordsee 7|Skagerrak 1": [],
+    "Nordsee 7|Nordatlantik 18": [
+      [-1039, -1296.8]
+    ],
+    "Nordsee 5|Nordsee 1": [
+      [-1055.4, -972.3]
+    ],
+    "Nordatlantik 16|Nordatlantik 14": [],
+    "Nordatlantik 8|Nordatlantik 13": [],
+    "Nordatlantik 8|Nordatlantik 11": [],
+    "Nordatlantik 7|Nordatlantik 11": [
+      [-1632.3, -1352.3]
+    ],
+    "Nordatlantik 5|Atlantik 3": [],
+    "Keltische See 1|Keltische See 3": [
+      [-1899.3, -557.1]
+    ],
+    "Atlantik 1|Atlantik 4": [],
+    "Atlantik 1|Atlantik 2": [],
+    "Keltische See 1|Atlantik 4": [
+      [-2106.1, -185.3]
+    ],
+    "Alboran-See 1|Alboran-See 2": [],
+    "Alboran-See 1|Atlantik vor Portugal 2": [],
+    "Atlantik vor Portugal 1|Atlantik vor Portugal 3": [],
+    "Alboran-See 4|Balearen-See 1": [],
+    "Balearen-See 6|Balearen-See 8": [
+      [-1084.6, 712.8]
+    ],
+    "Ligurisches Meer 1|Balearen-See 6": [],
+    "Ligurisches Meer 1|Ligurisches Meer 3": [],
+    "Tyrrhenisches Meer 3|Ligurisches Meer 4": [],
+    "Tyrrhenisches Meer 2|Tyrrhenisches Meer 6": [
+      [-575.5, 880.7]
+    ],
+    "Tyrrhenisches Meer 4|Tyrrhenisches Meer 5": [],
+    "Ionisches Meer 1|Tyrrhenisches Meer 5": [],
+    "Ionisches Meer 1|Straße von Sizilien 6": [
+      [-325.8, 1124.2],
+      [-374.3, 1286.8]
+    ],
+    "Straße von Sizilien 3|Straße von Sizilien 2": [
+      [-651.6, 1176.5]
+    ],
+    "Levantinisches Meer 5|Levantinisches Meer 7": [],
+    "Schwarzes Meer 1|Schwarzes Meer 4": [],
+    "Schwarzes Meer 4|Marmarameer 2": [],
+    "Schwarzes Meer 7|Schwarzes Meer 8": []
+  },
+  "remove": [
+    ["Keltische See 1", "Atlantik 1"],
+    ["Islandsee 10", "Islandsee 12"],
+    ["Nordsee 1", "Nordatlantik 14"],
+    ["Nordatlantik 12", "Nordatlantik 11"],
+    ["Straße von Sizilien 4", "Tyrrhenisches Meer 5"],
+    ["Ägäis 2", "Ionisches Meer 6"],
+    ["Ägäis 1", "Ägäis 2"]
+  ]
+}

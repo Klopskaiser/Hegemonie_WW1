@@ -20,6 +20,7 @@ npm run lint         # tsc --noEmit
 npm test             # Vitest (tests/)
 npm run map:europe   # Karte aus Natural-Earth-Daten neu erzeugen -> data/maps/europe.base.json + public/maps/europe.json
                      # (wendet die Vorgaben aus dem Karteneditor an: scripts/maps/europe.edits.json)
+npm run map:europa_real   # dieselbe Karte mit Seeknoten statt Seegebieten -> public/maps/europa_real.json
 npx tsx scripts/bench.ts   # Simulationsgeschwindigkeit messen
 npm run morale:compare -- 12 3 30   # Kampfmoral-Mechaniken vergleichen (gestellte Gefechte, KI-Partien)
 npm run headless -- batch --games 4 --days 60 --record runs.jsonl   # KI-Partien ohne Browser
@@ -60,12 +61,21 @@ Kartenbau nötig, nicht zur Laufzeit.
 - `src/ui/` – React-Oberfläche, `MapCanvas.tsx` zeichnet die Karte auf Canvas (Lasso, Rechtsklick-Befehle).
   `MapEditor.tsx` Karteneditor (nur Dev-Server, Endpunkte in `vite.config.ts`, Logik in `src/game/mapedits.ts`,
   Rohstoffprüfung in `src/game/mapcheck.ts`).
+  `MapDrafter.tsx` Karten-Zeichner (nur Dev-Server, `#zeichner`): Karten frei zeichnen oder aus einer PNG-Vorlage
+  einlesen (fünf Farben: Land, Grenzen, Hauptstädte, Seepunkte, Verbindungen; Rest = Wasser). Modell und Export
+  in `src/game/draft.ts` (Provinzen mit gemeinsamen Eckpunkten, Teilen/Verschmelzen/Nachzeichnen, Export als
+  Seeknoten-Karte), Bildimport in `src/game/draftImport.ts`, Endpunkte in `scripts/drafts-server.ts`.
+  Entwürfe liegen in `data/drafts/<id>.json`, der Export schreibt `public/maps/<id>.json` und trägt die Karte in
+  `public/maps/custom.json` ein (Hauptmenü). Pipeline-Karten werden nur nach Bestätigung überschrieben.
   Bilder unter `public/images` (Platzhalter, solange Dateien fehlen; Liste in `public/images/README.md`).
 - `scripts/build-map.ts` + `scripts/maps/<id>.ts` – Kartenpipeline: Admin-1-Regionen →
   Grenzen von 1914 → Topologie/Vereinfachung → Projektion (km) → feste Provinzzahl je Nation
   (Großmacht 10, Kleinstaat nach Fläche oder `provinces`) per gewichtetem k-Means + Voronoi → Nachbarn,
   Küsten, Ressourcen, Doppelprovinzen → Maßstab (`scale`). Rohstoffe der Grundkarte werden beim Neubau
   übernommen (`--new-resources` verteilt neu). Neue Karte = alte Spielstände ungültig (Worker meldet das).
+  `seaNodes: { count }` in der Kartenkonfiguration: statt Seegebieten nur Knotenpunkte (Einzugsbereiche
+  ohne Grenzen, `MapData.seaNodes`), benachbarte Knoten verbunden, je Küstenprovinz genau ein Hafen am
+  nächsten Knoten; kein Seewege-Bündeln. `seed` übernimmt Landzuschnitt/Rohstoffe einer anderen Karte.
 
 ## Stand der Meilensteine
 

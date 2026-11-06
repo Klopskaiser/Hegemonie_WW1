@@ -473,6 +473,22 @@ export function MapCanvas(props: Props) {
           g.fill();
         }
       }
+      // Seeknoten: kleine helle Punkte mit Rand (die Knoten selbst; ihr Einzugsbereich bleibt unsichtbar)
+      if (map.seaNodes && !compact) {
+        const r = s > 0.5 ? 3.6 : 2.8;
+        g.beginPath();
+        for (const z of map.seas) {
+          const x = X(z.center[0]), y = Y(z.center[1]);
+          if (!visible(x, y)) continue;
+          g.moveTo(x + r, y);
+          g.arc(x, y, r, 0, Math.PI * 2);
+        }
+        g.fillStyle = 'rgba(238, 242, 240, 0.95)';
+        g.fill();
+        g.strokeStyle = 'rgba(35, 70, 95, 0.7)';
+        g.lineWidth = 1.1;
+        g.stroke();
+      }
     });
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.drawImage(lines, 0, 0);
@@ -634,8 +650,8 @@ export function MapCanvas(props: Props) {
         }
       }
 
-      // Namen der Seegebiete
-      if (s > 0.3) {
+      // Namen der Seegebiete (Seeknoten sind zu viele – ihr Name steht im Tooltip)
+      if (s > 0.3 && !map.seaNodes) {
         ctx.font = `italic ${s > 0.8 ? 13 : 11}px "Palatino Linotype", "Book Antiqua", Georgia, serif`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';

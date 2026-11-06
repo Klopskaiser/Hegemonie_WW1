@@ -24,6 +24,8 @@ export interface SeaOptions {
   /** Wasserflächen darunter (km²) sind Binnenseen und nicht befahrbar */
   minArea: number;
   names: { name: string; pos: Pt }[];
+  /** Seeknoten: Knoten = k-Means-Mittelpunkt (sofern im Wasser), Namen durchnummeriert (Nordsee 1, 2, …) */
+  nodes?: boolean;
 }
 
 export function buildSeas(rect: MultiPoly, land: MultiPoly[], opt: SeaOptions, rnd: () => number): SeaZoneBuild[] {
@@ -76,22 +78,38 @@ export function buildSeas(rect: MultiPoly, land: MultiPoly[], opt: SeaOptions, r
     }
     for (const z of local) {
       if (!z.shape.length) continue;
-      zones.push({ name: '', shape: z.shape, center: interiorPoint(z.shape), seas: new Set(), coasts: new Set() });
+      const center = opt.nodes && pointInMulti(z.center[0], z.center[1], z.shape) ? z.center : interiorPoint(z.shape);
+      zones.push({ name: '', shape: z.shape, center, seas: new Set(), coasts: new Set() });
     }
   }
 
   // Namen: nächster benannter Meerespunkt
   const used = new Map<string, number>();
-  for (const z of zones) {
+  const base = zones.map((z) => {
     let best = 'Seegebiet', bd = Infinity;
     for (const n of opt.names) {
-      const d = pointInMulti(n.pos[0], n.pos[1], z.shape) ? 0 : dist(n.pos, z.center);
+      const d = opt.nodes ? dist(n.pos, z.center) : pointInMulti(n.pos[0], n.pos[1], z.shape) ? 0 : dist(n.pos, z.center);
       if (d < bd) { bd = d; best = n.name; }
     }
-    const c = used.get(best) ?? 0;
-    used.set(best, c + 1);
-    z.name = c === 0 ? best : `${best} ${['', 'II', 'III', 'IV', 'V', 'VI'][c] ?? c + 1}`;
+    return best;
+  });
+  if (opt.nodes) {
+    // Knoten je Meer von West nach Ost durchnummerieren (ein einzelner Knoten bleibt ohne Nummer)
+    const order = zones.map((_, i) => i).sort((a, b) => zones[a].center[0] - zones[b].center[0] || zones[a].center[1] - zones[b].center[1]);
+    const total = new Map<string, number>();
+    for (const n of base) total.set(n, (total.get(n) ?? 0) + 1);
+    for (const i of order) {
+      const c = (used.get(base[i]) ?? 0) + 1;
+      used.set(base[i], c);
+      zones[i].name = total.get(base[i])! > 1 ? `${base[i]} ${c}` : base[i];
+    }
+    return zones;
   }
+  zones.forEach((z, i) => {
+    const c = used.get(base[i]) ?? 0;
+    used.set(base[i], c + 1);
+    z.name = c === 0 ? base[i] : `${base[i]} ${['', 'II', 'III', 'IV', 'V', 'VI'][c] ?? c + 1}`;
+  });
   return zones;
 }
 

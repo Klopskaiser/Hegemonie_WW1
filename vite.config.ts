@@ -4,6 +4,7 @@ import react from '@vitejs/plugin-react';
 import type { Plugin } from 'vite';
 import { defineConfig } from 'vitest/config';
 import { applyEdits } from './src/game/mapedits.ts';
+import { mapDrafts } from './scripts/drafts-server.ts';
 
 /** Vorgaben lesbar formatieren: Punkte und Namenspaare je in einer Zeile */
 function formatEdits(edits: unknown): string {
@@ -28,7 +29,7 @@ function mapEditor(): Plugin {
     apply: 'serve',
     configureServer(server) {
       server.middlewares.use('/__editor/', (req, res) => {
-        const m = /^\/([a-z0-9-]+)\/(base|edits)$/.exec(req.url ?? '');
+        const m = /^\/([a-z0-9_-]+)\/(base|edits)$/.exec(req.url ?? '');
         const send = (status: number, body: unknown) => {
           res.statusCode = status;
           res.setHeader('Content-Type', 'application/json');
@@ -37,7 +38,7 @@ function mapEditor(): Plugin {
         if (!m) return send(404, { error: 'unbekannt' });
         const f = files(m[1]);
         if (req.method === 'GET') {
-          if (m[2] === 'base') return fs.existsSync(f.base) ? send(200, fs.readFileSync(f.base, 'utf8')) : send(404, { error: 'Grundkarte fehlt – npm run map:europe' });
+          if (m[2] === 'base') return fs.existsSync(f.base) ? send(200, fs.readFileSync(f.base, 'utf8')) : send(404, { error: `Grundkarte fehlt – npm run map:${m[1]}` });
           return send(200, fs.existsSync(f.edits) ? fs.readFileSync(f.edits, 'utf8') : '{}');
         }
         if (req.method === 'POST' && m[2] === 'edits') {
@@ -63,7 +64,7 @@ function mapEditor(): Plugin {
 }
 
 export default defineConfig({
-  plugins: [react(), mapEditor()],
+  plugins: [react(), mapEditor(), mapDrafts(import.meta.dirname)],
   worker: { format: 'es' },
   // Simulationstests rechnen mehrere Spieltage; 5 s Standardlimit reicht unter Last nicht immer
   test: { include: ['tests/**/*.test.ts'], testTimeout: 20000 },

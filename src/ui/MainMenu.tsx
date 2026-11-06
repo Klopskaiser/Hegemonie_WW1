@@ -7,11 +7,12 @@ import { deleteGame, listGames } from '../persist/db.ts';
 import { Window } from './common.tsx';
 import { fmtDay, fmtDuration, fmtSpeed } from './format.ts';
 import { MapCanvas } from './MapCanvas.tsx';
-import { loadMap, MAPS } from './maps.ts';
+import { loadMap, loadMapList, MAPS } from './maps.ts';
 import type { SessionStart } from './useSession.ts';
 import { Flag } from './Flag.tsx';
 
-export function MainMenu({ onOpen, onEditor }: { onOpen(start: SessionStart): void; onEditor?: () => void }) {
+export function MainMenu({ onOpen, onEditor, onDrafter }: { onOpen(start: SessionStart): void; onEditor?: () => void; onDrafter?: () => void }) {
+  const [maps, setMaps] = useState(MAPS);
   const [games, setGames] = useState<GameMeta[]>([]);
   const [now, setNow] = useState(Date.now());
   const [mapId, setMapId] = useState('europe');
@@ -24,13 +25,18 @@ export function MainMenu({ onOpen, onEditor }: { onOpen(start: SessionStart): vo
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
 
   useEffect(() => {
+    loadMapList().then(setMaps);
     listGames().then(setGames);
     const t = setInterval(() => setNow(Date.now()), 5000);
     return () => clearInterval(t);
   }, []);
 
   useEffect(() => {
-    loadMap(mapId).then(setMap);
+    loadMap(mapId).then((m) => {
+      setMap(m);
+      // eigene Karten haben andere Nationen: auf die erste wechseln, wenn die gewählte fehlt
+      setNation((cur) => (m.nations.some((n) => n.id === cur) ? cur : m.nations[0]?.id ?? cur));
+    });
   }, [mapId]);
 
   const owners = useMemo(() => map?.provinces.map((p) => p.nation) ?? [], [map]);
@@ -53,12 +59,17 @@ export function MainMenu({ onOpen, onEditor }: { onOpen(start: SessionStart): vo
       <header className="menu-header">
         <h1>Hegemonie 1914</h1>
         <div className="menu-sub">Echtzeit-Strategie um die Vorherrschaft – nach dem Vorbild von Supremacy 1914</div>
-        {onEditor && <button className="btn small menu-editor" onClick={onEditor}>Karteneditor</button>}
+        {(onEditor || onDrafter) && (
+          <div className="menu-editor">
+            {onDrafter && <button className="btn small" onClick={onDrafter}>Karten-Zeichner</button>}
+            {onEditor && <button className="btn small" onClick={onEditor}>Karteneditor</button>}
+          </div>
+        )}
       </header>
       <div className="menu-body">
         <Window title="Neues Spiel" className="menu-new">
           <div className="map-choice">
-            {MAPS.map((m) => (
+            {maps.map((m) => (
               <button key={m.id} className={'map-card' + (mapId === m.id ? ' active' : '')} disabled={!m.available}
                 onClick={() => setMapId(m.id)}>
                 <b>{m.name}</b>
@@ -75,7 +86,7 @@ export function MainMenu({ onOpen, onEditor }: { onOpen(start: SessionStart): vo
             <div className="nation-list">
               {map?.nations.map((n) => (
                 <button key={n.id} className={'nation-item' + (nation === n.id ? ' active' : '')} onClick={() => setNation(n.id)}>
-                  <Flag nation={n.id} />
+                  <Flag nation={n.id} color={n.color} />
                   <span>{n.name}</span>
                   <span className="muted small">{n.major ? 'Großmacht' : 'Kleinstaat'}</span>
                 </button>

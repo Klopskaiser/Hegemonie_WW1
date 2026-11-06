@@ -10,6 +10,7 @@
     "lint": "tsc --noEmit",
     "test": "vitest run",
     "map:europe": "tsx scripts/build-map.ts europe",
+    "map:europa_real": "tsx scripts/build-map.ts europa_real",
     "headless": "tsx scripts/headless.ts",
     "morale:compare": "tsx scripts/morale-compare.ts",
     "model:example": "tsx scripts/example-model.ts"

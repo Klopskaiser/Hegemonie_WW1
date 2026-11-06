@@ -79,6 +79,11 @@ export interface MapData {
   shortcuts?: { a: number; b: number; via: number; pts: number[]; f0: number; f1: number }[];
   /** Wegkreuzungen (für die Darstellung): Knoten, an dem die gebündelten Wege beginnen, und Ort */
   junctions?: { node: number; x: number; y: number }[];
+  /**
+   * Seeknoten statt Seegebiete: jedes Element von `seas` ist ein Knotenpunkt (center); `polys` ist nur sein
+   * Einzugsbereich (für Anklicken und Zuordnung), wird nicht als Gebiet gezeichnet und hat keine Grenzen.
+   */
+  seaNodes?: boolean;
 }
 
 export function distanceKm(map: MapData, a: number, b: number): number {

@@ -51,4 +51,11 @@ export interface MapConfig {
   cityAt?: Record<string, [number, number]>;
   /** Wasserwege je Provinz fest vorgeben (Namen der Seegebiete) */
   seaLinks?: Record<string, string[]>;
+  /**
+   * Seeknoten statt Seegebiete: auf dem Wasser liegen nur Knotenpunkte (count Stück, an der Küste dichter),
+   * benachbarte Knoten sind verbunden, jede Küstenprovinz hat genau einen Hafen am nächstgelegenen Knoten.
+   */
+  seaNodes?: { count: number };
+  /** Zufallssaat für Provinzzuschnitt und Rohstoffe (Standard: id) – gleiche Saat = gleicher Landzuschnitt */
+  seed?: string;
 }

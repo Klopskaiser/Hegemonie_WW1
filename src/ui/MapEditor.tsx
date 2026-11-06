@@ -9,7 +9,7 @@ import { checkNation, FAR_KM, NATION_MAX, NATION_MIN } from '../game/mapcheck.ts
 import { RESOURCES, type MapData, type Resource } from '../game/mapdata.ts';
 import { applyEdits, pairKey, samplePath, territoryAt, type MapEdits, type Pt } from '../game/mapedits.ts';
 import { iconImage, ResIcon } from './icons.tsx';
-import { forgetMap } from './maps.ts';
+import { forgetMap, MAPS } from './maps.ts';
 
 interface Edge {
   u: number;
@@ -33,7 +33,8 @@ interface Drag {
   junctionMove?: boolean;
 }
 
-const MAP_ID = 'europe';
+/** Karten, die der Editor bearbeiten kann (Grundkarte data/maps/<id>.base.json, Vorgaben scripts/maps/<id>.edits.json) */
+const EDITOR_MAPS = MAPS.filter((m) => m.available);
 const SNAP_PX = 9;
 const HIT_PX = 7;
 
@@ -73,6 +74,8 @@ function checkEdge(map: MapData, e: Edge): string[] {
 }
 
 export function MapEditor({ onExit }: { onExit(): void }) {
+  const [mapId, setMapId] = useState('europe');
+  const MAP_ID = mapId;
   const [base, setBase] = useState<MapData | null>(null);
   const [edits, setEdits] = useState<MapEdits>({});
   const [history, setHistory] = useState<MapEdits[]>([]);
@@ -103,6 +106,14 @@ export function MapEditor({ onExit }: { onExit(): void }) {
   const frame = useRef(0);
 
   useEffect(() => {
+    setBase(null);
+    setEdits({});
+    setHistory([]);
+    setFuture([]);
+    setDirty(false);
+    setError('');
+    setSel(null); setSelNode(null); setSelVertex(null); setSelJunction(null); setSelChunk(null); setSelProv(null);
+    setConnectFrom(null); setConnectFromPt(null); setMerging(null);
     Promise.all([
       fetch(`/__editor/${MAP_ID}/base`).then((r) => (r.ok ? r.json() : r.json().then((e) => Promise.reject(new Error(e.error))))),
       fetch(`/__editor/${MAP_ID}/edits`).then((r) => r.json()),
@@ -110,7 +121,7 @@ export function MapEditor({ onExit }: { onExit(): void }) {
       setBase(b);
       setEdits(e);
     }).catch((e) => setError(`Editor nicht verfügbar (nur mit npm run dev): ${e.message ?? e}`));
-  }, []);
+  }, [mapId]);
 
   const applied = useMemo(() => (base ? applyEdits(base, edits) : null), [base, edits]);
   const map = applied?.map ?? null;
@@ -474,7 +485,8 @@ export function MapEditor({ onExit }: { onExit(): void }) {
     ctx.fillStyle = '#9fb9c4';
     ctx.fillRect(0, 0, w, h);
     ctx.setTransform(dpr * s, 0, 0, dpr * s, dpr * ox, dpr * oy);
-    map.seas.forEach((_, i) => {
+    // Seegebiete abwechselnd getönt; Seeknoten haben keine Gebiete (Punkte folgen unten)
+    if (!map.seaNodes) map.seas.forEach((_, i) => {
       ctx.fillStyle = i % 2 ? '#a9c3cd' : '#b2cbd4';
       ctx.fill(provincePaths.seas[i]);
     });
@@ -585,7 +597,7 @@ export function MapEditor({ onExit }: { onExit(): void }) {
         ctx.lineTo(X(x) - 5, Y(y));
       } else ctx.arc(X(x), Y(y), hi ? 5 : 3.5, 0, Math.PI * 2);
       ctx.fill();
-      if (s > 0.35 || sea || hi) {
+      if (s > 0.35 || (sea && !map.seaNodes) || hi) {
         ctx.fillStyle = sea ? 'rgba(20, 45, 85, 0.9)' : 'rgba(40, 25, 10, 0.95)';
         ctx.fillText(nodeName(map, n), X(x), Y(y) - 8);
       }
@@ -1029,7 +1041,12 @@ export function MapEditor({ onExit }: { onExit(): void }) {
         <button className="btn small" onClick={() => {
           if (!dirty || window.confirm('Ungespeicherte Änderungen verwerfen?')) onExit();
         }}>Zurück</button>
-        <strong>Karteneditor · Europa 1914</strong>
+        <strong>Karteneditor</strong>
+        <select value={mapId} onChange={(e) => {
+          if (!dirty || window.confirm('Ungespeicherte Änderungen verwerfen?')) setMapId(e.target.value);
+        }}>
+          {EDITOR_MAPS.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+        </select>
         <button className={'btn small' + (mode === 'edit' ? ' active' : '')} onClick={() => { setMode('edit'); setConnectFrom(null); setConnectFromPt(null); }}>Bearbeiten</button>
         <button className={'btn small' + (mode === 'connect' ? ' active' : '')} onClick={() => { setMode('connect'); setConnectFrom(null); setConnectFromPt(null); }}>Verbinden</button>
         <button className={'btn small' + (mode === 'resources' ? ' active' : '')} onClick={() => { setMode('resources'); setConnectFrom(null); setConnectFromPt(null); setSel(null); setSelNode(null); setSelVertex(null); }}>Rohstoffe</button>
