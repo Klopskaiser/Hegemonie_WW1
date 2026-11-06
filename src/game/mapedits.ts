@@ -157,10 +157,12 @@ export function applyEdits(base: MapData, edits: MapEdits): EditResult {
 
   // eigene Verläufe
   const paths = new Map<number, { a: number; b: number; inner: Pt[] }>();
-  for (const [k, inner] of Object.entries(edits.paths ?? {})) {
+  for (const [k, raw] of Object.entries(edits.paths ?? {})) {
     const [na, nb] = k.split('|');
     const a = node(na), b = node(nb);
     if (a === undefined || b === undefined) continue;
+    // doppelte aufeinanderfolgende Punkte (Doppelklick-Artefakte) entfernen
+    const inner = raw.filter((p, i) => i === 0 || Math.hypot(p[0] - raw[i - 1][0], p[1] - raw[i - 1][1]) > 0.05);
     paths.set(Math.min(a, b) * N + Math.max(a, b), { a, b, inner });
   }
   for (const [a, b] of pending) {
@@ -214,6 +216,51 @@ export function applyEdits(base: MapData, edits: MapEdits): EditResult {
   for (const [x, y] of edits.junctions?.add ?? []) {
     const t = territoryAt(map, x, y);
     map.junctions!.push({ node: t >= 0 ? t : P, x: r1(x), y: r1(y) });
+  }
+  // Kreuzungen, die durch Entfernen oder Umbauen von Wegen auf keinem Weg mehr liegen oder an keiner
+  // Abzweigung mehr sitzen, verschwinden lassen (per Hand gesetzte bleiben stehen, damit man sie
+  // vor dem Zeichnen ablegen kann)
+  {
+    const segs: number[] = [];
+    const corners: number[] = []; // innere Wegeknicks ≥ 20° (dort darf eine Kreuzung sitzen)
+    const ends: number[] = [];    // Wegenden (T-Kreuz: ein Zweig endet am durchfahrenden Weg)
+    for (const r of [...map.roads!, ...map.shortcuts!]) {
+      const p = r.pts;
+      if (p.length >= 4) ends.push(p[0], p[1], p[p.length - 2], p[p.length - 1]);
+      for (let k = 0; k + 3 < p.length; k += 2) segs.push(p[k], p[k + 1], p[k + 2], p[k + 3]);
+      for (let k = 2; k + 3 < p.length; k += 2) {
+        const ux = p[k] - p[k - 2], uy = p[k + 1] - p[k - 1];
+        const vx = p[k + 2] - p[k], vy = p[k + 3] - p[k + 1];
+        const c = (ux * vx + uy * vy) / (Math.hypot(ux, uy) * Math.hypot(vx, vy) || 1);
+        if ((Math.acos(Math.max(-1, Math.min(1, c))) * 180) / Math.PI >= 20) corners.push(p[k], p[k + 1]);
+      }
+    }
+    const nearRoad = (x: number, y: number) => {
+      for (let s = 0; s < segs.length; s += 4) {
+        const ax = segs[s], ay = segs[s + 1], dx = segs[s + 2] - ax, dy = segs[s + 3] - ay;
+        const l2 = dx * dx + dy * dy;
+        const t = l2 > 0 ? Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / l2)) : 0;
+        if (Math.hypot(x - (ax + t * dx), y - (ay + t * dy)) <= 2) return true;
+      }
+      return false;
+    };
+    const nearAny = (list: number[], x: number, y: number, d: number) => {
+      for (let i = 0; i < list.length; i += 2) if (Math.hypot(list[i] - x, list[i + 1] - y) <= d) return true;
+      return false;
+    };
+    const adds = edits.junctions?.add ?? [];
+    map.junctions = map.junctions!.filter((j) => {
+      if (adds.some(([x, y]) => Math.hypot(j.x - x, j.y - y) < 3)) return true;
+      if (!nearRoad(j.x, j.y)) {
+        warnings.push(`Kreuzung bei ${Math.round(j.x)}/${Math.round(j.y)} entfernt (auf keinem Weg)`);
+        return false;
+      }
+      if (!nearAny(corners, j.x, j.y, 2) && !nearAny(ends, j.x, j.y, 1)) {
+        warnings.push(`Kreuzung bei ${Math.round(j.x)}/${Math.round(j.y)} entfernt (keine Abzweigung)`);
+        return false;
+      }
+      return true;
+    });
   }
 
   for (const p of map.provinces) {

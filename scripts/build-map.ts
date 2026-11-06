@@ -25,7 +25,7 @@ import {
 import { makeRng } from '../src/game/rng.ts';
 import { assignResources, resourceReport } from './resources.ts';
 import { buildSeas, linkSeas } from './seas.ts';
-import { bundleRoutes, snapSeaLanes, waterRoutes } from './routes.ts';
+import { bundleRoutes, markBranchJunctions, snapSeaLanes, thinRoads, waterRoutes } from './routes.ts';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const RAW = path.join(ROOT, 'data', 'raw');
@@ -1321,6 +1321,14 @@ if (config.scale && config.scale !== 1) {
   console.log(`Maßstab ${s}: Entfernungen ${Math.round((1 - s) * 100)} % kürzer`);
 }
 
+// Überflüssige Wegpunkte auf geraden Strecken entfernen (sampelte Seewege haben sonst einen Punkt je 4 km)
+{
+  const cut = thinRoads(data);
+  console.log(`Wegpunkte gelichtet: ${cut} Punkte entfernt`);
+}
+// Knotenpunkte dort, wo ein Weg mit scharfem Knick an einem anderen vorbeiläuft (auf der fertigen Geometrie)
+console.log(`Knotenpunkte nachgelesen: ${markBranchJunctions(data)} gesetzt`);
+
 // Grundkarte sichern, dann die Handarbeit aus dem Karteneditor anwenden (scripts/maps/<id>.edits.json)
 const baseOut = path.join(ROOT, 'data', 'maps', `${config.id}.base.json`);
 fs.mkdirSync(path.dirname(baseOut), { recursive: true });
@@ -1331,6 +1339,9 @@ if (fs.existsSync(editsFile)) {
   const res = applyEdits(data, JSON.parse(fs.readFileSync(editsFile, 'utf8')));
   final = res.map;
   console.log(`Vorgaben aus dem Karteneditor angewendet${res.warnings.length ? `; Hinweise: ${res.warnings.join('; ')}` : ''}`);
+  // umgebaute Wege bekommen ihre Knotenpunkte ebenfalls auf der fertigen Geometrie
+  const more = markBranchJunctions(final);
+  if (more) console.log(`Knotenpunkte nach Editorvorgaben: ${more} gesetzt`);
 }
 const outDir = path.join(ROOT, 'public', 'maps');
 fs.mkdirSync(outDir, { recursive: true });

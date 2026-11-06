@@ -7,6 +7,7 @@
 import type { MapData } from '../src/game/mapdata.ts';
 import { edgePoints, isSea, nodeCount, nodeNeighbors } from '../src/game/graph.ts';
 import { pointInMulti, type MultiPoly, type Pt } from '../src/game/geom.ts';
+import { territoryAt } from '../src/game/mapedits.ts';
 
 type Road = NonNullable<MapData['roads']>[number];
 type Shortcut = NonNullable<MapData['shortcuts']>[number];
@@ -199,7 +200,7 @@ function projectOn(l: Line, p: Pt): { s: number; d: number } {
 }
 
 /** Douglas-Peucker */
-function simplify(pts: Pt[], tol: number): Pt[] {
+export function simplify(pts: Pt[], tol: number): Pt[] {
   if (pts.length <= 2) return pts;
   const [a, b] = [pts[0], pts[pts.length - 1]];
   let idx = -1, dmax = 0;
@@ -377,18 +378,61 @@ export function bundleRoutes(map: MapData, shapes: MultiPoly[]): BundleResult {
 // ---------------------------------------------------------------- Seewege zusammenlegen
 
 /**
+ * Lichtet alle Weg- und Abkürzungsverläufe (Douglas-Peucker): sampelte Wege (z. B. die 4-kum-Raster der
+ * Seewege) haben sonst Hunderte überflüssige Wegpunkte auf geraden Strecken – im Karteneditor jeder einzelne
+ * als Punkt sichtbar. Kreuzungspunkte werden an den nächstliegenden verbleibenden Wegpunkt gerückt.
+ */
+export function thinRoads(map: MapData, tol = 0.4): number {
+  let cut = 0;
+  const keep: Pt[] = [];
+  const prot: Pt[] = (map.junctions ?? []).map((j) => [j.x, j.y] as Pt);
+  const thin = (pts: number[]): number[] => {
+    const p: Pt[] = [];
+    for (let k = 0; k + 1 < pts.length; k += 2) p.push([pts[k], pts[k + 1]]);
+    // Punkte an Kreuzungen dürfen demlichten nicht zum Opfer fallen, sonst verlieren sie ihren Halt
+    const fixed = new Set<number>([0, p.length - 1]);
+    p.forEach((q, i) => {
+      if (prot.some((s) => Math.hypot(s[0] - q[0], s[1] - q[1]) < 1)) fixed.add(i);
+    });
+    const idx = [...fixed].sort((a, b) => a - b);
+    const s: Pt[] = [];
+    for (let a = 0; a + 1 < idx.length; a++) {
+      const part = simplify(p.slice(idx[a], idx[a + 1] + 1), tol);
+      s.push(...(a ? part.slice(1) : part));
+    }
+    keep.push(...s);
+    cut += p.length - s.length;
+    return flat(s);
+  };
+  for (const r of map.roads ?? []) r.pts = thin(r.pts);
+  for (const s of map.shortcuts ?? []) s.pts = thin(s.pts);
+  for (const j of map.junctions ?? []) {
+    let bx = j.x, by = j.y, bd = 1.5;
+    for (const [x, y] of keep) {
+      const d = Math.hypot(x - j.x, y - j.y);
+      if (d < bd) { bd = d; bx = x; by = y; }
+    }
+    j.x = r1(bx); j.y = r1(by);
+  }
+  return cut;
+}
+
+/**
  * Seewege (See–See und Hafen–See ab dem Hafen) laufen oft eng nebeneinander her. Längere Wege werden zum
  * Rückgrat; kürzere übernehmen dessen Verlauf, wo sie ihm über ≥ 40 km auf ≤ 25 km nahekommen, und
- * verlassen es an einer Kreuzung. Die Verbindungen bleiben, es entstehen nur weniger sichtbare Linien.
+ * verlassen es an einer Kreuzung. Eine Kreuzung entsteht aber nur, wo der Weg dort tatsächlich abzweigt
+ * (Knick ≥ 30°, wie beim Landbündeln); sonst gäbe es Phantomkreuzungen auf geraden Strecken, sobald eine
+ * Bahn das Rückgrat nur für einen kleinen Bogen verlässt oder parallel neben ihm entlangläuft. Kurze
+ * Ausrutscher über die 25 km hinweg (≤ 16 km) unterbrechen einen Lauf nicht. Die Verbindungen bleiben,
+ * es entstehen nur weniger sichtbare Linien.
  */
 export function snapSeaLanes(map: MapData): { roads: Road[]; junctions: BundleResult['junctions'] } {
-  const D = 25, minRun = 40, step = 4;
+  const D = 25, minRun = 40, step = 4, gapTol = 4, minAngle = 30;
   const lanes: { a: number; b: number; fixed: number; pts: Pt[]; len: number }[] = [];
   for (let u = 0; u < nodeCount(map); u++) {
     for (const v of nodeNeighbors(map, u)) {
       if (v < u || (!isSea(map, u) && !isSea(map, v))) continue;
       const pts = edgePoints(map, u, v);
-      // Hafenwege: Stadt → Hafen bleibt, verlegt wird nur der Teil auf See
       lanes.push({ a: u, b: v, fixed: isSea(map, u) ? 0 : 1, pts, len: line(pts).len });
     }
   }
@@ -396,6 +440,7 @@ export function snapSeaLanes(map: MapData): { roads: Road[]; junctions: BundleRe
   const backbone: Line[] = [];
   const roads: Road[] = [];
   const junctions: BundleResult['junctions'] = [];
+
   for (const lane of lanes) {
     const head = lane.pts.slice(0, lane.fixed);
     const sea = line(lane.pts.slice(lane.fixed));
@@ -411,21 +456,32 @@ export function snapSeaLanes(map: MapData): { roads: Road[]; junctions: BundleRe
       return best;
     });
     // Läufe entlang eines Rückgrats; mehrere Läufe auf demselben Rückgrat werden verbunden, damit der Weg
-    // es nicht verlässt, um später wieder einzumünden (kein Abzweig ohne Ziel)
+    // es nicht verlässt, um später wieder einzumünden (kein Abzweig ohne Ziel). Kurze Ausreißer dazwischen
+    // (bis gapTol Samples) überbrückt der Lauf, sonst zersägt das 4-km-Raster lange parallele Strecken in
+    // viele Läufe mit je zwei Phantomkreuzungen.
+    const dir = (v: number) => (v < 0 ? -1 : 1); // Richtung des Laufs; 0 wie vorwärts (wie Math.sign zerlegt nichts)
     const runs: { k: number; e: number; b: number }[] = [];
     for (let k = 0; k < samples.length;) {
       const h = hits[k];
       if (!h) { k++; continue; }
       let e = k;
-      while (e + 1 < samples.length && hits[e + 1] && hits[e + 1]!.b === h.b) e++;
+      for (;;) {
+        if (e + 1 < samples.length && hits[e + 1] && hits[e + 1]!.b === h.b) { e++; continue; }
+        let g = -1;
+        for (let q = e + 2; q <= Math.min(samples.length - 1, e + 1 + gapTol); q++)
+          if (hits[q] && hits[q]!.b === h.b) { g = q; break; }
+        if (g < 0) break;
+        e = g;
+      }
       if (samples[e].s - samples[k].s >= minRun) {
         const prev = runs[runs.length - 1];
-        if (prev && prev.b === h.b && Math.sign(hits[e]!.s - hits[k]!.s) === Math.sign(hits[prev.e]!.s - hits[prev.k]!.s)) prev.e = e;
+        if (prev && prev.b === h.b && dir(hits[e]!.s - hits[k]!.s) === dir(hits[prev.e]!.s - hits[prev.k]!.s)) prev.e = e;
         else runs.push({ k, e, b: h.b });
       }
       k = e + 1;
     }
     const seaPart: Pt[] = [];
+    const cand: number[] = []; // mögliche Kreuzungen: Index des Ein-/Ausstiegspunkts in seaPart
     const changed = runs.length > 0;
     let k = 0;
     for (const r of runs) {
@@ -433,20 +489,99 @@ export function snapSeaLanes(map: MapData): { roads: Road[]; junctions: BundleRe
       const bl = backbone[r.b];
       const s0 = hits[r.k]!.s, s1 = hits[r.e]!.s;
       const part = s0 <= s1 ? sliceLine(bl, s0, s1) : sliceLine(bl, s1, s0).reverse();
-      if (r.k > 0) junctions.push({ node: lane.a, x: r1(part[0][0]), y: r1(part[0][1]) });
-      if (r.e < samples.length - 1) junctions.push({ node: lane.a, x: r1(part[part.length - 1][0]), y: r1(part[part.length - 1][1]) });
+      if (r.k > 0) cand.push(seaPart.length);
+      if (r.e < samples.length - 1) cand.push(seaPart.length + part.length - 1);
       seaPart.push(...part);
       k = r.e + 1;
     }
     for (; k < samples.length; k++) seaPart.push(samples[k].p);
     // Anfang und Ende des Seeteils exakt erhalten
     const start = lane.pts[lane.fixed], end = lane.pts[lane.pts.length - 1];
-    if (seaPart[0][0] !== start[0] || seaPart[0][1] !== start[1]) seaPart.unshift(start);
+    let shift = head.length;
+    if (seaPart[0][0] !== start[0] || seaPart[0][1] !== start[1]) { seaPart.unshift(start); shift++; }
     const last = seaPart[seaPart.length - 1];
     if (last[0] !== end[0] || last[1] !== end[1]) seaPart.push(end);
     const finalPts = changed ? [...head, ...seaPart] : lane.pts;
-    if (changed) roads.push({ a: lane.a, b: lane.b, pts: flat(finalPts), split: 0.5 });
-    backbone.push(line(finalPts.slice(lane.fixed)));
+    if (changed) {
+      // Knick des fertigen Weges an einem Kandidaten (0 = geradeaus); Nachbarn mit Abstand < 0,5 km überspringen
+      const corner = (i: number): number => {
+        let a = i - 1;
+        while (a >= 0 && Math.hypot(finalPts[a][0] - finalPts[i][0], finalPts[a][1] - finalPts[i][1]) < 0.5) a--;
+        let b = i + 1;
+        while (b < finalPts.length && Math.hypot(finalPts[b][0] - finalPts[i][0], finalPts[b][1] - finalPts[i][1]) < 0.5) b++;
+        if (a < 0 || b >= finalPts.length) return 0;
+        return angleBetween(
+          [finalPts[i][0] - finalPts[a][0], finalPts[i][1] - finalPts[a][1]],
+          [finalPts[b][0] - finalPts[i][0], finalPts[b][1] - finalPts[i][1]],
+        );
+      };
+      for (const i of cand) {
+        if (corner(shift + i) < minAngle) continue; // gerade durchgehend: keine Kreuzung
+        const p = finalPts[shift + i];
+        const j = { node: lane.a, x: r1(p[0]), y: r1(p[1]) };
+        if (!junctions.some((q) => Math.hypot(q.x - j.x, q.y - j.y) < 10)) junctions.push(j);
+      }
+      roads.push({ a: lane.a, b: lane.b, pts: flat(finalPts), split: 0.5 });
+    }
+    // Rückgrat geglättet ablegen (wie beim Landbündeln), damit übernahmefremde Ausbuchtungen nicht nachwirken
+    backbone.push(line(simplify(finalPts.slice(lane.fixed), 0.5)));
   }
   return { roads, junctions };
+}
+
+/**
+ * Knotenpunkte auf fertigen Karten nachlesen: ein Kreuz gehört dorthin, wo ein echter Weg mit einem
+ * Knick ≥ minAngle an einem anderen Weg (≤ passKm) vorbeiläuft — also dort, wo man abzweigen oder
+ * einen Pfad ansetzen kann. Läuft bewusst erst NACH dem Lichtem und NACH den Editor-Vorgaben,
+ * damit die Punkte auf der tatsächlich ausgelieferten Geometrie sitzen und nicht wieder wegfallen.
+ * Gibt die Anzahl der gesetzten Punkte zurück.
+ */
+export function markBranchJunctions(map: MapData, passKm = 2, minAngle = 30, skipKm = 8): number {
+  const P0 = map.provinces.length;
+  map.junctions ??= [];
+  const lines: Pt[][] = [];
+  for (const r of [...map.roads ?? [], ...map.shortcuts ?? []]) {
+    const pts: Pt[] = [];
+    for (let i = 0; i + 1 < r.pts.length; i += 2) pts.push([r.pts[i], r.pts[i + 1]]);
+    lines.push(pts);
+  }
+  // grobe Hülle je Weg, damit die Nachbarsuche nicht quadratisch wird
+  const boxes = lines.map((pts) => {
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const [x, y] of pts) { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); }
+    return [x0 - passKm, y0 - passKm, x1 + passKm, y1 + passKm];
+  });
+  const isCorner = (pts: Pt[], i: number) => {
+    const ux = pts[i][0] - pts[i - 1][0], uy = pts[i][1] - pts[i - 1][1];
+    const vx = pts[i + 1][0] - pts[i][0], vy = pts[i + 1][1] - pts[i][1];
+    const c = (ux * vx + uy * vy) / (Math.hypot(ux, uy) * Math.hypot(vx, vy) || 1);
+    return (Math.acos(Math.max(-1, Math.min(1, c))) * 180) / Math.PI >= minAngle;
+  };
+  const nearLine = (p: Pt, o: Pt[]) => {
+    for (let k = 0; k + 1 < o.length; k++) {
+      const [a, b] = [o[k], o[k + 1]];
+      const dx = b[0] - a[0], dy = b[1] - a[1], l2 = dx * dx + dy * dy;
+      const t = l2 > 0 ? Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / l2)) : 0;
+      if (Math.hypot(p[0] - (a[0] + t * dx), p[1] - (a[1] + t * dy)) <= passKm) return true;
+    }
+    return false;
+  };
+  const spots: Pt[] = [];
+  lines.forEach((pts, li) => {
+    for (let i = 1; i + 1 < pts.length; i++) {
+      if (!isCorner(pts, i)) continue;
+      const [px, py] = pts[i];
+      // nur dort, wo ein anderer Weg tatsächlich vorbeiläuft (echter Abzweig, keine einsame Bucht)
+      if (!lines.some((o, oi) => oi !== li && px >= boxes[oi][0] && px <= boxes[oi][2] && py >= boxes[oi][1] && py <= boxes[oi][3] && nearLine([px, py], o))) continue;
+      if (!spots.some((s) => Math.hypot(s[0] - px, s[1] - py) < 4)) spots.push([px, py]);
+    }
+  });
+  let added = 0;
+  for (const [x, y] of spots) {
+    if (map.junctions.some((q) => Math.hypot(q.x - x, q.y - y) < skipKm)) continue;
+    const t = territoryAt(map, x, y);
+    map.junctions.push({ node: t >= 0 ? t : P0, x: r1(x), y: r1(y) });
+    added++;
+  }
+  return added;
 }

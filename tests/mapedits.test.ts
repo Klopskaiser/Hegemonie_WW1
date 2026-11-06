@@ -71,3 +71,73 @@ describe('Rohstoffe der Karte', () => {
     expect(base.provinces.filter((p) => ['MG', 'LY', 'EG'].includes(p.nation) && p.resource === 'lumber').length).toBeGreaterThanOrEqual(2);
   });
 });
+
+describe('Kreuzungs- und Pfadhygiene', () => {
+  /** Kreuzung, die nur auf genau einem Weg liegt (und > 2 km von allen anderen entfernt ist) */
+  const orphanCandidate = (() => {
+    const segs = (base.roads ?? []).map((r) => ({ r, p: r.pts }));
+    const dist = (x: number, y: number, p: number[]) => {
+      let bd = Infinity;
+      for (let k = 0; k + 3 < p.length; k += 2) {
+        const ax = p[k], ay = p[k + 1], dx = p[k + 2] - ax, dy = p[k + 3] - ay;
+        const l2 = dx * dx + dy * dy;
+        const t = l2 > 0 ? Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / l2)) : 0;
+        bd = Math.min(bd, Math.hypot(x - (ax + t * dx), y - (ay + t * dy)));
+      }
+      return bd;
+    };
+    const nm = (n: number) => (n < base.provinces.length ? base.provinces[n].name : base.seas[n - base.provinces.length].name);
+    for (const j of base.junctions ?? []) {
+      // nur auf genau diesem Weg, nirgends sonst (auch nicht auf einer Abkürzung)
+      if ((base.shortcuts ?? []).some((s) => dist(j.x, j.y, s.pts) <= 2)) continue;
+      const on = segs.filter(({ p }) => dist(j.x, j.y, p) <= 2);
+      if (on.length === 1) return { j, a: nm(on[0].r.a), b: nm(on[0].r.b) };
+    }
+    return null;
+  })();
+
+  it('Kreuzung ohne Weg wird entfernt und gemeldet', () => {
+    expect(orphanCandidate).not.toBeNull();
+    const { j, a, b } = orphanCandidate!;
+    const { map, warnings } = applyEdits(base, { remove: [[a, b]] });
+    expect(map.junctions!.some((k) => Math.hypot(k.x - j.x, k.y - j.y) < 3)).toBe(false);
+    expect(warnings.some((w) => w.includes('auf keinem Weg'))).toBe(true);
+    // ohne Entfernen des Weges bleibt sie stehen
+    expect(applyEdits(base, {}).map.junctions!.some((k) => Math.hypot(k.x - j.x, k.y - j.y) < 3)).toBe(true);
+  });
+
+  it('per Hand gesetzte Kreuzung auf freier Fläche bleibt erhalten', () => {
+    const { map } = applyEdits(base, { junctions: { add: [[-400, 1500]] } });
+    expect(map.junctions!.some((k) => Math.hypot(k.x + 400, k.y - 1500) < 3)).toBe(true);
+  });
+
+  it('doppelte aufeinanderfolgende Punkte im Verlauf werden ignoriert', () => {
+    const p: [number, number] = [-565.5, 1298.6];
+    const { map } = applyEdits(base, { paths: { 'Straße von Sizilien|Ionisches Meer': [p, [...p] as [number, number], [-329.6, 1401.7]] } });
+    const r = map.roads!.find((x) => (x.a === base.provinces.length + base.seas.findIndex((s) => s.name === 'Straße von Sizilien') || x.b === base.provinces.length + base.seas.findIndex((s) => s.name === 'Straße von Sizilien')) && (x.a === base.provinces.length + base.seas.findIndex((s) => s.name === 'Ionisches Meer') || x.b === base.provinces.length + base.seas.findIndex((s) => s.name === 'Ionisches Meer')))!;
+    const pts = r.pts;
+    for (let k = 0; k + 3 < pts.length; k += 2)
+      expect(Math.hypot(pts[k + 2] - pts[k], pts[k + 3] - pts[k + 1]), 'aufeinanderfolgende Punkte').toBeGreaterThan(0.05);
+  });
+
+  it('neue Verbindung mit Kreuzungs-Endpunkten biegt sofort über sie', () => {
+    // Seegebietspaar suchen, das noch nicht verbunden ist
+    const P = base.provinces.length;
+    let pair: [string, string] | null = null;
+    outer: for (const a of base.seas) for (const b of base.seas) {
+      if (a.id >= b.id) continue;
+      if (!a.seas.includes(b.id)) { pair = [a.name, b.name]; break outer; }
+    }
+    expect(pair).not.toBeNull();
+    const [na, nb] = pair!;
+    const A: [number, number] = [base.seas.find((s) => s.name === na)!.center[0] + 40, base.seas.find((s) => s.name === na)!.center[1] - 60];
+    const B: [number, number] = [base.seas.find((s) => s.name === nb)!.center[0] - 40, base.seas.find((s) => s.name === nb)!.center[1] + 60];
+    const { map } = applyEdits(base, { add: [[na, nb]], paths: { [`${na}|${nb}`]: [A, B] } });
+    const ia = P + base.seas.findIndex((s) => s.name === na), ib = P + base.seas.findIndex((s) => s.name === nb);
+    const r = map.roads!.find((x) => (x.a === ia && x.b === ib) || (x.a === ib && x.b === ia));
+    expect(r, `${na}–${nb}`).toBeDefined();
+    expect(r!.pts.slice(2, -2)).toEqual([A[0], A[1], B[0], B[1]]);
+    // und die Verbindung existiert im Netzwerk
+    expect(map.seas[ia - P].seas).toContain(ib - P);
+  });
+});
