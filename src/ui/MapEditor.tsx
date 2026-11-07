@@ -165,7 +165,7 @@ export function MapEditor({ onExit }: { onExit(): void }) {
   const chunkIdx = selChunk !== null && selChunk < chunks.length ? selChunk : null;
 
   const clearSel = () => {
-    setSel(null); setSelNode(null); setSelVertex(null); setSelJunction(null); setSelChunk(null); setMerging(null);
+    setSel(null); setSelNode(null); setSelVertex(null); setSelJunction(null); setSelChunk(null); setMerging(null); setSelProv(null);
   };
 
   /** nächste Stelle auf einem Weg zu p (Punkt und Bogenlänge) */
@@ -499,13 +499,27 @@ export function MapEditor({ onExit }: { onExit(): void }) {
       ctx.strokeStyle = 'rgba(60, 40, 20, 0.45)';
       ctx.stroke(provincePaths.provinces[i]);
     });
-    if (mode === 'resources' && selProv !== null) {
+    if ((mode === 'resources' || mode === 'edit') && selProv !== null) {
       ctx.strokeStyle = '#c0281a';
       ctx.lineWidth = 3 / s;
       ctx.stroke(provincePaths.provinces[selProv]);
     }
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     const X = (x: number) => ox + x * s, Y = (y: number) => oy + y * s;
+    // Hauptstädte: goldener Stern am Nationssitz
+    const drawCapitals = () => {
+      ctx.font = 'bold 15px Georgia, serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      for (const n of map.nations) {
+        const [x, y] = nodePos(map, n.capital);
+        ctx.fillStyle = 'rgba(40, 25, 10, 0.85)';
+        ctx.fillText('★', X(x) + 1, Y(y) + 1);
+        ctx.fillStyle = '#ffd24a';
+        ctx.fillText('★', X(x), Y(y));
+      }
+      ctx.textBaseline = 'alphabetic';
+    };
     // Rohstoffmodus: Symbole statt Wege
     if (mode === 'resources') {
       const size = s > 0.5 ? 18 : 14;
@@ -525,6 +539,7 @@ export function MapEditor({ onExit }: { onExit(): void }) {
           ctx.fillText(p.name, X(p.mid[0]), y - 5);
         }
       }
+      drawCapitals();
       return;
     }
     const line = (pts: Pt[]) => {
@@ -602,6 +617,7 @@ export function MapEditor({ onExit }: { onExit(): void }) {
         ctx.fillText(nodeName(map, n), X(x), Y(y) - 8);
       }
     }
+    drawCapitals();
     // ausgewählter Weg mit Wegpunkten (gewählter Abschnitt golden)
     if (selEdge) {
       const pts = preview.get(selEdge) ?? selEdge.pts;
@@ -794,7 +810,7 @@ export function MapEditor({ onExit }: { onExit(): void }) {
     if (mode === 'edit') {
       const j = junctionHit(p);
       if (j) {
-        setSel(null); setSelNode(null); setSelVertex(null); setSelChunk(null); setMerging(null);
+        setSel(null); setSelNode(null); setSelVertex(null); setSelChunk(null); setMerging(null); setSelProv(null);
         drag.current = { items: [], from: [j.x, j.y], cur: [j.x, j.y], junction: false, moved: false, junctionMove: true };
         setSelJunction([j.x, j.y]);
         (ev.target as Element).setPointerCapture?.(ev.pointerId);
@@ -855,7 +871,7 @@ export function MapEditor({ onExit }: { onExit(): void }) {
         }
       }
       setSel({ u: hit.e.u, v: hit.e.v });
-      setSelNode(null); setSelVertex(null); setSelJunction(null); setSelChunk(null); setMerging(null);
+      setSelNode(null); setSelVertex(null); setSelJunction(null); setSelChunk(null); setMerging(null); setSelProv(null);
       return;
     }
     startPan(ev);
@@ -902,6 +918,9 @@ export function MapEditor({ onExit }: { onExit(): void }) {
         setSelProv(t >= 0 && t < map.provinces.length ? t : null);
       } else if (!pan.current.moved && mode === 'edit') {
         clearSel();
+        // Klick auf freie Provinzfläche wählt die Provinz (Hauptstadt-Panel)
+        const t = map ? territoryAt(map, pan.current.at[0], pan.current.at[1]) : -1;
+        if (map && t >= 0 && t < map.provinces.length) setSelProv(t);
       }
       pan.current = null;
       return;
@@ -1078,6 +1097,26 @@ export function MapEditor({ onExit }: { onExit(): void }) {
           )}
 
           {mode === 'resources' && <ResourcePanel map={map} base={base!} edits={edits} prov={selProv} onSet={setResource} onGo={goTo} />}
+
+          {mode === 'edit' && selProv !== null && (() => {
+            const p = map.provinces[selProv];
+            const nat = map.nations.find((n) => n.id === p.nation);
+            const isCap = !!nat && nat.capital === p.id;
+            return (
+              <section>
+                <h3>{p.name}</h3>
+                <p className="small">{nat?.name ?? p.nation}{isCap ? ' · Hauptstadt' : ''}</p>
+                <div className="editor-buttons">
+                  <button className="btn small" disabled={!nat || isCap}
+                    onClick={() => nat && commit({ ...edits, capitals: { ...(edits.capitals ?? {}), [nat.id]: p.name } })}>
+                    {isCap ? 'Ist Hauptstadt' : 'Zur Hauptstadt machen'}
+                  </button>
+                  {nat && !isCap && <button className="btn small" onClick={() => goTo(nat.capital)}>Sitz: {map.provinces[nat.capital].name}</button>}
+                </div>
+                <p className="small muted">Klick auf freie Provinzfläche wählt die Provinz. Hauptstädte stehen als goldener Stern auf der Karte; die Vorgabe wird beim Speichern mitgesichert.</p>
+              </section>
+            );
+          })()}
 
           {selEdge && (
             <section>

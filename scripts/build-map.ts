@@ -734,11 +734,15 @@ for (const n of config.nations) {
   own.slice(0, max).filter((p) => biggestPop[p.id] >= 300000).forEach((p) => (p.city = true));
 }
 
-// Küstenorte ohne echte Stadt: nur etwa 20 % bleiben am Wasser (unter 10 km), die übrigen rücken an
-// eine zufällige Stelle im Inneren der Provinz – weit genug von allen Grenzen und von der Mitte mit dem
-// Rohstoffsymbol, damit die Wege einfach bleiben. Vorgegebene Lagen (cityAt) bleiben unangetastet.
+// Küstenstädte sind wieder ausdrücklich erlaubt: kein Ort wird mehr pauschal vom Wasser ins Innere geschoben.
+// Nur die Lage selbst wird geprüft: jeder Provinzmittelpunkt muss (a) im Land seiner Provinz liegen und
+// (b) um sich herum eine zusammenhängende Landfläche haben — gemessen als Mindestabstand LAND_MIN_KM von der
+// Küstenlinie (ein Kreis mit diesem Radius liegt dann ganz an Land). Trifft beides nicht zu, rückt die Stadt
+// zum nächstgelegenen Punkt der Provinz, der die Bedingung erfüllt. Vorgegebene Lagen (cityAt) bleiben unangetastet.
 {
-  const COAST_NEAR = 10, KEEP_SHARE = 0.2;
+  const LAND_MIN_KM = 4;
+  const sc = config.scale ?? 1;
+  const need = LAND_MIN_KM / sc;
   const coastSegs = provs.map(() => [] as number[]);
   for (const b of borderMap.values()) if (b.b === -1) coastSegs[b.a].push(...b.segs);
   const segDist = (segs: number[], p: Pt) => {
@@ -747,38 +751,31 @@ for (const n of config.nations) {
     return d;
   };
   const fixed = new Set(Object.keys(config.cityAt ?? {}));
-  const near = provinces.filter((p) => !p.city && !p.capital && coastSegs[p.id].length && !fixed.has(p.name)
-    && segDist(coastSegs[p.id], p.center) < COAST_NEAR);
-  // feste Auswahl der Bleibenden (nach Namens-Hash), damit jeder Neubau gleich ausfällt
-  const order = [...near].sort((a, b) => (hash(a.name) >>> 0) - (hash(b.name) >>> 0));
-  const stay = new Set(order.slice(0, Math.round(near.length * KEEP_SHARE)).map((p) => p.id));
   let movedCount = 0;
-  for (const p of near) {
-    if (stay.has(p.id)) continue;
+  for (const p of provinces) {
+    if (fixed.has(p.name)) continue;
     const shape = provs[p.id].shape;
+    const onLand = pointInMulti(p.center[0], p.center[1], shape);
+    const coastOk = !coastSegs[p.id].length || segDist(coastSegs[p.id], p.center) >= need;
+    if (onLand && coastOk) continue;
     const main = shape.reduce((a, b) => (polyArea(a) > polyArea(b) ? a : b));
-    const edgeDist = (x: number, y: number) => {
-      let d = Infinity;
-      for (const ring of main) for (let k = 0; k + 1 < ring.length; k++) d = Math.min(d, distSegment(x, y, ring[k][0], ring[k][1], ring[k + 1][0], ring[k + 1][1]));
-      return d;
-    };
-    const mid: Pt = [p.mid[0], p.mid[1]];
-    const dMax = edgeDist(mid[0], mid[1]);
     const [x0, y0, x1, y1] = bboxOf([main]);
-    const step = Math.max(2, Math.min(x1 - x0, y1 - y0) / 25);
-    const cand: Pt[] = [];
+    const step = Math.max(1, Math.min(x1 - x0, y1 - y0) / 60);
+    let best: Pt | null = null, bd = Infinity;
     for (let x = x0; x <= x1; x += step) for (let y = y0; y <= y1; y += step) {
       if (!pointInPoly(x, y, main)) continue;
-      if (edgeDist(x, y) >= 0.5 * dMax && dist([x, y], mid) >= 0.3 * dMax) cand.push([x, y]);
+      if (coastSegs[p.id].length && segDist(coastSegs[p.id], [x, y]) < need) continue;
+      const d = dist([x, y], p.center as Pt);
+      if (d < bd) { bd = d; best = [x, y]; }
     }
-    if (!cand.length) continue;
-    const pick = cand[Math.floor(makeRng(hash(p.name) ^ 0xc0a57)() * cand.length)];
-    p.center = [r1(pick[0]), r1(pick[1])];
-    const ll = unproject(pick);
+    // findet die Provinz keinen Platz mit genug Land um sich (kleine Insel), bleibt der Ort, wo er ist
+    if (!best) continue;
+    p.center = [r1(best[0]), r1(best[1])];
+    const ll = unproject(best);
     p.lonlat = [Math.round(ll[0] * 1000) / 1000, Math.round(ll[1] * 1000) / 1000];
     movedCount++;
   }
-  console.log(`Küstenorte ohne Stadt unter ${COAST_NEAR} km: ${near.length}, davon bleiben ${stay.size}, ins Innere verlegt: ${movedCount}`);
+  console.log(`Stadtlagen ohne genug Land (Kreis ${LAND_MIN_KM} km um den Punkt): korrigiert ${movedCount}`);
 }
 
 // Provinzstädte nicht direkt an der Grenze: Mindestabstand zur nächsten Landgrenze der eigenen Provinz (in

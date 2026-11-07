@@ -26,6 +26,10 @@ export interface ImportOptions {
   minArea: number;
   /** Landstücke ohne Hauptstadtpunkt der nächsten Provinz zuschlagen (Standard an) */
   attachOrphans?: boolean;
+  /** Lücken zwischen Landprovinzen bis zu dieser Größe (px) werden zugeschlagen; größere bleiben Wasser */
+  maxGap?: number;
+  /** Inseln/Landstücke bis zu dieser Fläche (px) werden der nächstgelegenen größeren Provinz zugeschlagen; 0 = aus */
+  maxIsland?: number;
 }
 
 export interface ImportResult {
@@ -37,7 +41,7 @@ export interface ImportResult {
   warnings: string[];
 }
 
-export const DEFAULT_IMPORT: Omit<ImportOptions, 'colors'> = { tolerance: 60, simplify: 1.2, minArea: 25 };
+export const DEFAULT_IMPORT: Omit<ImportOptions, 'colors'> = { tolerance: 60, simplify: 1.2, minArea: 25, maxGap: 4, maxIsland: 500 };
 
 const enum C { Other = 0, Land = 1, Border = 2, Capital = 3, Sea = 4, Link = 5 }
 
@@ -168,26 +172,83 @@ export function importRaster(img: RasterImage, opt: ImportOptions, kmW: number, 
     const x0 = Math.max(0, x - R), y0 = Math.max(0, y - R), x1 = Math.min(W, x + R + 1), y1 = Math.min(H, y + R + 1);
     return s[y1 * (W + 1) + x1] - s[y0 * (W + 1) + x1] - s[y1 * (W + 1) + x0] + s[y0 * (W + 1) + x0];
   };
-  // Was liegt unter Stadt- und Linienpixeln? An Land: Land – außer sie unterbrechen eine Grenzlinie (in zwei
-  // Gegenrichtungen stößt man hinter den Linienpixeln auf Grenze), dann Grenze. Im Wasser: Wasser.
+  // Was liegt unter Stadt- und Linienpixeln? An Land: Land – außer sie berühren eine Grenzlinie,
+  // dann Grenze (sie läuft darunter weiter). Im Wasser: Wasser.
   const overlay = (c: number) => c === C.Capital || c === C.Link;
-  const DIRS = [[1, 0], [0, 1], [1, 1], [1, -1]];
-  const firstBeyond = (x: number, y: number, dx: number, dy: number) => {
-    for (let k = 1; k <= 8; k++) {
-      const nx = x + dx * k, ny = y + dy * k;
-      if (nx < 0 || ny < 0 || nx >= W || ny >= H) return C.Other;
-      const c = cls[ny * W + nx];
-      if (!overlay(c)) return c;
-    }
-    return C.Link;
+  // Verbindungen und Hauptstadtscheiben, die eine gezeichnete Grenzlinie kreuzen oder berühren: die
+  // Grenze gilt als durchgehend (unter Verbindung und Scheibe gerade weiter), diese Pixel zählen als
+  // Grenze – Linienpixel bleiben für die Verbindungserkennung trotzdem erhalten. So entstehen keine
+  // Landbrücken genau dort, wo der Nutzer Verbindungen über Grenzen zeichnet. Ein Linienzug, der nur
+  // nahe einer Grenze verläuft, wird dadurch nicht falsch getrennt: beide Seiten gehören zur selben
+  // Provinz. Über Wasser oder Lücken wird nie Grenze (siehe Basiszuordnung).
+  const crossed = new Uint8Array(N);
+  const nearReal = (x: number, y: number, rad: number) => {
+    for (let dy = -rad; dy <= rad; dy++)
+      for (let dx = -rad; dx <= rad; dx++) {
+        const nx = x + dx, ny = y + dy;
+        if (nx >= 0 && ny >= 0 && nx < W && ny < H && cls[ny * W + nx] === C.Border) return true;
+      }
+    return false;
   };
+  for (let i = 0; i < N; i++) {
+    if (cls[i] !== C.Link) continue;
+    const x = i % W, y = (i - x) / W;
+    if (nearReal(x, y, 3)) crossed[i] = 1;
+  }
   const base = new Uint8Array(N);
   for (let i = 0; i < N; i++) {
     const c = cls[i];
     if (!overlay(c)) { base[i] = c === C.Sea ? C.Other : c; continue; }
     const x = i % W, y = (i - x) / W;
+    // Im Wasser oder in einer Lücke: Wasser – eine Verbindung darf über eine echte Lücke keine Landbrücke bauen
     if (boxSum(landSum, x, y) <= boxSum(waterSum, x, y)) { base[i] = C.Other; continue; }
-    base[i] = DIRS.some(([dx, dy]) => firstBeyond(x, y, dx, dy) === C.Border && firstBeyond(x, y, -dx, -dy) === C.Border) ? C.Border : C.Land;
+    // An Land: Grenze, wo die Pixel eine Grenzlinie kreuzen oder berühren (Linie wie Scheibe), sonst Land
+    base[i] = crossed[i] || nearReal(x, y, 3) ? C.Border : C.Land;
+  }
+  // Lücken zwischen Landprovinzen zuschlagen: morphologischer Schluss (Land erst weiten, dann
+  // Schrumpfen) füllt alle Wasserstreifen bis maxGap Dicke – dünn geratene oder abgehackte Trennungen
+  // verschwinden, echte Straßen und Buchten bleiben Wasser. Gezeichnete Grenzlinien selbst werden
+  // nie zugeschlagen; große Lücken überleben den Schluss.
+  const maxGap = opt.maxGap ?? 4;
+  if (maxGap > 0) {
+    const r = Math.floor(maxGap / 2);
+    let dil = new Uint8Array(N);
+    // gezeichnete Grenzen zählen als fest: die Lücke wird zwischen den Grenzlinien gemessen, nicht bis zur Landesgrenze
+    for (let i = 0; i < N; i++) dil[i] = base[i] === C.Land || base[i] === C.Border ? 1 : 0;
+    for (let pass = 0; pass < 2; pass++) {
+      const src = dil, dst = new Uint8Array(N);
+      for (let y = 0; y < H; y++) {
+        for (let x = 0; x < W; x++) {
+          let v = 0;
+          for (let d = -r; d <= r && !v; d++) {
+            const nx = pass ? x : x + d, ny = pass ? y + d : y;
+            if (nx >= 0 && ny >= 0 && nx < W && ny < H && src[ny * W + nx]) v = 1;
+          }
+          dst[y * W + x] = v;
+        }
+      }
+      dil = dst;
+    }
+    let clos = dil;
+    for (let pass = 0; pass < 2; pass++) {
+      const src = clos, dst = new Uint8Array(N);
+      for (let y = 0; y < H; y++) {
+        for (let x = 0; x < W; x++) {
+          const i0 = y * W + x;
+          if (!src[i0]) continue;
+          let v = 1;
+          for (let d = -r; d <= r && v; d++) {
+            const nx = pass ? x : x + d, ny = pass ? y + d : y;
+            if (nx >= 0 && ny >= 0 && nx < W && ny < H && !src[ny * W + nx]) v = 0; // außerhalb zählt wie Land
+          }
+          dst[i0] = v;
+        }
+      }
+      clos = dst;
+    }
+    for (let i = 0; i < N; i++)
+      // zugeschlagenes Material wird Grenzgebiet, damit die Provinzen es sich teilen und Nachbarn werden
+      if (base[i] !== C.Land && base[i] !== C.Border && cls[i] !== C.Border && clos[i]) base[i] = C.Border;
   }
   const growable = new Uint8Array(N);
   for (let i = 0; i < N; i++) if (base[i] === C.Border) growable[i] = 1;
@@ -235,15 +296,30 @@ export function importRaster(img: RasterImage, opt: ImportOptions, kmW: number, 
     return best;
   });
 
-  // Landstücke ohne Hauptstadtpunkt (Inseln, Splitter) der nächstgelegenen Provinz mit Punkt zuschlagen –
-  // so entstehen Provinzen aus mehreren Teilen (Breitensuche über Land und Wasser von allen Provinzen mit Punkt)
+  // Landstücke ohne Hauptstadtpunkt und kleine Inseln der nächstgelegenen größeren Provinz zuschlagen –
+  // so entstehen Provinzen aus mehreren Teilen, und kleine Eilande um eine Hauptinsel werden nicht zu
+  // eigenen Provinzen (Breitensuche über Land und Wasser von allen behaltenen Provinzen aus)
   const hasCity = new Uint8Array(labels);
   for (const l of capLabel) if (l >= 0) hasCity[l] = 1;
-  if (opt.attachOrphans !== false && hasCity.some((v) => v) && hasCity.some((v) => !v)) {
+  const labelArea = new Array<number>(labels).fill(0);
+  for (let i = 0; i < N; i++) if (lab[i] >= 0) labelArea[lab[i]]++;
+  // Heimatfläche jedes Hauptstadtpunkts vor dem Zuschlagen – nach dem Zuschlagen gewinnt der Punkt
+  // der größten Insel seiner Provinz (Kopenhagen bleibt auf Seeland, nicht auf einer Nebeninsel)
+  const capHome = capLabel.map((l) => (l >= 0 ? labelArea[l] : 0));
+  const maxIsle = opt.maxIsland ?? 500;
+  let biggest = 0;
+  for (let l = 1; l < labels; l++) if (labelArea[l] > labelArea[biggest]) biggest = l;
+  // Behalten wird: die größte Fläche immer, alles über der Inselgrenze, und (bei vorhandenen Punkten)
+  // alles mit eigenem Hauptstadtpunkt. Ziel fürs Zuschlagen: kleine Flächen und – falls es überhaupt
+  // Punkte gibt – punktfreie Splitter jeder Größe.
+  const anyCity = hasCity.some((v) => v);
+  const keep = (l: number) =>
+    l === biggest || (maxIsle <= 0 && anyCity && hasCity[l] === 1) || (anyCity && hasCity[l] === 1 && labelArea[l] > maxIsle) || (!anyCity && labelArea[l] > maxIsle);
+  if (opt.attachOrphans !== false && labels > 1 && Array.from({ length: labels }, (_, l) => !keep(l)).some(Boolean)) {
     const owner = new Int32Array(N).fill(-1);
     const q = new Int32Array(N);
     let h = 0, t = 0;
-    for (let i = 0; i < N; i++) if (lab[i] >= 0 && hasCity[lab[i]]) { owner[i] = lab[i]; q[t++] = i; }
+    for (let i = 0; i < N; i++) if (lab[i] >= 0 && keep(lab[i])) { owner[i] = lab[i]; q[t++] = i; }
     while (h < t) {
       const i = q[h++];
       const x = i % W;
@@ -256,7 +332,7 @@ export function importRaster(img: RasterImage, opt: ImportOptions, kmW: number, 
     const votes = new Map<number, Map<number, number>>();
     for (let i = 0; i < N; i++) {
       const l = lab[i];
-      if (l < 0 || hasCity[l]) continue;
+      if (l < 0 || keep(l)) continue;
       const m = votes.get(l) ?? votes.set(l, new Map()).get(l)!;
       m.set(owner[i], (m.get(owner[i]) ?? 0) + 1);
     }
@@ -274,7 +350,7 @@ export function importRaster(img: RasterImage, opt: ImportOptions, kmW: number, 
     for (let k = 0; k < capLabel.length; k++) if (capLabel[k] >= 0) capLabel[k] = final[capLabel[k]];
     const attached = labels - compact.size;
     labels = compact.size;
-    if (attached) warnings.push(`${attached} Landstücke ohne Hauptstadtpunkt der nächsten Provinz zugeschlagen.`);
+    if (attached) warnings.push(`${attached} kleine oder punktfreie Landstücke der nächstgelegenen größeren Provinz zugeschlagen.`);
   }
 
   // ---------------------------------------------------------------- Umrisse über die Pixelecken
@@ -440,13 +516,22 @@ export function importRaster(img: RasterImage, opt: ImportOptions, kmW: number, 
   interface Node { ref: NodeRef; x: number; y: number; r: number }
   const nodes: Node[] = [];
   let extraCaps = 0, lostCaps = 0;
+  // Provinzstadt: hat eine Provinz mehrere Punkte (zugeschlagene Nebeninseln), gewinnt der mit der
+  // größten Heimatfläche – die Stadt liegt auf der Hauptinsel, nicht auf einem Eiland
+  const bestCap = new Map<number, number>();
   for (let k = 0; k < caps.count.length; k++) {
     if (caps.count[k] < 2) continue;
-    const x = caps.sx[k], y = caps.sy[k];
     const l = capLabel[k];
     if (l < 0) { lostCaps++; continue; }
+    const b = bestCap.get(l);
+    if (b === undefined || capHome[k] > capHome[b]) {
+      if (b !== undefined) extraCaps++;
+      bestCap.set(l, k);
+    } else extraCaps++;
+  }
+  for (const [l, k] of bestCap) {
+    const x = caps.sx[k], y = caps.sy[k];
     const p = provinces[l];
-    if (p.city) { extraCaps++; continue; }
     p.city = toKm(x, y);
     nodes.push({ ref: `p${p.id}`, x, y, r: Math.sqrt(caps.count[k] / Math.PI) + 3 });
   }
@@ -473,7 +558,11 @@ export function importRaster(img: RasterImage, opt: ImportOptions, kmW: number, 
       }
     }
   });
-  const linkComp = components(W, H, (i) => cls[i] === C.Link, true);
+  // Verbindungslinien: über Kreuzungen mit Grenzlinien hinweg zusammenhängen lassen (Grenze unter der
+  // Verbindung), damit eine über eine Grenze gezogene Linie nicht in zwei Teile zerfällt
+  const linkLike = new Uint8Array(N);
+  for (let i = 0; i < N; i++) if (cls[i] === C.Link || crossed[i]) linkLike[i] = 1;
+  const linkComp = components(W, H, (i) => linkLike[i] === 1, true);
   const touched = new Map<number, Set<number>>();
   for (let i = 0; i < N; i++) {
     const k = linkComp.lab[i];
@@ -494,7 +583,7 @@ export function importRaster(img: RasterImage, opt: ImportOptions, kmW: number, 
     for (let dy = -2; dy <= 2; dy++) {
       for (let dx = -2; dx <= 2; dx++) {
         const nx = cx + dx, ny = cy + dy;
-        if (nx >= 0 && ny >= 0 && nx < W && ny < H && cls[ny * W + nx] === C.Link) return true;
+        if (nx >= 0 && ny >= 0 && nx < W && ny < H && linkLike[ny * W + nx]) return true;
       }
     }
     return false;

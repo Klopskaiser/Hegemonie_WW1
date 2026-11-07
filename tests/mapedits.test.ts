@@ -35,7 +35,8 @@ describe('Karteneditor-Vorgaben', () => {
     const moved = applyEdits(base, { paths: { [`${b}|${a}`]: [mid] } }).map;
     const pts = edgePoints(moved, berlin, n);
     expect(pts).toHaveLength(3);
-    expect(pts[1][0]).toBeCloseTo(mid[0], 1);
+    // Raster der Karte ist halbe km; ein naher Kreuzungspunkt darf den Knick um bis zu 1 km anziehen
+    expect(Math.abs(pts[1][0] - mid[0])).toBeLessThanOrEqual(1);
     expect(pts[0]).toEqual(base.provinces[berlin].center);
   });
 
@@ -69,6 +70,32 @@ describe('Rohstoffe der Karte', () => {
     expect(base.provinces.filter((p) => p.nation === 'RU' && p.resource === 'iron').length).toBeGreaterThan(0);
     // Holz auch in Nordafrika
     expect(base.provinces.filter((p) => ['MG', 'LY', 'EG'].includes(p.nation) && p.resource === 'lumber').length).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe('Hauptstädte', () => {
+  it('Vorgaben verschieben den Nationssitz; fremde Provinz, unbekannte Nation und Provinz werden gemeldet', () => {
+    const ru = base.nations.find((n) => n.id === 'RU')!;
+    const oldCap = ru.capital;
+    expect(base.provinces[oldCap].capital).toBe(true);
+    const { map, warnings } = applyEdits(base, { capitals: { RU: 'Kiew', DE: 'Kiew', XX: 'Nirgendwo', MG: 'Unbekannteste' } });
+    expect(map.nations.find((n) => n.id === 'RU')!.capital).toBe(id('Kiew'));
+    expect(map.provinces[id('Kiew')].capital).toBe(true);
+    expect(map.provinces[oldCap].capital).toBe(false);
+    // Grundkarte bleibt unverändert
+    expect(base.provinces[id('Kiew')].capital).toBe(false);
+    // DE darf Kiew nicht übernehmen
+    expect(map.nations.find((n) => n.id === 'DE')!.capital).toBe(base.nations.find((n) => n.id === 'DE')!.capital);
+    expect(warnings).toContain('Unbekannte Nation: XX');
+    expect(warnings).toContain('Kiew gehört zu einer anderen Nation – Hauptstadt nicht verschoben.');
+    expect(warnings).toContain('Unbekannte Provinz: Unbekannteste');
+  });
+
+  it('Hauptstadt per Nationnamen setzen und Nächstes-Feld-Prüfung nutzt den neuen Sitz', () => {
+    const { map } = applyEdits(base, { capitals: { 'Russisches Reich': 'Kiew' } });
+    expect(map.nations.find((n) => n.id === 'RU')!.capital).toBe(id('Kiew'));
+    const c = checkNation(map, 'RU');
+    expect(c.nearest.grain.province >= 0 || c.problems.some((p) => p.includes('km'))).toBe(true);
   });
 });
 

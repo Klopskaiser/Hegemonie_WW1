@@ -17,6 +17,8 @@ export interface MapEdits {
   junctions?: { add?: Pt[]; remove?: Pt[] };
   /** Rohstoff und Doppelprovinz je Provinzname (statt der Verteilung aus dem Kartenbau) */
   resources?: Record<string, { r: Resource; double: boolean }>;
+  /** Hauptstadt je Nation (Kürzel oder Name): Name einer Provinz derselben Nation */
+  capitals?: Record<string, string>;
 }
 
 export interface EditResult {
@@ -93,6 +95,29 @@ export function applyEdits(base: MapData, edits: MapEdits): EditResult {
     }
     p.resource = v.r;
     p.double = v.double;
+  }
+  // Hauptstädte: Sitz der Nation in eine ihrer eigenen Provinz legen
+  for (const [nat, provName] of Object.entries(edits.capitals ?? {})) {
+    const nation = map.nations.find((n) => n.id === nat || n.name === nat);
+    if (!nation) {
+      warnings.push(`Unbekannte Nation: ${nat}`);
+      continue;
+    }
+    const p = map.provinces.find((x) => x.name === provName);
+    if (!p) {
+      warnings.push(`Unbekannte Provinz: ${provName}`);
+      continue;
+    }
+    if (p.nation !== nation.id) {
+      warnings.push(`${provName} gehört zu einer anderen Nation – Hauptstadt nicht verschoben.`);
+      continue;
+    }
+    if (nation.capital !== p.id) {
+      const old = map.provinces[nation.capital];
+      if (old && old.nation === nation.id) old.capital = false;
+      p.capital = true;
+      nation.capital = p.id;
+    }
   }
   const pos = (n: number): Pt => (n < P ? map.provinces[n].center : map.seas[n - P].center);
   const same = (a: number, b: number, x: number, y: number) => (a === x && b === y) || (a === y && b === x);
@@ -233,6 +258,45 @@ export function applyEdits(base: MapData, edits: MapEdits): EditResult {
         const vx = p[k + 2] - p[k], vy = p[k + 3] - p[k + 1];
         const c = (ux * vx + uy * vy) / (Math.hypot(ux, uy) * Math.hypot(vx, vy) || 1);
         if ((Math.acos(Math.max(-1, Math.min(1, c))) * 180) / Math.PI >= 20) corners.push(p[k], p[k + 1]);
+      }
+    }
+    // Y-Kreuzungen zweier Wege: zwei Straßen laufen ein Stück gemeinsam und zweigen am selben Punkt
+    // in verschiedenere Richtungen (≥ 20°) auf — dort darf eine Kreuzung sitzen, auch ohne eigenen Knick
+    {
+      const dirs = new Map<string, number[]>();
+      const q = (v: number) => Math.round(v * 2) / 2;
+      const add = (x: number, y: number, dx: number, dy: number, back: boolean) => {
+        const len = Math.hypot(dx, dy);
+        if (len < 1e-6) return;
+        const ang = Math.atan2(dy, dx) + (back ? Math.PI : 0);
+        const k = `${q(x)},${q(y)}`;
+        (dirs.get(k) ?? dirs.set(k, []).get(k)!).push(ang);
+      };
+      for (const r of [...map.roads!, ...map.shortcuts!]) {
+        const p = r.pts;
+        for (let k = 2; k + 3 < p.length; k += 2) {
+          add(p[k], p[k + 1], p[k] - p[k - 2], p[k + 1] - p[k - 1], false);
+          add(p[k], p[k + 1], p[k + 2] - p[k], p[k + 3] - p[k + 1], true);
+        }
+      }
+      // Auf 180° gefasst: durchgefahrte Gegenrichtung zählt dieselbe Achse, nur echte Äste zählen
+      const fold = (v: number) => {
+        let d = v % Math.PI;
+        if (d < 0) d += Math.PI;
+        return d;
+      };
+      for (const [k, listRaw] of dirs) {
+        if (listRaw.length < 2) continue;
+        const list = listRaw.map(fold);
+        let split = false;
+        for (let i = 0; i < list.length && !split; i++)
+          for (let j = i + 1; j < list.length; j++) {
+            const d = Math.abs(list[i] - list[j]);
+            if (Math.min(d, Math.PI - d) >= (20 * Math.PI) / 180) { split = true; break; }
+          }
+        if (!split) continue;
+        const [x, y] = k.split(',').map(Number);
+        corners.push(x, y);
       }
     }
     const nearRoad = (x: number, y: number) => {

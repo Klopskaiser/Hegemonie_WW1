@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { ALL_RES, DAY, HOUR, MILITARY, MINUTE, MORALE, UNITS } from '../src/game/balance.ts';
-import { applyCombatMorale, applyDamage, armyLocation, armyPosition, boardingWait, combatRound, conquer, rangedRound, damageBuildings, defections, harborLeg, inMelee, markFight, maxRange, meleeOutput, repairMachines, troopTarget, unitHp } from '../src/game/military.ts';
+import { applyCombatMorale, applyDamage, armyLocation, armyPosition, boardingWait, combatRound, conquer, embarkHours, harborLeg, inMelee, markFight, maxRange, meleeOutput, rangedRound, damageBuildings, defections, repairMachines, startMove, troopTarget, unitHp } from '../src/game/military.ts';
 import { activeLevel, capitalOf, moraleTarget, nationRates, recruitHours, stepMorale, totalUse, useSources } from '../src/game/economy.ts';
 import type { MapData } from '../src/game/mapdata.ts';
 import { edgeParts, edgePoint, nodePos } from '../src/game/graph.ts';
@@ -313,13 +313,15 @@ describe('Ein- und Ausschiffen angreifbar', () => {
     const sea = map.provinces.length + mp.seaLinks![0];
     const de: Army = { id: sim.state.nextArmyId++, owner: 'DE', node: mp.id, units: { infantry: 10, artillery: 2 }, morale: 1 };
     sim.state.armies.push(de);
-    expect(sim.apply('DE', { type: 'move', army: de.id, to: sea }).ok).toBe(true);
-    // bis in die Wartezeit am Hafenpunkt
+    // direkt auf dem Hafenweg in die Wartezeit am Hafenpunkt stellen (der Routenplan würde sonst den
+    // schnelleren reinen Seeweg über eine Nachbarprovinz wählen und die Einschiffung in Berlin umgehen)
     const land = harborLeg(map, mp.id, sea) / UNITS.artillery.speed;
+    startMove(sim.ctx, de, [mp.id, sea], undefined, { wait: embarkHours(sim.state, mp.id, 'DE') });
     sim.advance(Math.ceil((land + 0.5) * HOUR));
     const loc = armyLocation(de, sim.state.time);
     expect('road' in loc).toBe(true);
     const f = 'road' in loc ? loc.road.f : 0;
+    expect(boardingWait(map, de, sim.state.time)).toBeTruthy();
     // Franzosen kurz vor dem Hafenpunkt auf demselben Weg, Ziel: die wartende Armee
     const fr: Army = { id: sim.state.nextArmyId++, owner: 'FR', node: mp.id, pos: { a: mp.id, b: sea, f: f - 0.002 }, units: { infantry: 30 }, morale: 1 };
     sim.state.armies.push(fr);

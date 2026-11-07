@@ -10,7 +10,7 @@ import {
   removeProvince, removeSea, rescaleDraft, seaRef, splitProvince, toggleLink, tracePath, weldVertex,
   type Draft, type ImportColors, type NodeRef, type Pt,
 } from '../game/draft.ts';
-import { DEFAULT_IMPORT, importRaster, rgbToHex } from '../game/draftImport.ts';
+import { DEFAULT_IMPORT, importRaster, rgbToHex, type ImportOptions } from '../game/draftImport.ts';
 import { checkNation } from '../game/mapcheck.ts';
 import { RESOURCES, type Resource } from '../game/mapdata.ts';
 import { iconImage, ResIcon } from './icons.tsx';
@@ -37,6 +37,24 @@ const COLOR_SLOTS: { key: keyof ImportColors; name: string }[] = [
   { key: 'sea', name: 'Seepunkte' },
   { key: 'link', name: 'Verbindungen' },
 ];
+
+/** Vorlage fürs Einlesen: Farben und Einstellungen des letzten erfolgreichen Einlesens, unabhängig
+ *  vom gespeicherten Entwurf (nur „Einlesen" speichert sie, nicht „Sichern"). */
+const VORLAGE_KEY = 'hegemonie-drafter-import';
+type ImportOptState = Omit<ImportOptions, 'colors'> & { colors: ImportColors };
+function readVorlage(): ImportOptState | null {
+  try {
+    const j = JSON.parse(localStorage.getItem(VORLAGE_KEY) ?? '');
+    if (j?.colors && j?.opt) return { colors: { ...DEFAULT_COLORS, ...j.colors }, ...j.opt };
+  } catch { /* keine Vorlage */ }
+  return null;
+}
+function writeVorlage(colors: ImportColors, opt: ImportOptState) {
+  try {
+    const { colors: _c, ...o } = opt;
+    localStorage.setItem(VORLAGE_KEY, JSON.stringify({ colors, opt: o }));
+  } catch { /* Speicher voll o. ä. */ }
+}
 
 const NATION_COLORS = ['#8e9aa6', '#d8c47e', '#7b97c9', '#c86a5e', '#8cba72', '#5f9877', '#cf9f5e', '#e3b9a0', '#69adbb', '#b493c4',
   '#b8643f', '#9a8c5c', '#d39bb0', '#e6a160', '#c6b25f', '#e3c7c3', '#d88f8a', '#c9a24a', '#a7c69a', '#a8866e', '#937d9c', '#93c1df'];
@@ -96,7 +114,6 @@ export function MapDrafter({ onExit }: { onExit(): void }) {
   const [brushNation, setBrushNation] = useState<string | null>(null);
   const [brushRes, setBrushRes] = useState<Resource>('grain');
   const [pick, setPick] = useState<keyof ImportColors | null>(null);
-  const [importOpt, setImportOpt] = useState(DEFAULT_IMPORT);
   const [importConfirm, setImportConfirm] = useState(false);
   const [importNotes, setImportNotes] = useState<string[]>([]);
   const [busy, setBusy] = useState('');
@@ -116,6 +133,9 @@ export function MapDrafter({ onExit }: { onExit(): void }) {
   const snap = useRef<{ v?: number; edge?: { a: number; b: number; at: Pt } } | null>(null);
   const lastKey = useRef<{ key?: string; t: number }>({ t: 0 });
   const geomCache = useRef(new Map<number, { key: string; city: Pt; mid: Pt }>());
+  // Vorlage des letzten Einlesens (Farben + Einstellungen), überlebt das Schließen des Zeichners
+  const vorlageRef = useRef(readVorlage());
+  const [importOpt, setImportOpt] = useState<ImportOptState>({ ...DEFAULT_IMPORT, colors: DEFAULT_COLORS, ...vorlageRef.current });
 
   const setTool = (t: Tool) => {
     setToolState(t);
@@ -668,6 +688,7 @@ export function MapDrafter({ onExit }: { onExit(): void }) {
         const hex = rgbToHex(image.data.data[o], image.data.data[o + 1], image.data.data[o + 2]);
         const slot = pick;
         commit((x) => { x.colors = { ...(x.colors ?? DEFAULT_COLORS), [slot]: hex }; });
+        setImportOpt((o) => ({ ...o, colors: { ...o.colors, [slot]: hex } }));
         setStatus(`${COLOR_SLOTS.find((c) => c.key === slot)?.name}: ${hex}`);
       }
       setPick(null);
@@ -846,7 +867,7 @@ export function MapDrafter({ onExit }: { onExit(): void }) {
     if (drafts.some((x) => x.id === id)) { setStatus(`Es gibt schon einen Entwurf ${id} – öffnen oder andere ID wählen.`); return; }
     geomCache.current.clear();
     setImage(null);
-    setDraft(newDraft(id, newForm.name.trim() || id, w, h));
+    setDraft({ ...newDraft(id, newForm.name.trim() || id, w, h), colors: { ...(vorlageRef.current?.colors ?? DEFAULT_COLORS) } });
     setHistory([]);
     setFuture([]);
     setDirty(true);
@@ -925,16 +946,18 @@ export function MapDrafter({ onExit }: { onExit(): void }) {
     setBusy('Lese Vorlage ein …');
     setTimeout(() => {
       try {
-        const colors = draft.colors ?? DEFAULT_COLORS;
-        const res = importRaster(image.data, { colors, ...importOpt }, draft.width, draft.height, draft.nextId);
+        const colors = importOpt.colors;
+        const res = importRaster(image.data, { colors, tolerance: importOpt.tolerance, simplify: importOpt.simplify, minArea: importOpt.minArea, maxGap: importOpt.maxGap, maxIsland: importOpt.maxIsland }, draft.width, draft.height, draft.nextId);
         commit((x) => {
           x.verts = res.verts;
           x.provinces = res.provinces;
           x.seas = res.seas;
           x.links = res.links;
           x.nextId = res.nextId;
+          x.colors = { ...colors };
           for (const n of x.nations) n.capital = null;
         });
+        writeVorlage(colors, importOpt); // Vorlage für künftige Einlesevorgänge merken
         geomCache.current.clear();
         setSel(null);
         setImportNotes([`${res.provinces.length} Provinzen, ${res.seas.length} Seepunkte, ${res.links.length} Verbindungen, ${Object.keys(res.verts).length} Grenzpunkte.`, ...res.warnings]);
@@ -1134,7 +1157,7 @@ export function MapDrafter({ onExit }: { onExit(): void }) {
                     <div key={c.key} className="editor-row small">
                       <span>{c.name}</span>
                       <span>
-                        <input type="color" value={colors[c.key]} onChange={(e) => { const v = e.target.value; commit((x) => { x.colors = { ...(x.colors ?? DEFAULT_COLORS), [c.key]: v }; }, `col${c.key}`); }} />
+                        <input type="color" value={colors[c.key]} onChange={(e) => { const v = e.target.value; commit((x) => { x.colors = { ...(x.colors ?? DEFAULT_COLORS), [c.key]: v }; }, `col${c.key}`); setImportOpt((o) => ({ ...o, colors: { ...o.colors, [c.key]: v } })); }} />
                         <button className={'btn small' + (pick === c.key ? ' active' : '')} title="Farbe aus der Vorlage aufnehmen" onClick={() => setPick(pick === c.key ? null : c.key)}>Pipette</button>
                       </span>
                     </div>
@@ -1143,6 +1166,8 @@ export function MapDrafter({ onExit }: { onExit(): void }) {
                 {field('Farbtoleranz', <input type="number" min={0} max={200} value={importOpt.tolerance} onChange={(e) => setImportOpt({ ...importOpt, tolerance: Number(e.target.value) })} />)}
                 {field('Vereinfachung (px)', <input type="number" min={0} max={10} step={0.1} value={importOpt.simplify} onChange={(e) => setImportOpt({ ...importOpt, simplify: Number(e.target.value) })} />)}
                 {field('Mindestfläche (px)', <input type="number" min={1} value={importOpt.minArea} onChange={(e) => setImportOpt({ ...importOpt, minArea: Number(e.target.value) })} />)}
+                {field('Lücken zuschlagen bis (px)', <input type="number" min={0} max={40} value={importOpt.maxGap ?? 4} onChange={(e) => setImportOpt({ ...importOpt, maxGap: Number(e.target.value) })} title="Kleine Löcher ohne Grenzfarbe zwischen Landprovinzen werden zugeschlagen; größere bleiben Wasser. 0 = aus." />)}
+                {field('Inseln zuschlagen unter (px)', <input type="number" min={0} max={20000} step={50} value={importOpt.maxIsland ?? 500} onChange={(e) => setImportOpt({ ...importOpt, maxIsland: Number(e.target.value) })} title="Kleine Inseln und Landstücke unter dieser Fläche werden der nächstgelegenen größeren Provinz zugeschlagen (auch mit eigenem Hauptstadtpunkt). 0 = aus." />)}
                 <p className="small muted">Land = Provinzflächen, durch Grenzlinien getrennt. Hauptstadtpunkt = Stadt der Provinz, Seepunkt = Seeknoten, Linie zwischen zwei Punkten = Verbindung. Alles andere gilt als Wasser.</p>
                 <div className="editor-buttons">
                   {!importConfirm
