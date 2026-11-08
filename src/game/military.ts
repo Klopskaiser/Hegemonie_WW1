@@ -84,11 +84,22 @@ function onWaterLeg(map: MapData, u: number, v: number, f: number): boolean {
  * Knoten-Anker für Marsch-Neuplanungen: steht die Armee physikalisch auf dem Wasseranteil eines
  * Küstenabschnitts, gewinnt immer der Seepunkt – sonst setzte das Snap (f ≥ 0.5) sie gratis an Land.
  */
+/**
+ * Knoten-Anker für einen Punkt auf dem Weg u–v (wie anchorNode): auf einem Hafenweg zählt allein die Uferlinie –
+ * Wasseranteil = Seepunkt, Landanteil = Provinz (nicht die Wegmitte, sonst stünde eine Armee an Land rechnerisch
+ * auf See und kämpfte mit halber Stärke); auf Landwegen der nähere Knoten nach Wegmitte.
+ */
+function roadAnchor(map: MapData, u: number, v: number, f: number): number {
+  if (map && isSea(map, u) !== isSea(map, v)) {
+    const sea = isSea(map, u) ? u : v;
+    return onWaterLeg(map, u, v, f) ? sea : sea === u ? v : u;
+  }
+  return f < 0.5 ? u : v;
+}
+
 function anchorNode(map: MapData, a: Army, time: number): number {
   const loc = armyLocation(a, time);
-  return 'road' in loc && onWaterLeg(map, loc.road.a, loc.road.b, loc.road.f)
-    ? (isSea(map, loc.road.a) ? loc.road.a : loc.road.b)
-    : nearestNode(map, a, time);
+  return 'road' in loc ? roadAnchor(map, loc.road.a, loc.road.b, loc.road.f) : loc.node;
 }
 
 /**
@@ -190,6 +201,18 @@ const BORDER_GAP_KM = 0.5;
  * Wassergrenze (Einschiffpunkt). Knicke auf dem Land wirken so auf Tempo und Verlauf;
  * Knicke im Wasser bleiben reine Zeichenhilfe und ändern am Landstück nichts.
  */
+/**
+ * Uferlinie (Hafenpunkt) eines Hafenweges u–v als Anteil ab u; null auf Wegen, die nicht Land und See verbinden.
+ * Ein Wegziel genau hier auf der Landseite heißt: am Ufer stehen, nicht einschiffen.
+ */
+export function shoreFrac(map: MapData, u: number, v: number): number | null {
+  if (isSea(map, u) === isSea(map, v)) return null;
+  const [, len] = edgeParts(map, u, v);
+  if (len <= 0) return null;
+  const land = Math.min(len, harborLeg(map, u, v));
+  return isSea(map, u) ? 1 - land / len : land / len;
+}
+
 export function harborLeg(map: MapData, u: number, v: number): number {
   const pts = edgePoints(map, u, v);
   const prov = isSea(map, u) ? v : u;
@@ -501,11 +524,20 @@ export function planRoute(state: GameState, map: MapData, a: Army, time: number,
     const sea = isSea(map, from.road.a) ? from.road.a : from.road.b;
     const land = sea === from.road.a ? from.road.b : from.road.a;
     const p = planMove(state, map, a, sea, to.node);
+    /** Anteil des Weges zwischen Seepunkt und Standort */
+    const fromSea = isSea(map, from.road.a) ? from.road.f : 1 - from.road.f;
     if (p && p.path[0] === sea && p.path[1] === land) {
-      p.startFrac = isSea(map, from.road.a) ? from.road.f : 1 - from.road.f;
+      p.startFrac = fromSea;
+      p.hours = Math.max(0, p.hours - seg(sea, land) * fromSea);
       return p;
     }
-    if (p) return p; // anderer Hafen: zurück zum Seepunkt, von dort regulär
+    if (p && p.path[0] === sea) {
+      // anderer Hafen: erst das Stück zurück zum Seepunkt (kostet Zeit), von dort regulär
+      p.path = [land, ...p.path];
+      p.startFrac = 1 - fromSea;
+      p.hours += seg(land, sea) * fromSea;
+      return p;
+    }
   }
   // Flotte mit Truppen an Land schicken: Landung wie bisher (vom nächsten Knoten aus)
   if ('node' in to && isNaval(a) && !isSea(map, to.node)) {
@@ -636,6 +668,34 @@ function segmentDuration(state: GameState, map: MapData, a: Army, k: number): nu
   return minuteRound(Math.max(0, profileHours(m.prof, e) - profileHours(m.prof, s)) * HOUR);
 }
 
+/**
+ * Laufende Marschabschnitte durch eine Provinz neu takten (z. B. Eisenbahn fertig oder ausgefallen): der schon
+ * zurückgelegte Anteil bleibt, der Rest läuft im neuen Tempo. Abschnitte mit Ein-/Ausschiffpause bleiben, wie sie
+ * sind (die Pause ließe sich nicht eindeutig fortsetzen).
+ */
+export function retimeMarches(ctx: MilitaryContext, province: number): void {
+  const { state, map } = ctx;
+  const t = state.time;
+  for (const a of state.armies) {
+    const m = a.move;
+    if (!m || !m.prof || pauseIndex(m.prof) >= 0) continue;
+    const u = m.path[m.seg], v = m.path[m.seg + 1];
+    if (u !== province && v !== province && edgeThrough(map, u, v)?.via !== province) continue;
+    const s = m.seg === 0 ? m.startFrac ?? 0 : 0;
+    const e = m.seg === m.path.length - 2 ? m.endFrac ?? 1 : 1;
+    const f = moveFrac(a, t);
+    const prof = segmentProfile(state, map, a, u, v);
+    const hs = profileHours(prof, s), he = profileHours(prof, e), hNow = profileHours(prof, f);
+    if (he - hs <= 1e-9) continue;
+    const done = (hNow - hs) / (he - hs);
+    if (done >= 1 - 1e-9) continue;
+    m.prof = prof;
+    m.segEnd = t + minuteRound((he - hNow) * HOUR);
+    m.segStart = m.segEnd - (m.segEnd - t) / (1 - done);
+  }
+  ctx.invalidate();
+}
+
 /** Truppen verlassen die Flotte und marschieren weiter; die Schiffe bleiben vor der Küste liegen. */
 function disembark(ctx: MilitaryContext, fleet: Army, then: number[]): void {
   const troops = landPart(fleet);
@@ -718,7 +778,13 @@ const cellOf = (v: number) => Math.floor(v / MILITARY.meleeKm) + 50000;
 function standingCells(state: GameState, map: MapData): Map<number, Army[]> {
   let sig = 0, n = 0;
   for (const a of state.armies) {
-    if (a.move) continue;
+    if (a.move) {
+      // in der Ein-/Ausschiffpause: steht still am Hafenpunkt und kämpft mit
+      if (!pausedAt(a, state.time)) continue;
+      n++;
+      sig = (Math.imul(sig, 31) + a.id * 7 + 1) | 0;
+      continue;
+    }
     n++;
     const p = a.pos;
     sig = (Math.imul(sig, 31) + a.id * 7 + a.node * 13 + (p ? p.a * 17 + p.b * 19 + Math.round(p.f * 1e6) : 0)) | 0;
@@ -726,8 +792,8 @@ function standingCells(state: GameState, map: MapData): Map<number, Army[]> {
   if (standIndex && standIndex.state === state && standIndex.map === map && standIndex.sig === sig && standIndex.n === n) return standIndex.cells;
   const cells = new Map<number, Army[]>();
   for (const a of state.armies) {
-    if (a.move) continue;
-    const q = standingPosition(map, a);
+    if (a.move && !pausedAt(a, state.time)) continue;
+    const q = stillPosition(map, a, state.time);
     const k = cellOf(q[0]) * 100000 + cellOf(q[1]);
     (cells.get(k) ?? cells.set(k, []).get(k)!).push(a);
   }
@@ -742,8 +808,8 @@ function standingNear(state: GameState, map: MapData, p: [number, number], cells
   for (let dx = -1; dx <= 1; dx++) {
     for (let dy = -1; dy <= 1; dy++) {
       for (const b of cells.get((cx + dx) * 100000 + cy + dy) ?? []) {
-        if (b.move) continue;
-        const q = standingPosition(map, b);
+        if (b.move && !pausedAt(b, state.time)) continue;
+        const q = stillPosition(map, b, state.time);
         if (Math.hypot(q[0] - p[0], q[1] - p[1]) <= MILITARY.meleeKm) out.push(b);
       }
     }
@@ -758,7 +824,7 @@ function standingNear(state: GameState, map: MapData, p: [number, number], cells
 function catchWaiting(map: MapData, state: GameState, a: Army): void {
   const [x, y] = armyPosition(map, a, state.time);
   for (const b of state.armies) {
-    if (b === a || !b.move || unitCount(b) === 0 || !atWar(state, a.owner, b.owner)) continue;
+    if (b === a || !b.move || unitCount(b) === 0 || !atWar(state, a.owner, b.owner) || landingAfloat(map, b, state.time)) continue;
     const [bx, by] = armyPosition(map, b, state.time);
     if (Math.hypot(bx - x, by - y) > MILITARY.meleeKm) continue;
     halt(map, b, state.time, true);
@@ -782,7 +848,8 @@ function finalTarget(a: Army): { node: number } | { road: RoadPos } | null {
 /** Marsch wegen eines Kampfes unterbrechen; das Ziel bleibt vorgemerkt (außer es ist schon erreicht) */
 function interrupt(map: MapData, a: Army): void {
   const t = finalTarget(a);
-  a.boarding = isBoarding(map, a) || undefined;
+  // eine stehende Armee behält ihren Zustand an Bord (isBoarding kennt nur laufende Märsche)
+  if (a.move) a.boarding = isBoarding(map, a) || undefined;
   a.move = null;
   if (t && !('node' in t && t.node === a.node && !a.pos)) a.resume = t;
 }
@@ -816,6 +883,8 @@ export function resumeOrders(ctx: MilitaryContext): void {
 export function processArrivals(ctx: MilitaryContext): void {
   const { state, map } = ctx;
   for (const a of [...state.armies]) {
+    // in dieser Runde vernichtet oder mit ihrer Nation untergegangen: kommt nirgends mehr an
+    if (gone(state, a)) continue;
     while (a.move && a.move.segEnd <= state.time) {
       const m = a.move;
       // Ziel auf einem Weg erreicht: dort stehen bleiben (keine Eroberung, die Stadt ist nicht erreicht)
@@ -823,7 +892,7 @@ export function processArrivals(ctx: MilitaryContext): void {
         const u = m.path[m.seg], v = m.path[m.seg + 1];
         a.move = null;
         a.pos = { a: u, b: v, f: m.endFrac };
-        a.node = m.endFrac < 0.5 ? u : v;
+        a.node = roadAnchor(map, u, v, m.endFrac);
         declareOnArrival(ctx, a);
         catchWaiting(map, state, a);
         const hostile = hostileNear(state, map, a);
@@ -853,7 +922,7 @@ export function processArrivals(ctx: MilitaryContext): void {
         const f = fracBefore(map, from, node, MILITARY.meleeKm);
         if (f < 1 && hostileNear(state, map, a, edgePoint(map, from, node, f)).length > 0) {
           a.pos = { a: from, b: node, f };
-          a.node = f < 0.5 ? from : node;
+          a.node = roadAnchor(map, from, node, f);
         }
         interrupt(map, a);
         joinBattle(ctx, a);
@@ -1005,6 +1074,9 @@ export function encounters(ctx: MilitaryContext): boolean {
       for (let j = i + 1; j < list.length; j++) {
         const A = list[i], B = list[j];
         if (A.a.owner === B.a.owner || unitCount(A.a) === 0 || unitCount(B.a) === 0) continue;
+        // Landung trifft eine stehende Armee: nichts anzuhalten, gekämpft wird in der Ausschiffpause bzw. danach
+        const afloatA = landingAfloat(map, A.a, state.time), afloatB = landingAfloat(map, B.a, state.time);
+        if ((afloatA && (!B.a.move || afloatB)) || (afloatB && !A.a.move)) continue;
         if (!atWar(state, A.a.owner, B.a.owner) && (!land || hasRightOfWay(state, A.a.owner, B.a.owner))) continue;
         const d0 = A.f0 - B.f0, d1 = A.f1 - B.f1;
         // schon beisammen (z. B. Rückzug aus dem Kampf) oder kein Kreuzen und keine Annäherung bis auf meleeKm
@@ -1020,6 +1092,82 @@ export function encounters(ctx: MilitaryContext): boolean {
   }
   if (approach(ctx)) met = true;
   return met;
+}
+
+/**
+ * Wartet die Armee gerade in der Ein- oder Ausschiffpause ihres Abschnitts (steht still am Hafenpunkt)?
+ * Solche Armeen zählen für den Nahkampf als stehend.
+ */
+export function pausedAt(a: Army, time: number): boolean {
+  const m = a.move;
+  if (!m?.prof) return false;
+  const i = pauseIndex(m.prof);
+  if (i < 0) return false;
+  const h = moveHours(a, time);
+  return h >= m.prof[i + 1] && h < m.prof[i + 3];
+}
+
+/** Stunden im Tempoverlauf des laufenden Abschnitts zum Zeitpunkt time (wie moveFrac) */
+function moveHours(a: Army, time: number): number {
+  const m = a.move!;
+  const p = Math.max(0, Math.min(1, (time - m.segStart) / Math.max(1, m.segEnd - m.segStart)));
+  const s = m.seg === 0 ? m.startFrac ?? 0 : 0;
+  const e = m.seg === m.path.length - 2 ? m.endFrac ?? 1 : 1;
+  const hs = profileHours(m.prof!, s), he = profileHours(m.prof!, e);
+  return hs + (he - hs) * p;
+}
+
+/**
+ * Landung im Gange, noch nicht ausgeschifft: Abschnitt See→Land, Ausschiffpause noch nicht vorbei. Solche Armeen
+ * werden beim Annähern nicht angehalten – sie fahren bis zum Hafenpunkt und kämpfen dort in der Pause mit halber
+ * Stärke (pausedAt); erst ganz an Land bindet sie der Nahkampf (pauseEnds).
+ */
+function landingAfloat(map: MapData, a: Army, time: number): boolean {
+  const m = a.move;
+  if (!m || isNaval(a)) return false;
+  const u = m.path[m.seg], v = m.path[m.seg + 1];
+  if (!isSea(map, u) || isSea(map, v)) return false;
+  const i = m.prof ? pauseIndex(m.prof) : -1;
+  return i >= 0 ? moveHours(a, time) < m.prof![i + 3] : onWaterLeg(map, u, v, moveFrac(a, time));
+}
+
+/**
+ * Ende einer Ein- oder Ausschiffpause (jede Minute geprüft): steht dann ein Gegner in Nahkampfreichweite, bleibt
+ * die Armee genau dort stehen und ist gebunden (Ziel bleibt vorgemerkt) – beim Anlanden jetzt mit vollem Landwert,
+ * beim Einschiffen an Bord mit halber Stärke. So zieht niemand im Kampf am Gegner vorbei an Land oder aufs Meer.
+ */
+export function pauseEnds(ctx: MilitaryContext): boolean {
+  const { state, map } = ctx;
+  const t = state.time;
+  let met = false;
+  for (const a of state.armies) {
+    const m = a.move;
+    if (!m?.prof || unitCount(a) === 0) continue;
+    const i = pauseIndex(m.prof);
+    if (i < 0) continue;
+    const pe = m.prof[i + 3];
+    if (!(moveHours(a, Math.max(m.segStart, t - MINUTE)) < pe && moveHours(a, t) >= pe)) continue;
+    // Zeitpunkt des Pausenendes (dort anhalten, nicht ein Stück weiter)
+    const s = m.seg === 0 ? m.startFrac ?? 0 : 0;
+    const e = m.seg === m.path.length - 2 ? m.endFrac ?? 1 : 1;
+    const hs = profileHours(m.prof, s), he = profileHours(m.prof, e);
+    const tEnd = Math.round(m.segStart + ((pe - hs) / Math.max(1e-9, he - hs)) * (m.segEnd - m.segStart));
+    const at = armyPosition(map, a, tEnd);
+    if (!hostileNear(state, map, a, at).length) continue;
+    const landing = isSea(map, m.path[m.seg]) && !isSea(map, m.path[m.seg + 1]);
+    halt(map, a, tEnd, true, true);
+    if (landing) delete a.boarding; // ausgeschifft: voller Landwert
+    if (a.owner !== REBELS) ctx.log(`Kampf bei ${nodeName(map, a.node)}: ${landing ? 'Truppen gehen unter Feuer an Land' : 'Truppen beim Einschiffen gestellt'}.`, a.owner, isSea(map, a.node) ? undefined : a.node);
+    joinBattle(ctx, a);
+    met = true;
+  }
+  if (met) ctx.invalidate();
+  return met;
+}
+
+/** Ort einer stillstehenden Armee (stehend oder in der Ein-/Ausschiffpause) */
+function stillPosition(map: MapData, a: Army, time: number): [number, number] {
+  return a.move ? armyPosition(map, a, time) : standingPosition(map, a);
 }
 
 /** Lage stehender Armeen (zwischengespeichert, solange sie am selben Punkt stehen) */
@@ -1092,7 +1240,7 @@ function approach(ctx: MilitaryContext): boolean {
       else lo = mid;
     }
     for (const x of [a, hit]) {
-      if (!x.move) continue;
+      if (!x.move || landingAfloat(map, x, state.time)) continue;
       halt(map, x, Math.round(hi), true, true);
       now.delete(x);
     }
@@ -1111,12 +1259,14 @@ function approach(ctx: MilitaryContext): boolean {
 function meet(ctx: MilitaryContext, x: Army, y: Army, u: number, v: number, f: number): void {
   const { state, map } = ctx;
   for (const a of [x, y]) {
+    if (landingAfloat(map, a, state.time)) continue; // Landung läuft weiter bis zum Hafenpunkt
     interrupt(map, a);
     if (f <= ROAD_EPS || f >= 1 - ROAD_EPS) {
       a.node = f < 0.5 ? u : v;
       a.pos = null;
     } else {
-      a.node = f < 0.5 ? u : v;
+      // auf dem Wasseranteil eines Küstenwegs gilt der Seepunkt (sonst stünde die Armee rechnerisch an Land)
+      a.node = roadAnchor(map, u, v, f);
       a.pos = { a: u, b: v, f };
     }
   }
@@ -1456,7 +1606,8 @@ function cleanupHit(ctx: MilitaryContext, nodes: Iterable<number>, names: Map<Ar
 export function combatRound(ctx: MilitaryContext, tally?: CombatTally): void {
   const { state, map } = ctx;
   const t: CombatTally = tally ?? new Map();
-  const standing = state.armies.filter((a) => !a.move && unitCount(a) > 0);
+  // stehend oder in der Ein-/Ausschiffpause (beim Anlanden mit halber Stärke, siehe onShips)
+  const standing = state.armies.filter((a) => (!a.move || pausedAt(a, state.time)) && unitCount(a) > 0);
   const cells = standingCells(state, map);
   const damage = new Map<Army, number>();
   // wer wem wie viel Schaden zufügt (für die Moral durch Vernichtung und den Sieger)
@@ -1580,7 +1731,7 @@ export function rangedRound(ctx: MilitaryContext, tally?: CombatTally): void {
   const t: CombatTally = tally ?? new Map();
   for (const a of [...state.armies]) {
     const range = maxRange(a, map);
-    if (range <= 0 || unitCount(a) === 0) continue;
+    if (range <= 0 || gone(state, a)) continue;
     const pos = armyPosition(map, a, state.time);
     const inRange = (b: Army) => {
       const p = armyPosition(map, b, state.time);
@@ -1779,6 +1930,11 @@ export function conquer(ctx: MilitaryContext, node: number, by: string): void {
  * Eine Nation ist untergegangen: ihre Armeen, diplomatischen Angebote (von ihr und an sie),
  * Börsenangebote und eine laufende Hauptstadtverlegung verschwinden.
  */
+/** Armee aus einer Kopie der Armeeliste, die inzwischen vernichtet oder mit ihrer Nation untergegangen ist */
+function gone(state: GameState, a: Army): boolean {
+  return unitCount(a) === 0 || (a.owner !== REBELS && state.nations[a.owner]?.alive === false);
+}
+
 export function eliminate(state: GameState, nation: string): void {
   const n = state.nations[nation];
   if (n) {

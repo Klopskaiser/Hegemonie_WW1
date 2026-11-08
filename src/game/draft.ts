@@ -797,7 +797,17 @@ const linkPair = (d: Draft, a: NodeRef, b: NodeRef) =>
 export function insertBend(d: Draft, a: NodeRef, b: NodeRef, at: Pt): boolean {
   const l = linkPair(d, a, b);
   if (!l) return false;
-  (l[2] ??= []).push([round1(at[0]), round1(at[1])]);
+  const line = linkPts(d, l);
+  const q: Pt = [round1(at[0]), round1(at[1])];
+  const bends = (l[2] ??= []);
+  if (!line) { bends.push(q); return true; }
+  // in das Teilstück des Zugs [a, ...Knicke, b] einfügen, das dem Punkt am nächsten liegt
+  let best = 0, bestD = Infinity;
+  for (let k = 0; k + 1 < line.length; k++) {
+    const { d: dk } = distToSeg(at, line[k], line[k + 1]);
+    if (dk < bestD) { bestD = dk; best = k; }
+  }
+  bends.splice(best, 0, q);
   return true;
 }
 

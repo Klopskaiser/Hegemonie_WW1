@@ -11,7 +11,7 @@ import { harborSea, isSea, nodeNeighbors } from './graph.ts';
 import type { MapData, Resource } from './mapdata.ts';
 import { acceptOffer, cancelOffer, postOffer } from './market.ts';
 import {
-  boardingWait, currentProvince, garrisonKeep, halt, inMelee, isNaval, isRailOnly, mergeArmies, nearestNode, planRoute, pursue, rejoinSplits, replan, samePlace, startMove, unitCount, unitTypes,
+  boardingWait, currentProvince, garrisonKeep, halt, inMelee, isNaval, isRailOnly, mergeArmies, nearestNode, planRoute, pursue, rejoinSplits, replan, retimeMarches, samePlace, startMove, unitCount, unitTypes,
   assaultLanding,
   type MilitaryContext, type MoveTarget,
 } from './military.ts';
@@ -233,6 +233,23 @@ export function unitHours(state: GameState, province: number, unit: UnitType): n
   return (UNITS[unit].hours * Math.max(FACTORY_SPEEDUP, 1 - FACTORY_SPEEDUP * extra)) / workshop;
 }
 
+/**
+ * Gebäude einer Provinz haben sich geändert (fertig, repariert, an-/abgeschaltet): der laufende Fertigungsauftrag
+ * und die Märsche durch die Provinz laufen ab sofort im neuen Tempo weiter (der erreichte Fortschritt bleibt).
+ */
+export function retimeProvince(ctx: MilitaryContext, province: number, building: Building): void {
+  if (building === 'railroad') retimeMarches(ctx, province);
+  if (building !== 'factory' && building !== 'workshop') return;
+  const { state } = ctx;
+  const o = state.provinces[province].queue[0];
+  if (o?.start === undefined || o.end === undefined || o.end <= state.time) return;
+  const done = (state.time - o.start) / Math.max(1, o.end - o.start);
+  const total = Math.round(unitHours(state, province, o.unit) * HOUR);
+  o.end = state.time + Math.max(1, Math.round((1 - done) * total));
+  o.start = o.end - total;
+  ctx.invalidate();
+}
+
 export function requirementsMet(state: GameState, map: MapData, province: number, unit: UnitType): string | null {
   const ps = state.provinces[province];
   const req = UNITS[unit].requires;
@@ -398,6 +415,7 @@ export function applyAction(ctx: ActionContext, nation: string, action: Action):
         if (ps.off) delete ps.off[action.building];
         if (ps.off && !Object.keys(ps.off).length) delete ps.off;
       } else (ps.off ??= {})[action.building] = true;
+      retimeProvince(ctx, action.province, action.building);
       ctx.invalidate();
       return { ok: true };
     }
@@ -657,10 +675,14 @@ function applyDiplomacy(ctx: ActionContext, nation: string, action: DiplomacyAct
       setRelation(state, nation, action.nation, p.kind);
       if (p.tribute) ctx.log(`${name(action.nation)} zahlt ${name(nation)} Tribut: ${tributeText(p.tribute)}.`);
       if (current === 'war') {
-        // Märsche in das Gebiet des bisherigen Feindes enden
+        // Märsche in das Gebiet des bisherigen Feindes enden (dort, wo die Armee gerade ist; Märsche durch
+        // andere Länder, z. B. mit Durchmarschrecht, laufen weiter)
         for (const a of state.armies) {
-          if (a.owner !== nation && a.owner !== action.nation) continue;
-          if (a.move && a.move.path.some((n) => !isSea(map, n) && state.provinces[n].owner !== a.owner)) a.move = null;
+          if (!a.move || (a.owner !== nation && a.owner !== action.nation)) continue;
+          const foe = a.owner === nation ? action.nation : nation;
+          if (hasRightOfWay(state, a.owner, foe)) continue;
+          const ahead = a.move.path.slice(a.move.seg + 1);
+          if (ahead.some((n) => !isSea(map, n) && state.provinces[n].owner === foe)) halt(map, a, state.time);
         }
         ctx.log(`Frieden zwischen ${name(nation)} und ${name(action.nation)}.`);
       } else {

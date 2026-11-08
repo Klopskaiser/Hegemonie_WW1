@@ -7,7 +7,7 @@ import { closestOnEdge, edgePoint, edgeParts, edgePoints, edgeSlice, harborSea, 
 import { mergeRailSegs } from '../game/pathsnap.ts';
 import { activeLevel } from '../game/economy.ts';
 import type { MapData } from '../game/mapdata.ts';
-import { armyPosition, isNaval, normalizeTarget, remainingRoute, unitCount, unitRange, type MoveTarget, boardingWait } from '../game/military.ts';
+import { armyPosition, isNaval, normalizeTarget, remainingRoute, shoreFrac, unitCount, unitRange, type MoveTarget, boardingWait } from '../game/military.ts';
 import { makeRng } from '../game/rng.ts';
 import { REBELS, type Army, type ProvinceState } from '../game/types.ts';
 import { DEFECTION, HOUR, MILITARY, UNITS, type UnitType } from '../game/balance.ts';
@@ -991,6 +991,12 @@ export function MapCanvas(props: Props) {
   const pins = useRef<PinPoint[]>([]);
   const hoverTarget = useRef('');
 
+  /** Sind Landtruppen ausgewählt (keine reinen Flotten)? Dann rastet ein Klick am Ufer auf den Hafenpunkt ein. */
+  const landSelected = () => {
+    const ids = new Set(props.selectedArmies ?? []);
+    return (props.armies ?? []).some((a) => ids.has(a.id) && !isNaval(a));
+  };
+
   /** Ziel unter dem Zeiger: Knoten nahe der Mitte, sonst Wegpunkt, sonst Provinz/Seegebiet */
   const targetAt = (x: number, y: number): MoveTarget | null => {
     const s = view.current.s;
@@ -1007,7 +1013,19 @@ export function MapCanvas(props: Props) {
       const d = r.d * s;
       if (d <= 9 && (!road || d < road.d)) road = { u: e.u, v: e.v, f: r.f, d };
     }
-    if (road) return normalizeTarget({ road: { a: road.u, b: road.v, f: road.f } });
+    if (road) {
+      // Klick nahe am Hafenpunkt mit Landtruppen: auf den Hafenpunkt einrasten, und zwar auf der Landseite –
+      // die Truppen sollen am Ufer stehen (z. B. eine Landung abwehren), nicht versehentlich einschiffen
+      const fh = landSelected() ? shoreFrac(map, road.u, road.v) : null;
+      if (fh !== null) {
+        const hp = edgePoint(map, road.u, road.v, fh);
+        if (Math.hypot(hp[0] - x, hp[1] - y) * s <= 16) {
+          const f = Math.max(0, Math.min(1, isSea(map, road.u) ? fh + 1e-4 : fh - 1e-4));
+          return normalizeTarget({ road: { a: road.u, b: road.v, f } });
+        }
+      }
+      return normalizeTarget({ road: { a: road.u, b: road.v, f: road.f } });
+    }
     const n = hitNode(x, y);
     return n === null ? null : { node: n };
   };

@@ -43,8 +43,9 @@ export function ConsumptionControl({ state, rates, act }: { state: GameState; ra
   const [draft, setDraft] = useState<Record<Category, Shares> | null>(null);
   /** gesperrter Regler (bei Kategorien mit drei Rohstoffen, z. B. Energie): bleibt beim Verschieben der anderen stehen */
   const [locked, setLocked] = useState<Resource | null>(null);
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
+  /** Sende-Verzögerung je Kategorie, damit zwei kurz nacheinander gezogene Kategorien beide ankommen */
+  const timers = useRef<Partial<Record<Category, ReturnType<typeof setTimeout>>>>({});
+  useEffect(() => () => { for (const t of Object.values(timers.current)) clearTimeout(t); }, []);
   // Entwurf erst verwerfen, wenn der gespeicherte Stand ihn übernommen hat (sonst springt der Regler kurz zurück)
   useEffect(() => {
     if (!draft) return;
@@ -60,8 +61,9 @@ export function ConsumptionControl({ state, rates, act }: { state: GameState; ra
     const shares = rebalance(cat, current, r, v, locked);
     setDraft((d) => ({ ...(d ?? {}), [cat]: shares }) as Record<Category, Shares>);
     // erst nach kurzer Pause senden, damit beim Ziehen nicht jede Stufe gespeichert wird
-    if (timer.current) clearTimeout(timer.current);
-    timer.current = setTimeout(async () => {
+    clearTimeout(timers.current[cat]);
+    timers.current[cat] = setTimeout(async () => {
+      delete timers.current[cat];
       const r = await act({ type: 'setConsumption', category: cat, shares });
       // abgelehnt: Entwurf verwerfen, damit der gespeicherte Stand wieder gilt
       if (!r.ok) {

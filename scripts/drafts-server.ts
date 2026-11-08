@@ -2,7 +2,7 @@
 // nach public/maps/<id>.json exportieren und in public/maps/custom.json für das Hauptmenü eintragen.
 //   GET  /__drafts/            Liste der Entwürfe
 //   GET  /__drafts/<id>        Entwurf (mit Vorlagebild)
-//   POST /__drafts/<id>        Entwurf speichern
+//   POST /__drafts/<id>        Entwurf speichern (?from=<geladene ID>; vorhandene Datei einer anderen ID nur mit &force=1)
 //   POST /__drafts/<id>/export Karte schreiben ({ map, name, description, force })
 
 import fs from 'node:fs';
@@ -26,7 +26,8 @@ export function mapDrafts(root: string): Plugin {
           res.setHeader('Content-Type', 'application/json');
           res.end(typeof body === 'string' ? body : JSON.stringify(body));
         };
-        const url = (req.url ?? '').split('?')[0];
+        const [url, qs] = (req.url ?? '').split('?');
+        const query = new URLSearchParams(qs ?? '');
         const readBody = (fn: (body: string) => void) => {
           let body = '';
           req.setEncoding('utf8');
@@ -58,11 +59,17 @@ export function mapDrafts(root: string): Plugin {
         if (!m) return send(404, { error: 'unbekannt' });
         const id = m[1];
         const file = path.join(dir, `${id}.json`);
+        // custom.json ist die Kartenliste des Hauptmenüs – Export unter dieser ID würde sie überschreiben
+        if (id === 'custom' && req.method === 'POST') return send(400, { error: 'Die ID „custom“ ist reserviert (Kartenliste public/maps/custom.json) – bitte andere ID wählen.' });
         if (!m[2]) {
           if (req.method === 'GET') return fs.existsSync(file) ? send(200, fs.readFileSync(file, 'utf8')) : send(404, { error: `Entwurf ${id} fehlt` });
           if (req.method === 'POST') {
             return readBody((body) => {
               JSON.parse(body); // nur gültiges JSON schreiben
+              // fremden Entwurf (ID im Zeichner geändert oder neuer Entwurf) nur nach Bestätigung überschreiben
+              if (fs.existsSync(file) && query.get('from') !== id && query.get('force') !== '1') {
+                return send(409, { error: `Es gibt schon einen anderen Entwurf ${id} (data/drafts/${id}.json) – er würde überschrieben.` });
+              }
               fs.mkdirSync(dir, { recursive: true });
               fs.writeFileSync(file, body);
               send(200, { ok: true });

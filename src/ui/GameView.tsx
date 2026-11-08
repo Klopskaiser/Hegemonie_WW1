@@ -347,7 +347,7 @@ export function GameView({ start, onExit }: { start: SessionStart; onExit(): voi
         )}
 
         {army ? (
-          <ArmyPanel map={map} state={state} army={army} armies={armies} act={session.act} onSelectArmy={selectArmy} onSplit={setPendingSelect}
+          <ArmyPanel key={army.id} map={map} state={state} army={army} armies={armies} act={session.act} onSelectArmy={selectArmy} onSplit={setPendingSelect}
             onClose={() => setSelectedArmies([])} />
         ) : chosen.length > 1 ? (
           <MultiArmyPanel map={map} state={state} armies={chosen} act={session.act} onSelectArmy={selectArmy}

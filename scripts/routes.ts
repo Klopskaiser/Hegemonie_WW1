@@ -7,7 +7,7 @@
 import type { MapData } from '../src/game/mapdata.ts';
 import { edgePoints, isSea, nodeCount, nodeNeighbors } from '../src/game/graph.ts';
 import { pointInMulti, type MultiPoly, type Pt } from '../src/game/geom.ts';
-import { territoryAt } from '../src/game/mapedits.ts';
+import { harborSplit, territoryAt } from '../src/game/mapedits.ts';
 
 type Road = NonNullable<MapData['roads']>[number];
 type Shortcut = NonNullable<MapData['shortcuts']>[number];
@@ -149,7 +149,9 @@ export function waterRoutes(map: MapData, anyLand: (x: number, y: number) => boo
         }
       }
       if (!path) continue;
-      out.push({ a: u, b: v, pts: flat(fromHarbor ? [pts[0], harbor, ...path.slice(1)] : path), split: 0.5 });
+      const full = fromHarbor ? [pts[0], harbor, ...path.slice(1)] : path;
+      // Hafenweg: split an der Wassergrenze (wie harborLeg), See–See bleibt mittig
+      out.push({ a: u, b: v, pts: flat(full), split: fromHarbor ? harborSplit(map, u, v, full) : 0.5 });
     }
   }
   return out;
@@ -521,7 +523,8 @@ export function snapSeaLanes(map: MapData): { roads: Road[]; junctions: BundleRe
         const j = { node: lane.a, x: r1(p[0]), y: r1(p[1]) };
         if (!junctions.some((q) => Math.hypot(q.x - j.x, q.y - j.y) < 10)) junctions.push(j);
       }
-      roads.push({ a: lane.a, b: lane.b, pts: flat(finalPts), split: 0.5 });
+      // Hafenweg (a = Provinz): split an der Wassergrenze (wie harborLeg), See–See bleibt mittig
+      roads.push({ a: lane.a, b: lane.b, pts: flat(finalPts), split: lane.fixed ? harborSplit(map, lane.a, lane.b, finalPts) : 0.5 });
     }
     // Rückgrat geglättet ablegen (wie beim Landbündeln), damit übernahmefremde Ausbuchtungen nicht nachwirken
     backbone.push(line(simplify(finalPts.slice(lane.fixed), 0.5)));

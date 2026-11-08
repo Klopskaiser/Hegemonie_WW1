@@ -39,6 +39,19 @@ describe('Bauschleife', () => {
     expect(ps.buildQueue).toEqual([]);
   });
 
+  it('geht während eines Ausbaus eine Stufe verloren, setzt der Bau nur eine Stufe auf den neuen Stand', () => {
+    const sim = newSim();
+    const ps = sim.state.provinces[berlin];
+    ps.buildings.workshop = 1;
+    ps.buildings.factory = 2;
+    expect(sim.apply('DE', { type: 'build', province: berlin, building: 'factory' }).ok).toBe(true);
+    expect(ps.construction?.level).toBe(3);
+    ps.buildings.factory = 1; // Stufe 2 im Kampf zerstört
+    sim.advanceTo(ps.construction!.end + HOUR);
+    expect(ps.construction).toBeNull();
+    expect(ps.buildings.factory).toBe(2);
+  });
+
   it('Voraussetzungen zählen geplante Gebäude mit; entfernte Einträge lassen Folgebauten entfallen', () => {
     const sim = newSim();
     const ps = sim.state.provinces[berlin];
@@ -181,5 +194,43 @@ describe('Leben der Gebäude', () => {
     expect(buildingLives('railroad')).toBe(3);
     expect(buildingLives('harbor')).toBe(3);
     expect(buildingLives('factory')).toBe(2);
+  });
+});
+
+describe('Fertige Gebäude wirken sofort', () => {
+  it('eine fertige Fabrik beschleunigt den laufenden Fertigungsauftrag (Fortschritt bleibt)', () => {
+    const sim = newSim();
+    const ps = sim.state.provinces[berlin];
+    ps.buildings.workshop = 1;
+    ps.buildings.factory = 1;
+    expect(sim.apply('DE', { type: 'enqueue', province: berlin, unit: 'artillery' }).ok).toBe(true);
+    const o = ps.queue[0];
+    const total = o.end! - o.start!;
+    // Fabrik Stufe 2 wird nach einem Viertel der Fertigungszeit fertig
+    const t = sim.state.time + Math.round(total / 4 / HOUR) * HOUR;
+    ps.construction = { building: 'factory', level: 2, start: sim.state.time, end: t };
+    sim.ctx.invalidate();
+    sim.advanceTo(t);
+    expect(ps.buildings.factory).toBe(2);
+    const done = (t - o.start!) / (o.end! - o.start!);
+    expect(done).toBeCloseTo(0.25, 2);
+    expect(o.end! - t).toBeLessThan(total * 0.75 - HOUR);
+  });
+
+  it('eine fertige Eisenbahn beschleunigt einen laufenden Marsch durch die Provinz', () => {
+    const arrival = (withRail: boolean) => {
+      const sim = newSim();
+      const ps = sim.state.provinces[berlin];
+      const to = map.provinces[berlin].neighbors.find((n) => sim.state.provinces[n].owner === 'DE')!;
+      const army = sim.state.armies.find((a) => a.owner === 'DE' && a.node === berlin && !a.move)!;
+      expect(sim.apply('DE', { type: 'move', army: army.id, to }).ok).toBe(true);
+      if (withRail) {
+        ps.construction = { building: 'railroad', level: 1, start: sim.state.time, end: sim.state.time + HOUR };
+        sim.ctx.invalidate();
+      }
+      sim.advance(HOUR + 2 * 60_000);
+      return army.move!.segEnd;
+    };
+    expect(arrival(true)).toBeLessThan(arrival(false));
   });
 });

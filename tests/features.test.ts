@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { ALL_RES, DAY, HOUR, MILITARY, MINUTE, MORALE, UNITS } from '../src/game/balance.ts';
-import { applyCombatMorale, applyDamage, armyLocation, armyPosition, boardingWait, combatRound, planRoute, conquer, embarkHours, harborLeg, inMelee, markFight, maxRange, meleeOutput, rangedRound, damageBuildings, defections, repairMachines, resumeOrders, startMove, troopTarget, unitHp } from '../src/game/military.ts';
+import { applyCombatMorale, applyDamage, armyHp, shoreFrac, armyLocation, armyPosition, boardingWait, combatRound, pausedAt, planRoute, conquer, embarkHours, harborLeg, inMelee, markFight, maxRange, meleeOutput, rangedRound, damageBuildings, defections, repairMachines, resumeOrders, startMove, troopTarget, unitHp } from '../src/game/military.ts';
 import { activeLevel, capitalOf, marchDaysToCapital, moraleTarget, nationRates, recruitHours, stepMorale, totalUse, useSources } from '../src/game/economy.ts';
 import type { MapData } from '../src/game/mapdata.ts';
 import { edgeParts, edgePoint, nodePos, nodeNeighbors } from '../src/game/graph.ts';
@@ -324,8 +324,10 @@ describe('Ein- und Ausschiffen angreifbar', () => {
     expect('road' in loc).toBe(true);
     const f = 'road' in loc ? loc.road.f : 0;
     expect(boardingWait(map, de, sim.state.time)).toBeTruthy();
-    // Franzosen kurz vor dem Hafenpunkt auf demselben Weg, Ziel: die wartende Armee
-    const fr: Army = { id: sim.state.nextArmyId++, owner: 'FR', node: mp.id, pos: { a: mp.id, b: sea, f: f - 0.002 }, units: { infantry: 30 }, morale: 1 };
+    // Franzosen 2 km vor dem Hafenpunkt auf demselben Weg (außerhalb der Nahkampfreichweite – sonst wären sie
+    // schon im Kampf mit der Wartenden gebunden), Ziel: die wartende Armee
+    const len = edgeParts(map, mp.id, sea)[1];
+    const fr: Army = { id: sim.state.nextArmyId++, owner: 'FR', node: mp.id, pos: { a: mp.id, b: sea, f: f - 2 / len }, units: { infantry: 30 }, morale: 1 };
     sim.state.armies.push(fr);
     expect(sim.apply('FR', { type: 'move', army: fr.id, to: mp.id, toward: sea, frac: f }).ok).toBe(true);
     sim.advance(5 * MINUTE);
@@ -333,9 +335,38 @@ describe('Ein- und Ausschiffen angreifbar', () => {
     expect(de.boarding).toBe(true);
     expect(fr.boarding).toBeFalsy();
     expect(maxRange(de, map)).toBe(0);
-    const full = meleeOutput(sim.state, map, { ...de, boarding: undefined });
+    // am Hafenpunkt gilt der Seepunkt als Standort (wie beim Anhalten), verglichen wird mit derselben Armee an Land
+    expect(de.node).toBe(sea);
+    const full = meleeOutput(sim.state, map, { ...de, boarding: undefined, node: mp.id, pos: null });
     expect(meleeOutput(sim.state, map, de)).toBeLessThan(full);
     expect(de.resume).toBeTruthy();
+  });
+});
+
+const isSeaNode = (n: number) => n >= map.provinces.length;
+
+describe('Am Ufer stehen', () => {
+  it('ein Wegziel auf der Landseite des Hafenpunkts: die Armee bleibt am Ufer stehen, an Land, ohne einzuschiffen', () => {
+    const sim = newSim();
+    const mp = map.provinces.find((p) => p.nation === 'DE' && (p.seaLinks ?? []).length > 0)!;
+    const sea = map.provinces.length + mp.seaLinks![0];
+    for (const [a, b] of [[mp.id, sea], [sea, mp.id]]) {
+      const fh = shoreFrac(map, a, b)!;
+      expect(fh).toBeGreaterThan(0);
+      const army: Army = { id: sim.state.nextArmyId++, owner: 'DE', node: mp.id, units: { infantry: 5 }, morale: 1 };
+      sim.state.armies.push(army);
+      const f = isSeaNode(a) ? fh + 1e-4 : fh - 1e-4; // wie der Klick am Hafenpunkt (MapCanvas)
+      expect(sim.apply('DE', { type: 'move', army: army.id, to: a, toward: b, frac: f }).ok).toBe(true);
+      sim.advance(2 * DAY);
+      expect(army.move ?? null).toBeNull();
+      expect(army.pos).toBeTruthy();
+      expect(army.node).toBe(mp.id);
+      expect(army.boarding).toBeFalsy();
+      expect(armyHp(army, map)).toBeCloseTo(armyHp({ ...army, pos: null }, map), 9); // voller Landwert
+      const p = armyPosition(map, army, sim.state.time), h = edgePoint(map, a, b, fh);
+      expect(Math.hypot(p[0] - h[0], p[1] - h[1])).toBeLessThan(0.1);
+      sim.state.armies = sim.state.armies.filter((x) => x !== army);
+    }
   });
 });
 
@@ -950,6 +981,37 @@ describe('Landung gegen Widerstand (Regression: Gratis-Teleport durch Kampfverwi
     // Landung angestoßen: Transporter gibt die Truppen ab (sofortige Ausschiffung am Seepunkt) oder marschiert
     const landed = sim.state.armies.some((x) => x.owner === 'DE' && x.id !== flt.id && !(x.units.battleship ?? 0) && (x.units.infantry ?? 0) > 0);
     expect(landed || !!flt.move).toBe(true);
+  });
+
+  it('Gegner am Ufer: Kampf schon beim Ausschiffen (halbe Stärke), danach gebunden an Land – kein Vorbeiziehen', () => {
+    const sim = newSim();
+    allWar(sim);
+    const { target, sea } = coastPair(sim.state);
+    const [, len] = edgeParts(map, sea, target);
+    const land = Math.min(len, harborLeg(map, target, sea));
+    sim.state.armies = sim.state.armies.filter((a) => a.node !== target && a.node !== sea);
+    const owner = sim.state.provinces[target].owner;
+    // Verteidiger 200 m hinter dem Hafenpunkt an Land
+    const foe: Army = { id: sim.state.nextArmyId++, owner, node: target, pos: { a: sea, b: target, f: 1 - land / len + 0.2 / len }, units: { infantry: 6 }, morale: 0.8 };
+    const att: Army = { id: sim.state.nextArmyId++, owner: 'DE', node: sea, units: { infantry: 10 }, morale: 0.8 };
+    sim.state.armies.push(foe, att);
+    expect(sim.apply('DE', { type: 'move', army: att.id, to: target }).ok).toBe(true);
+    const afloatHp = armyHp(att, map);
+    let foughtAfloat = false;
+    for (let k = 0; k < 2 * 24 * 60 && att.move; k++) {
+      sim.advance(MINUTE);
+      if (att.move && pausedAt(att, sim.state.time) && armyHp(att, map) < afloatHp - 1e-9) foughtAfloat = true;
+    }
+    expect(foughtAfloat).toBe(true); // in der Ausschiffpause getroffen (und mit halber Stärke, da noch auf See)
+    // ausgeschifft und am Gegner gebunden: an Land, voller Landwert, nicht an ihm vorbei in die Stadt
+    expect(att.move).toBeNull();
+    expect(att.node).toBe(target);
+    expect(att.boarding).toBeFalsy();
+    expect(inMelee(sim.state, map, att)).toBe(true);
+    expect(sim.state.provinces[target].owner).toBe(owner);
+    // der Verteidiger steht an Land und kämpft mit vollem Wert
+    expect(foe.node).toBe(target);
+    expect(armyHp(foe, map)).toBeGreaterThan(armyHp({ ...foe, node: sea, pos: null }, map));
   });
 
   it('beim Anlanden im Nahkampf festgehängt: resumeOrders setzt die Landung automatisch fort', () => {

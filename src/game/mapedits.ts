@@ -46,6 +46,32 @@ export function inPolys(polys: number[][][], x: number, y: number): boolean {
   return inside;
 }
 
+/**
+ * split eines Hafenweges (Provinz–See, Punkte von a nach b): Anteil der Länge ab a bis zur Wassergrenze,
+ * von der Provinzseite aus gesucht wie harborLeg (military.ts) – sonst zählen Kämpfe draußen auf See
+ * zur Küstenprovinz.
+ */
+export function harborSplit(map: MapData, a: number, b: number, pts: Pt[]): number {
+  const P = map.provinces.length;
+  const line = a < P ? pts : [...pts].reverse();
+  const polys = map.provinces[a < P ? a : b].polys;
+  let total = 0;
+  for (let k = 0; k + 1 < line.length; k++) total += Math.hypot(line[k + 1][0] - line[k][0], line[k + 1][1] - line[k][1]);
+  if (total <= 0) return 0.5;
+  let land = total, cum = 0; // verlässt der Verlauf das Land nie, gehört er ganz zur Provinz
+  outer: for (let k = 0; k + 1 < line.length; k++) {
+    const [x0, y0] = line[k], [x1, y1] = line[k + 1];
+    const seg = Math.hypot(x1 - x0, y1 - y0);
+    const n = Math.max(1, Math.ceil(seg / 0.5));
+    for (let s = 1; s <= n; s++) {
+      if (!inPolys(polys, x0 + ((x1 - x0) * s) / n, y0 + ((y1 - y0) * s) / n)) { land = cum + (seg * s) / n; break outer; }
+    }
+    cum += seg;
+  }
+  const f = land / total;
+  return Math.round((a < P ? f : 1 - f) * 1000) / 1000;
+}
+
 /** Gebiet an einem Punkt: Provinz-Index, Seegebiet als P + Index, -1 außerhalb */
 export function territoryAt(map: MapData, x: number, y: number): number {
   const P = map.provinces.length;
@@ -224,12 +250,12 @@ export function applyEdits(base: MapData, edits: MapEdits): EditResult {
       if (fs.length) [sc.f0, sc.f1] = [Math.min(...fs), Math.max(...fs)];
       continue;
     }
-    // Anteil der Weglänge in Provinz a (für das Tempo bis zur Grenze)
+    // Anteil der Weglänge in Provinz a (für das Tempo bis zur Grenze); Hafenweg: bis zur Wassergrenze
     let split = 0.5;
     if (a < P && b < P) {
       const out = samplePath(pts).find((s) => !inPolys(map.provinces[a].polys, s.x, s.y));
       split = out ? out.f : 1;
-    }
+    } else if (a < P || b < P) split = harborSplit(map, a, b, pts);
     dropGeometry(a, b);
     map.roads!.push({ a, b, pts: pts.flatMap(([x, y]) => [r1(x), r1(y)]), split });
   }

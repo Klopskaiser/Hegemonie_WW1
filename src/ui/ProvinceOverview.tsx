@@ -85,7 +85,8 @@ export function ProvinceOverview({ map, state, act, onSelect, onClose }: Props) 
             {own.map(({ ps, mp, i }) => {
               const out = provinceOutput(map, ps, i);
               const planned = plannedBuildings(ps);
-              const buildable = BUILDING_ORDER.filter((b) => siteAllows(b, mp.coastal) && planned[b] < BUILDINGS[b].maxLevel)
+              const buildable = BUILDING_ORDER.filter((b) => siteAllows(b, mp.coastal) && planned[b] < BUILDINGS[b].maxLevel
+                && !(BUILDINGS[b].excludes ?? []).some((x) => planned[x] > 0))
                 .map((b) => ({ b, chk: checkBuild(state, map, me, i, b) }));
               const pickB = buildable.find((x) => x.b === build[i]) ?? buildable.find((x) => x.chk.ok) ?? buildable[0];
               const units = UNIT_ORDER.filter((u) => !UNITS[u].auto).map((u) => ({ u, chk: checkProduce(state, map, me, i, u) }));

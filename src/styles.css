@@ -499,7 +499,6 @@ input.num { width: 76px; padding: 2px 4px; }
 .consumption-amount { text-align: right; font-variant-numeric: tabular-nums; }
 
 /* Bauschleife */
-.build-item.excluded { opacity: 0.55; }
 
 /* Diplomatie: breiter, Auswahl nicht abschneiden */
 .side-panel.diplomacy-panel { width: min(640px, calc(100% - 86px)); }

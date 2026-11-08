@@ -2,7 +2,7 @@
 // unabhängig von der Aufteilung der Zeitschritte identisch verlaufen.
 
 import {
-  applyAction, buildBlocker, buildHours, canAfford, pay, requirementsMet, unitHours,
+  applyAction, buildBlocker, buildHours, canAfford, pay, requirementsMet, retimeProvince, unitHours,
   type Action, type ActionContext, type ActionResult,
 } from './actions.ts';
 import { BasicAI } from './ai.ts';
@@ -13,7 +13,7 @@ import { observe, type Controller, type NationView, type Observation } from './c
 import { allRates, defaultConsumption, moraleTarget, provincePoints, recruitHours, stepMorale, type NationRates, provinceCounts, focusShares } from './economy.ts';
 import type { MapData } from './mapdata.ts';
 import {
-  applyCombatMorale, combatRound, type CombatTally, defections, encounters, forcedMarchWear, mergeNearby, pursue, splitParts, engageRanged, isNaval, mixMorale, processArrivals, rangedRound, updateRevoltFlags, nextTroopMorale, repairMachines, resumeOrders, troopTarget,
+  applyCombatMorale, combatRound, type CombatTally, defections, encounters, pauseEnds, forcedMarchWear, mergeNearby, pursue, splitParts, engageRanged, isNaval, mixMorale, processArrivals, rangedRound, updateRevoltFlags, nextTroopMorale, repairMachines, resumeOrders, troopTarget,
 } from './military.ts';
 import { harborSea, isSea } from './graph.ts';
 import { expireOffers } from './market.ts';
@@ -157,6 +157,7 @@ export class Simulation {
       processArrivals(this.ctx);
       this.dirty = true;
     }
+    if (pauseEnds(this.ctx)) this.dirty = true;
     if (encounters(this.ctx)) this.dirty = true;
     this.capitalMoves();
     if (s.time % (10 * MINUTE) === 0) {
@@ -175,7 +176,10 @@ export class Simulation {
       rangedRound(this.ctx, tally);
       applyCombatMorale(tally, s.combatMorale ?? DEFAULT_COMBAT_MORALE);
       forcedMarchWear(this.ctx);
-      if (updateRevoltFlags(s)) this.dirty = true;
+      updateRevoltFlags(s);
+      // Kampfverluste, Gebäudeschäden, Kampfmoral und Aufstände wirken sofort auf die Raten – sonst gälten bis
+      // zur nächsten Stunde die alten, nach dem Laden aber schon die neuen (Nachsimulation ≠ Live-Lauf)
+      this.invalidateRates();
       expireOffers(s);
       this.recruitInfantry();
       for (const id of this.nationIds) this.applyFocus(id);
@@ -228,10 +232,14 @@ export class Simulation {
     s.provinces.forEach((ps, i) => {
       const c = ps.construction;
       if (c && c.end <= s.time) {
-        ps.buildings[c.building] = c.level;
+        // der Bau setzt eine Stufe auf den aktuellen Stand – ging während des Baus eine Stufe verloren, kommt sie
+        // nicht gratis zurück
+        const level = Math.min(c.level, ps.buildings[c.building] + 1);
+        ps.buildings[c.building] = level;
         ps.construction = null;
         const def = BUILDINGS[c.building];
-        this.log(`${def.name}${def.maxLevel > 1 ? ' Stufe ' + c.level : ''} in ${this.map.provinces[i].name} fertiggestellt.`, ps.owner, i);
+        this.log(`${def.name}${def.maxLevel > 1 ? ' Stufe ' + level : ''} in ${this.map.provinces[i].name} fertiggestellt.`, ps.owner, i);
+        retimeProvince(this.ctx, i, c.building);
         this.invalidateRates();
         this.startBuild(i);
       }
@@ -245,6 +253,7 @@ export class Simulation {
             delete ps.damage[b];
             if (!Object.keys(ps.damage).length) delete ps.damage;
             this.log(`${BUILDINGS[b].name} in ${this.map.provinces[i].name} repariert.`, ps.owner, i);
+            retimeProvince(this.ctx, i, b);
             this.invalidateRates();
           } else {
             // das Gebäude wurde zerstört, während repariert wurde – der Auftrag erledigt sich

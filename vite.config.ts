@@ -5,6 +5,7 @@ import type { Plugin } from 'vite';
 import { defineConfig } from 'vitest/config';
 import { applyEdits } from './src/game/mapedits.ts';
 import { mapDrafts } from './scripts/drafts-server.ts';
+import { markBranchJunctions } from './scripts/routes.ts';
 
 /** Vorgaben lesbar formatieren: Punkte und Namenspaare je in einer Zeile */
 function formatEdits(edits: unknown): string {
@@ -48,6 +49,8 @@ function mapEditor(): Plugin {
             try {
               const edits = JSON.parse(body);
               const result = applyEdits(JSON.parse(fs.readFileSync(f.base, 'utf8')), edits);
+              // wie die Kartenpipeline (build-map.ts): Knotenpunkte auf der umgebauten Geometrie nachlesen
+              markBranchJunctions(result.map);
               fs.writeFileSync(f.edits, formatEdits(edits));
               fs.writeFileSync(f.out, JSON.stringify(result.map));
               send(200, { warnings: result.warnings });

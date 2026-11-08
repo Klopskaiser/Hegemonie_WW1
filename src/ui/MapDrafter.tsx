@@ -125,6 +125,8 @@ export function MapDrafter({ onExit }: { onExit(): void }) {
   const [busy, setBusy] = useState('');
   const [check, setCheck] = useState<CheckResult | null>(null);
   const [overwrite, setOverwrite] = useState<string | null>(null);
+  const [saveConflict, setSaveConflict] = useState<string | null>(null);
+  const savedAs = useRef<string | null>(null); // ID, unter der der Entwurf geladen/zuletzt gespeichert wurde
   const [hover, setHover] = useState('');
   const [sizeEdit, setSizeEdit] = useState<{ w: string; h: string } | null>(null);
   const [channelWidth, setChannelWidth] = useState(20);
@@ -952,6 +954,8 @@ export function MapDrafter({ onExit }: { onExit(): void }) {
       setImgVisible(saved.imageVisible ?? true);
       geomCache.current.clear();
       setDraft(saved.draft);
+      savedAs.current = id;
+      setSaveConflict(null);
       setHistory([]);
       setFuture([]);
       setDirty(false);
@@ -967,9 +971,12 @@ export function MapDrafter({ onExit }: { onExit(): void }) {
     const w = Number(newForm.w), h = Number(newForm.h);
     if (!/^[a-z0-9_-]+$/.test(id)) { setStatus('ID nur aus a–z, 0–9, _ und -.'); return; }
     if (!(w >= 100 && h >= 100 && w <= 40000 && h <= 40000)) { setStatus('Größe zwischen 100 und 40 000 km.'); return; }
+    if (id === 'custom') { setStatus('Die ID custom ist reserviert (Kartenliste).'); return; }
     if (drafts.some((x) => x.id === id)) { setStatus(`Es gibt schon einen Entwurf ${id} – öffnen oder andere ID wählen.`); return; }
     geomCache.current.clear();
     setImage(null);
+    savedAs.current = null;
+    setSaveConflict(null);
     setDraft({ ...newDraft(id, newForm.name.trim() || id, w, h), colors: { ...(vorlageRef.current?.colors ?? DEFAULT_COLORS) } });
     setHistory([]);
     setFuture([]);
@@ -977,12 +984,19 @@ export function MapDrafter({ onExit }: { onExit(): void }) {
     setStatus('Neuer Entwurf. Vorlage laden oder loszeichnen.');
   };
 
-  const save = async (): Promise<boolean> => {
+  const save = async (force = false): Promise<boolean> => {
     const d = draftRef.current;
     if (!d) return false;
+    setSaveConflict(null);
     const body: SavedDraft = { id: d.id, name: d.name, draft: d, image: image?.src ?? null, imageOpacity: imgOpacity, imageVisible: imgVisible };
-    const r = await fetch(`/__drafts/${d.id}`, { method: 'POST', body: JSON.stringify(body) });
+    // from: geladene ID – der Server überschreibt eine vorhandene Datei nur bei gleicher ID oder force
+    const q = new URLSearchParams();
+    if (savedAs.current) q.set('from', savedAs.current);
+    if (force) q.set('force', '1');
+    const r = await fetch(`/__drafts/${d.id}?${q}`, { method: 'POST', body: JSON.stringify(body) });
+    if (r.status === 409) { setSaveConflict((await r.json()).error); setStatus('Nicht gespeichert – Rückfrage beachten.'); return false; }
     if (!r.ok) { setStatus(`Speichern fehlgeschlagen: ${(await r.json()).error}`); return false; }
+    savedAs.current = d.id;
     setDirty(false);
     setStatus(`Entwurf gespeichert: data/drafts/${d.id}.json`);
     return true;
@@ -1016,7 +1030,7 @@ export function MapDrafter({ onExit }: { onExit(): void }) {
     setOverwrite(null);
     const r = runCheck();
     if (!r?.map) { setStatus('Export nicht möglich – siehe Prüfung.'); return; }
-    await save();
+    if (!(await save())) return;
     const res = await fetch(`/__drafts/${d.id}/export`, { method: 'POST', body: JSON.stringify({ map: r.map, name: d.name, description: d.description, force }) });
     const body = await res.json();
     if (res.status === 409) { setOverwrite(body.error); return; }
@@ -1148,6 +1162,11 @@ export function MapDrafter({ onExit }: { onExit(): void }) {
         <button className="btn small" disabled={!future.length} onClick={redo} title="Strg+Y">Wiederholen</button>
         <button className="btn small primary" onClick={() => void save()} title="Strg+S">Speichern</button>
         <button className="btn small primary" onClick={() => void doExport()}>Exportieren</button>
+        {saveConflict && <>
+          <span className="small warn">{saveConflict}</span>
+          <button className="btn small danger" onClick={() => void save(true)}>Trotzdem überschreiben</button>
+          <button className="btn small" onClick={() => setSaveConflict(null)}>Abbrechen</button>
+        </>}
         <span className="editor-status small">{busy || (dirty ? 'ungespeichert · ' : '') + status}</span>
       </div>
       <div className="editor-main">

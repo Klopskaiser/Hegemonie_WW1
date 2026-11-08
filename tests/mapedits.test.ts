@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { edgePoints, edgeThrough, nodeNeighbors } from '../src/game/graph.ts';
 import type { MapData } from '../src/game/mapdata.ts';
 import { checkNation } from '../src/game/mapcheck.ts';
-import { applyEdits } from '../src/game/mapedits.ts';
+import { applyEdits, harborSplit } from '../src/game/mapedits.ts';
 
 const base: MapData = JSON.parse(fs.readFileSync(path.join(import.meta.dirname, '..', 'data', 'maps', 'europe.base.json'), 'utf8'));
 const id = (name: string) => base.provinces.find((p) => p.name === name)!.id;
@@ -166,5 +166,13 @@ describe('Kreuzungs- und Pfadhygiene', () => {
     expect(r!.pts.slice(2, -2)).toEqual([A[0], A[1], B[0], B[1]]);
     // und die Verbindung existiert im Netzwerk
     expect(map.seas[ia - P].seas).toContain(ib - P);
+  });
+
+  it('Hafenweg: split endet an der Wassergrenze, nicht pauschal in der Mitte', () => {
+    // Provinz 0 = Quadrat 0..100, Seegebiet dahinter; Weg Stadt (50,50) → Knick an Land → See (250,50)
+    const m = { provinces: [{ polys: [[[0, 0, 100, 0, 100, 100, 0, 100]]] }] } as unknown as MapData;
+    const pts: [number, number][] = [[50, 50], [90, 50], [250, 50]];
+    expect(harborSplit(m, 0, 1, pts)).toBeCloseTo(0.25, 2);                    // 50 von 200 km an Land
+    expect(harborSplit(m, 1, 0, [...pts].reverse())).toBeCloseTo(0.75, 2);     // Seepunkt vorn: ab a gezählt
   });
 });

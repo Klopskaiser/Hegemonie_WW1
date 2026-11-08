@@ -128,16 +128,16 @@ export function ProvincePanel({ map, state, id, armies: visibleArmies, act, onSe
         <>
           <h4>Gebäude</h4>
           <div className="build-list">
-            {BUILDING_ORDER.filter((b) => siteAllows(b, mp.coastal)).map((b) => {
+            {/* Fabrik und Manufaktur schließen sich aus: ist eine gebaut oder geplant, wird die andere ausgeblendet */}
+            {BUILDING_ORDER.filter((b) => siteAllows(b, mp.coastal) && !(BUILDINGS[b].excludes ?? []).some((x) => planned[x] > 0)).map((b) => {
               const def = BUILDINGS[b];
               const level = ps.buildings[b];
               const c = ps.construction?.building === b ? ps.construction : null;
               const chk = checkBuild(state, map, state.playerNation, id, b);
               const plannedLevel = planned[b];
               const waiting = ps.buildQueue.filter((x) => x === b).length;
-              const excluded = (def.excludes ?? []).some((x) => planned[x] > 0);
               return (
-                <div key={b} className={'build-item' + (excluded ? ' excluded' : '')}>
+                <div key={b} className="build-item">
                   <div className="build-top">
                     <Picture src={buildingImage(b)} label={def.name} size={110} className="build-pic" />
                     <div className="build-main">
@@ -201,7 +201,7 @@ export function ProvincePanel({ map, state, id, armies: visibleArmies, act, onSe
                   })()}
                   </div>
                   </div>
-                  {plannedLevel < def.maxLevel && !excluded && (
+                  {plannedLevel < def.maxLevel && (
                     <div className="build-foot" title="Kosten · Bauzeit im aktuellen Tempo">
                       <CostList cost={chk.cost} stock={stock} />
                       <span className="small muted">{fmtDuration((chk.hours * 3600_000) / state.speed)}</span>

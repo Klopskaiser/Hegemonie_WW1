@@ -96,6 +96,16 @@ describe('Kartenentwurf', () => {
     expect(d.links).toHaveLength(0);
   });
 
+  it('neuer Knickpunkt landet im nächstgelegenen Teilstück, nicht am Ende', () => {
+    const d = twoSquares();
+    const [w, o] = d.provinces;
+    toggleLink(d, provRef(w.id), provRef(o.id));                 // Stadt (100,100) → Stadt (200,100)
+    insertBend(d, provRef(w.id), provRef(o.id), [150, 20]);
+    insertBend(d, provRef(w.id), provRef(o.id), [120, 60]);      // auf dem Stück Stadt West → Knick
+    insertBend(d, provRef(w.id), provRef(o.id), [180, 70]);      // auf dem Stück Knick → Stadt Ost
+    expect(d.links[0][2]).toEqual([[120, 60], [150, 20], [180, 70]]);
+  });
+
   it('Knicks an Verbindungen über See werden gemeldet, Seewege bleiben gerade', () => {
     const d = twoSquares();
     d.seas.push({ id: d.nextId++, name: 'S1', at: [300, 100] }, { id: d.nextId++, name: 'S2', at: [350, 180] });

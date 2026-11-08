@@ -272,11 +272,11 @@ export function warsOf(state: GameState, nation: string): number {
   return warCount(state, nation);
 }
 
-/** Struktur-Stempel: Bahn/Hafen-Stufen, Besitzer, Hauptstädte und Beziehungen — alles, was Marschzeiten ändert */
+/** Struktur-Stempel: Bahn/Hafen-Stufen und -Punkte, Besitzer, Hauptstädte, Ölmangel und Beziehungen — alles, was Marschzeiten ändert */
 function marchStamp(state: GameState, map: MapData): string {
   let h = '';
-  for (const ps of state.provinces) h += ps.owner + activeLevel(ps, 'railroad') + activeLevel(ps, 'harbor') + ',';
-  for (const id of Object.keys(state.nations)) h += capitalOf(state, map, id) + ',';
+  for (const ps of state.provinces) h += ps.owner + activeLevel(ps, 'railroad') + activeLevel(ps, 'harbor') + ':' + (ps.harborNode ?? '') + ',';
+  for (const id of Object.keys(state.nations)) h += capitalOf(state, map, id) + (state.nations[id].resShort?.oil ? '!' : '') + ',';
   return h + JSON.stringify(state.relations);
 }
 

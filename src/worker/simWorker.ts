@@ -25,6 +25,13 @@ let timer: ReturnType<typeof setInterval> | null = null;
 let lastTick = 0;
 let lastSnapshot = 0;
 let lastSave = 0;
+/** laufendes Speichern und ggf. ein danach angehängtes (mit dem dann aktuellen Stand) */
+let saving: Promise<void> | null = null;
+let saveQueued: Promise<void> | null = null;
+/** während der Nachsimulation nicht speichern, sonst ginge die noch ausstehende Zeit verloren */
+let catchingUp = false;
+/** gibt die Web Lock des offenen Spiels frei */
+let releaseLock: (() => void) | null = null;
 const maps = new Map<string, MapData>();
 
 const post = (m: FromWorker) => self.postMessage(m);
@@ -152,11 +159,50 @@ async function loadMap(id: string): Promise<MapData> {
   return m;
 }
 
-async function save(): Promise<void> {
-  if (!sim) return;
-  sim.state.lastRealTime = Date.now();
-  await saveGame(sim.state, metaOf(sim.state, sim.map));
+/** Speichert den Stand. Läuft schon ein Speichern, wird genau eines danach angehängt; Fehler gehen an die UI. */
+function save(): Promise<void> {
+  if (!sim || catchingUp) return Promise.resolve();
+  if (saving) {
+    saveQueued ??= saving.then(() => {
+      saveQueued = null;
+      return save();
+    });
+    return saveQueued;
+  }
+  const s = sim;
+  // nächster regulärer Versuch erst nach SAVE_MS, auch wenn dieser fehlschlägt
   lastSave = Date.now();
+  s.state.lastRealTime = lastSave;
+  saving = saveGame(s.state, metaOf(s.state, s.map))
+    // nicht über 'error' melden (das blendet das ganze Spiel aus), sondern als Hinweis im Ereignisprotokoll
+    .catch((err) => {
+      const text = 'Speichern fehlgeschlagen: ' + (err instanceof Error ? err.message : String(err));
+      console.error(text);
+      if (sim === s) s.log(text, s.state.playerNation);
+    })
+    .finally(() => { saving = null; });
+  return saving;
+}
+
+/**
+ * Web Lock je Spiel, damit es nicht in zwei Tabs gleichzeitig läuft und sich die Stände überschreiben.
+ * false = schon anderswo offen. Ohne Web Locks (Tests/Node) geht es ohne Sperre weiter.
+ */
+function acquireLock(id: string): Promise<boolean> {
+  const locks = typeof navigator !== 'undefined' ? navigator.locks : undefined;
+  if (!locks) return Promise.resolve(true);
+  return new Promise<boolean>((resolve) => {
+    locks.request('hegemonie-game-' + id, { ifAvailable: true }, (lock) => {
+      resolve(!!lock);
+      // Sperre halten, bis das Spiel geschlossen wird
+      return lock ? new Promise<void>((release) => { releaseLock = release; }) : undefined;
+    }).catch(() => resolve(true));
+  });
+}
+
+function releaseGameLock(): void {
+  releaseLock?.();
+  releaseLock = null;
 }
 
 function snapshot(): void {
@@ -185,6 +231,7 @@ async function catchUp(): Promise<void> {
       sim!.advanceTo(Math.min(target, s.time + DAY));
       post({ type: 'catchup', done: s.time - startTime, total: target - startTime });
       await new Promise((r) => setTimeout(r, 0));
+      if (!sim) return; // während der Nachsimulation geschlossen
     }
     s.lastRealTime = now;
   }
@@ -200,11 +247,22 @@ function startLoop(): void {
     lastTick = now;
     s.lastRealTime = now;
     if (now - lastSnapshot >= SNAPSHOT_MS) snapshot();
-    if (now - lastSave >= SAVE_MS) void save();
+    if (!saving && now - lastSave >= SAVE_MS) void save();
   }, TICK_MS);
 }
 
 async function open(stateId: string | null, created?: Parameters<typeof createGame>[1] & { mapId: string }): Promise<void> {
+  releaseGameLock(); // Wechsel: Sperre des vorigen Spiels freigeben
+  if (!(await acquireLock(created ? created.id : stateId!))) throw new Error('Dieses Spiel ist bereits in einem anderen Tab geöffnet.');
+  try {
+    await openLocked(stateId, created);
+  } catch (err) {
+    releaseGameLock();
+    throw err;
+  }
+}
+
+async function openLocked(stateId: string | null, created?: Parameters<typeof createGame>[1] & { mapId: string }): Promise<void> {
   let state;
   if (created) {
     const map = await loadMap(created.mapId);
@@ -219,7 +277,13 @@ async function open(stateId: string | null, created?: Parameters<typeof createGa
     throw new Error('Dieser Spielstand gehört zu einer älteren Kartenversion und kann nicht mehr geladen werden. Bitte im Hauptmenü löschen.');
   }
   sim = new Simulation(state, map);
-  await catchUp();
+  catchingUp = true;
+  try {
+    await catchUp();
+  } finally {
+    catchingUp = false;
+  }
+  if (!sim) return; // während der Nachsimulation geschlossen
   await save();
   snapshot();
   startLoop();
@@ -312,6 +376,7 @@ self.onmessage = async (e: MessageEvent<ToWorker>) => {
         await save();
         disconnect();
         sim = null;
+        releaseGameLock();
         post({ type: 'closed' });
         break;
     }

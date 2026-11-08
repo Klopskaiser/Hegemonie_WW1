@@ -144,8 +144,7 @@ export const BUILDINGS: Record<Building, BuildingDef> = {
     morale: (l) => 0.025 * l,
     excludes: ['manufactory'],
     points: (l) => [`Rohstoffproduktion +${Math.round(FACTORY_BONUS[l] * 100)} %`, `Moral +${(2.5 * l).toLocaleString('de-DE')} %`,
-      `Fertigt ${['', 'Artillerie und Panzerwagen', 'Panzer', 'Eisenbahngeschütze und Schlachtschiffe', 'alle Einheiten zu kürzesten Bauzeiten'][l]}`,
-      ...(l < 4 ? ['Jede weitere Stufe verkürzt die Bauzeiten in der Provinz'] : []),
+      'Produziert mechanisierte Einheiten', 'Jede Stufe verkürzt die Produktionszeit',
       'Benötigt eine Werkstatt', 'Nicht zusammen mit einer Manufaktur'],
   },
   manufactory: {
@@ -155,7 +154,7 @@ export const BUILDINGS: Record<Building, BuildingDef> = {
     prodBonus: (l) => 0.11 * l,
     morale: (l) => 0.025 * l,
     excludes: ['factory'],
-    points: (l) => [`Rohstoffproduktion +${11 * l} %`, `Moral +${(2.5 * l).toLocaleString('de-DE')} %`, 'Erst ab Tag 4 baubar', 'Fertigt keine Einheiten', 'Nicht zusammen mit einer Fabrik'],
+    points: (l) => [`Rohstoffproduktion +${11 * l} %`, `Moral +${(2.5 * l).toLocaleString('de-DE')} %`, 'Nicht zusammen mit einer Fabrik'],
   },
   barracks: {
     name: 'Kaserne', maxLevel: 2,
@@ -166,7 +165,7 @@ export const BUILDINGS: Record<Building, BuildingDef> = {
     requires: { recruitment: 1 },
     upkeep: { grain: 1000, money: 1000 },
     switchable: true,
-    points: (l) => [`Stellt Infanterie auf: bei 100 % Moral alle ${RECRUIT_HOURS[l]} h`, 'Wehramt nötig – ohne halb so schnell', 'Doppelprovinz doppelt so schnell', 'Unterhalt: 1000 Getreide und 1000 Geld je Stufe und Tag'],
+    points: (l) => [`Stellt Infanterie auf: bei 100 % Moral alle ${RECRUIT_HOURS[l]} h`, 'Voraussetzung: Wehramt', 'Doppelprovinz doppelt so schnell', 'Unterhalt: 1000 Getreide und 1000 Geld je Stufe und Tag'],
   },
   recruitment: {
     name: 'Wehramt', maxLevel: 1, switchable: true, lives: 1,
@@ -175,7 +174,7 @@ export const BUILDINGS: Record<Building, BuildingDef> = {
     prodBonus: () => 0,
     morale: () => 0,
     upkeep: { money: 500 },
-    points: () => [`Stellt kostenlos Infanterie auf: bei 100 % Moral alle ${RECRUIT_HOURS[0]} h`, 'Doppelprovinz doppelt so schnell', 'Ohne Wehramt und Kaserne keine Infanterie', 'Unterhalt: 500 Geld je Tag'],
+    points: () => ['Infanterierekrutierung', 'Benötigt für Kaserne', 'Unterhalt: 500 Geld je Tag'],
   },
   office: {
     name: 'Bauamt', maxLevel: 1, switchable: true, lives: 1,
