@@ -105,6 +105,17 @@ export function createGame(map: MapData, opt: NewGameOptions): GameState {
   };
   // Startaufstellung: in jeder Provinz eine Armee aus 10 Infanterie an der Stadt
   for (const mp of map.provinces) addArmy(mp.id, { infantry: START_INFANTRY });
+  if (scenario === 'test') {
+    // Testszenario: jede Nation startet mit einem schweren Landverband (Eisenbahngeschütz, Panzer,
+    // Artillerie) an der Hauptstadt; die Kriegsmarine liegt wie bei der Fertigung im Wasser vor dem Hafen
+    for (const n of map.nations) {
+      addArmy(n.capital, { railgun: 1, tank: 1, artillery: 1 });
+      const coast = map.provinces.find((p) => p.nation === n.id && p.coastal);
+      const zs = coast ? coast.seaLinks ?? coast.seas : [];
+      if (coast && zs.length)
+        state.armies.push({ id: state.nextArmyId++, owner: n.id, node: map.provinces.length + zs[0], units: { battleship: 1 }, morale: provinces[coast.id].morale });
+    }
+  }
   provinces.forEach((ps, i) => (nations[ps.owner].points += provincePoints(map, ps, i)));
   state.events.push({ time: 0, text: 'Der Große Krieg droht. Das Spiel beginnt.' });
   return state;

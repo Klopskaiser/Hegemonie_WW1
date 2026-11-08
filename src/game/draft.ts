@@ -517,6 +517,272 @@ function dedupeLinks(links: [NodeRef, NodeRef, Pt[]?][]): [NodeRef, NodeRef, Pt[
   return out;
 }
 
+// ---------------------------------------------------------------- Wasser einfügen (Meerenge)
+
+const shoelaceAbs = (r: Pt[]): number => {
+  let s = 0;
+  for (let i = 0; i < r.length; i++) { const [x1, y1] = r[i], [x2, y2] = r[(i + 1) % r.length]; s += x1 * y2 - x2 * y1; }
+  return Math.abs(s) / 2;
+};
+
+//** echte Kreuzung zweier Streckenabschnitte (ohne Berührung an Endpunkten) */
+function segsCross(p: Pt, q: Pt, s: Pt, t: Pt): boolean {
+  const cr = (a: Pt, b: Pt, c: Pt) => (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+  const d1 = cr(s, t, p), d2 = cr(s, t, q), d3 = cr(p, q, s), d4 = cr(p, q, t);
+  return ((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0));
+}
+
+/** selbstüberschneidender geschlossener Zug? polygon-clipping verschluckt das stillschweigend */
+function ringSelfIntersects(r: Pt[]): boolean {
+  const n = r.length;
+  for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) {
+    if (j === i + 1 || (i === 0 && j === n - 1)) continue; // aneinandergrenzende Schenkel
+    if (segsCross(r[i], r[(i + 1) % n], r[j], r[(j + 1) % n])) return true;
+  }
+  return false;
+}
+
+/** Geschlossener Zug: alles Land im Ring wird Wasser (Flächen-Differenz, Provinzen bleiben erhalten) */
+function floodArea(d: Draft, ring: Pt[]): ChannelResult | string {
+  let water: PcMulti;
+  if (ring.length < 3 || ringSelfIntersects(ring)) return 'Der Ring überschneidet sich selbst.';
+  try {
+    water = [[ring.concat([ring[0]])]];
+  } catch {
+    return 'Der Ring überschneidet sich selbst.';
+  }
+  // Eckpunkte wiederverwenden, damit geteilte Grenzen erhalten bleiben
+  const seen = new Map<string, number>();
+  for (const [k, p] of Object.entries(d.verts)) seen.set(`${Math.round(p[0] * 10)},${Math.round(p[1] * 10)}`, Number(k));
+  const vert = (q: readonly number[]): number => {
+    const k = `${Math.round(q[0] * 10)},${Math.round(q[1] * 10)}`;
+    let v = seen.get(k);
+    if (v === undefined) { v = addVertex(d, [q[0], q[1]]); seen.set(k, v); }
+    return v;
+  };
+  const inWater = (q: Pt): boolean => pointInRing(ring.concat([ring[0]]), q[0], q[1]);
+  let removed = 0, kept: string | undefined;
+  try {
+    for (const p of [...d.provinces]) {
+      const mp: PcMulti = p.polys.map((part) => part.map((r) => { const pts = ringPts(d, r); return [...pts, pts[0]]; }));
+      const diff = polygonClipping.difference(mp, water);
+      const aNew = diff.reduce((t, poly) => t + shoelaceAbs(poly[0]) - poly.slice(1).reduce((u, h) => u + shoelaceAbs(h), 0), 0);
+      if (Math.abs(aNew - provArea(d, p)) < 0.5) continue; // von dieser Provinz nimmt der Ring nichts
+      if (aNew < 1) {
+        if (p.city || d.nations.some((n) => n.capital === p.id)) { kept = p.name; continue; }
+        removeProvince(d, p.id);
+        removed++;
+        continue;
+      }
+      const parts: number[][][] = [];
+      for (const poly of diff) {
+        const rings = poly
+          .map((r) => { const ids = r.slice(0, -1).map(vert); return ids.filter((v, i, a) => v !== a[(i + 1) % a.length]); })
+          .filter((r) => r.length >= 3);
+        if (!rings.length) continue;
+        const outer = orientOuter(d, rings[0]);
+        const holes = rings.slice(1).map((h) => (signedArea(ringPts(d, h)) < 0 ? [...h].reverse() : h));
+        parts.push([outer, ...holes]);
+      }
+      if (!parts.length) continue;
+      p.polys = parts;
+      if (p.city && inWater(p.city)) { p.city = null; kept = p.name; } // Stadt läge im Wasser → neue automatische Lage
+    }
+  } catch {
+    return 'Der Ring überschneidet sich selbst.';
+  }
+  // Landwege quer durchs neue Wasser lösen (Enden liegen außerhalb)
+  const before = d.links.length;
+  d.links = d.links.filter((l) => {
+    if (parseRef(l[0]).kind !== 'p' || parseRef(l[1]).kind !== 'p') return true;
+    const lp = linkPts(d, l);
+    if (!lp || lp.length < 2) return true;
+    if (inWater(lp[0]) || inWater(lp[lp.length - 1])) return true;
+    return !lp.some((q) => inWater(q));
+  });
+  return { cuts: 0, removed, linksRemoved: before - d.links.length, kept };
+}
+
+const distToPolyline = (p: Pt, line: Pt[]): number => {
+  let best = Infinity;
+  for (let i = 0; i + 1 < line.length; i++) best = Math.min(best, distToSeg(p, line[i], line[i + 1]).d);
+  return best;
+};
+
+/** Parallelzug im Abstand off (senkrecht zur Zugrichtung; Vorzeichen = Seite) */
+function offsetPolyline(line: Pt[], off: number): Pt[] {
+  const segs: { a: Pt; b: Pt; n: Pt }[] = [];
+  for (let i = 0; i + 1 < line.length; i++) {
+    const a = line[i], b = line[i + 1];
+    const L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+    segs.push({ a, b, n: [(a[1] - b[1]) / L * off, (b[0] - a[0]) / L * off] });
+  }
+  const out: Pt[] = [];
+  for (let i = 0; i < segs.length; i++) {
+    const s = segs[i];
+    if (!i) out.push([s.a[0] + s.n[0], s.a[1] + s.n[1]]);
+    if (i + 1 < segs.length) {
+      const t = segs[i + 1];
+      const p1: Pt = [s.a[0] + s.n[0], s.a[1] + s.n[1]], p2: Pt = [s.b[0] + s.n[0], s.b[1] + s.n[1]];
+      const q1: Pt = [t.a[0] + t.n[0], t.a[1] + t.n[1]], q2: Pt = [t.b[0] + t.n[0], t.b[1] + t.n[1]];
+      const d1: Pt = [p2[0] - p1[0], p2[1] - p1[1]], d2: Pt = [q2[0] - q1[0], q2[1] - q1[1]];
+      const cr = d1[0] * d2[1] - d1[1] * d2[0];
+      if (Math.abs(cr) > 1e-9) {
+        const tt = ((q1[0] - p1[0]) * d2[1] - (q1[1] - p1[1]) * d2[0]) / cr;
+        out.push([p1[0] + d1[0] * tt, p1[1] + d1[1] * tt]);
+      } else out.push(p2);
+    } else out.push([s.b[0] + s.n[0], s.b[1] + s.n[1]]);
+  }
+  return out;
+}
+
+/** längster zusammenhängender Innenlauf des Zuges durch p, von Grenze zu Grenze; null, wenn er p nicht durchstößt.
+ * maxExt begrenzt die Verlängerung über die Enden des Zuges hinaus – ohne Grenze würde die Gerade
+ * weit entfernte Landzungen derselben Provinz anschneiden (Lauf durch riesige, konkave Provinzen). */
+function trimChannelCut(d: Draft, p: DraftProvince, line: Pt[], maxExt: number): { entry: Pt; exit: Pt; inner: Pt[] } | null {
+  // (ein Stück) über die Provinz hinaus verlängern, damit der Schnitt ihre Grenzen wirklich erreicht
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const part of p.polys) for (const r of part) for (const v of r) {
+    const q = d.verts[v];
+    x0 = Math.min(x0, q[0]); x1 = Math.max(x1, q[0]); y0 = Math.min(y0, q[1]); y1 = Math.max(y1, q[1]);
+  }
+  const ext = Math.min(Math.hypot(x1 - x0, y1 - y0) + 10, maxExt);
+  const dirA: Pt = [line[1][0] - line[0][0], line[1][1] - line[0][1]];
+  const dirB: Pt = [line[line.length - 1][0] - line[line.length - 2][0], line[line.length - 1][1] - line[line.length - 2][1]];
+  const nA = Math.hypot(dirA[0], dirA[1]) || 1, nB = Math.hypot(dirB[0], dirB[1]) || 1;
+  const full: Pt[] = [[line[0][0] - (dirA[0] / nA) * ext, line[0][1] - (dirA[1] / nA) * ext], ...line,
+    [line[line.length - 1][0] + (dirB[0] / nB) * ext, line[line.length - 1][1] + (dirB[1] / nB) * ext]];
+  // dicht abtasten; nur echte Innenpunkte zählen (auch ±0,25 km senkrecht daneben), damit kein Schnitt
+  // entlang einer frischen Trennkante wiedererkannt wird
+  const step = 0.5;
+  const nrm: Pt = [-dirB[1] / nB, dirB[0] / nB];
+  const pts: Pt[] = [];
+  for (let i = 0; i + 1 < full.length; i++) {
+    const a = full[i], b = full[i + 1];
+    const n = Math.max(1, Math.ceil(Math.hypot(b[0] - a[0], b[1] - a[1]) / step));
+    for (let k = 0; k < n; k++) pts.push([a[0] + ((b[0] - a[0]) * k) / n, a[1] + ((b[1] - a[1]) * k) / n]);
+  }
+  pts.push(full[full.length - 1]);
+  const probe = (q: Pt): boolean => provinceContains(d, p, q[0], q[1])
+    && provinceContains(d, p, q[0] + nrm[0] * 0.25, q[1] + nrm[1] * 0.25)
+    && provinceContains(d, p, q[0] - nrm[0] * 0.25, q[1] - nrm[1] * 0.25);
+  const inside = pts.map(probe);
+  let bi = -1, bl = 0, cur = -1;
+  for (let i = 0; i <= pts.length; i++) {
+    if (i < pts.length && inside[i]) { if (cur < 0) cur = i; }
+    else if (cur >= 0) { if (i - cur > bl) { bl = i - cur; bi = cur; } cur = -1; }
+  }
+  if (bi < 0 || bl < 2 || bi === 0 || bi + bl >= pts.length) return null; // durchstößt die Provinz nicht
+  const bisect = (inn: Pt, outp: Pt): Pt => {
+    let lo = inn, hi = outp;
+    for (let k = 0; k < 24; k++) {
+      const m: Pt = [(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2];
+      if (provinceContains(d, p, m[0], m[1])) lo = m; else hi = m;
+    }
+    return [(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2];
+  };
+  const entry = bisect(pts[bi], pts[bi - 1]);
+  const exit = bisect(pts[bi + bl - 1], pts[bi + bl]);
+  const inner: Pt[] = [];
+  for (let i = bi + 1; i < bi + bl - 1; i += 4) inner.push(pts[i]); // alle ~2 km
+  return { entry, exit, inner };
+}
+
+/** Eckpunkt auf dem Rand von p bei `at`: vorhandener Ringpunkt, oder neu auf der nächstliegenden Ringkante eingefügt */
+function boundaryVertexAt(d: Draft, p: DraftProvince, at: Pt): number {
+  const onRing = new Set<number>();
+  for (const part of p.polys) for (const r of part) for (const v of r) onRing.add(v);
+  const near = nearestVertex(d, at[0], at[1], 0.15);
+  if (near !== null && onRing.has(near)) return near;
+  let bd = 0.75, ea = -1, eb = -1;
+  for (const part of p.polys) for (const r of part)
+    for (let i = 0; i < r.length; i++) {
+      const o = distToSeg(at, d.verts[r[i]], d.verts[r[(i + 1) % r.length]]);
+      if (o.d < bd) { bd = o.d; ea = r[i]; eb = r[(i + 1) % r.length]; }
+    }
+  return ea < 0 ? -1 : insertOnEdge(d, ea, eb, at);
+}
+
+export interface ChannelResult {
+  /** Schnitte durch Provinzen */
+  cuts: number;
+  /** im Band gelegene Landstücke, die zu Wasser wurden */
+  removed: number;
+  /** Landwege, die durch das neue Wasser liefen und gelöst wurden */
+  linksRemoved: number;
+  /** Name eines Bandstücks mit Stadt/Hauptstadt, das wir nicht gelöscht haben */
+  kept?: string;
+}
+
+/**
+ * Wasser einfügen: entlang des gezogenen Zuges entsteht ein Kanal der Breite widthKm (km).
+ * Beide Ufer werden geschnitten, Landstücke im Band verschwinden (werden Wasser),
+ * Landverbindungen quer durch das Band werden gelöst. Meerengen wie Konstantinopel trennen sich so.
+ * Geschlossener Zug (erster Punkt zuletzt geklickt, ab vier Punkten): der Ring wird geflutet –
+ * Provinzen darin schrumpfen präzise (keine neuen Provinzen, keine Auto-Städte), ganz innere verschwinden.
+ */
+export function cutWaterChannel(d: Draft, stroke: Pt[], widthKm: number): ChannelResult | string {
+  if (stroke.length < 2) return 'Zug zu kurz';
+  const f = stroke[0], l = stroke[stroke.length - 1];
+  if (stroke.length >= 4 && Math.hypot(l[0] - f[0], l[1] - f[1]) <= 2) return floodArea(d, stroke.slice(0, -1));
+  const half = Math.max(1, widthKm / 2);
+  const maxExt = Math.max(30, widthKm + 20); // über die Zugenden hinaus maximal so weit schneiden
+  let cuts = 0;
+  for (const side of [half, -half]) {
+    const line = offsetPolyline(stroke, side);
+    const tried = new Set<string>();
+    const cutCount = new Map<number, number>();
+    for (let guard = 0; guard < 8; guard++) {
+      let hit: { pid: number; path: number[] } | null = null;
+      for (const p of d.provinces) {
+        if ((cutCount.get(p.id) ?? 0) >= 2) continue; // dieselbe Provinz je Seite höchstens zweimal
+        const t = trimChannelCut(d, p, line, maxExt);
+        if (!t) continue;
+        const key = `${p.id}|${Math.round(t.entry[0])},${Math.round(t.entry[1])}`;
+        if (tried.has(key)) continue;
+        tried.add(key);
+        const a = boundaryVertexAt(d, p, t.entry);
+        const b = boundaryVertexAt(d, p, t.exit);
+        if (a < 0 || b < 0 || a === b) continue;
+        hit = { pid: p.id, path: [a, ...t.inner.map((q) => addVertex(d, q)), b] };
+        break;
+      }
+      if (!hit) break;
+      const pBefore = d.provinces.find((p) => p.id === hit!.pid)!;
+      const areaBefore = provArea(d, pBefore);
+      const r = splitProvince(d, hit.pid, hit.path);
+      if (typeof r === 'string') break;
+      // der größere Teil behält den Namen (sonst trägt am Ende ein schmaler Stummel den Namen der Großprovinz)
+      if (provArea(d, pBefore) < areaBefore / 2 && provArea(d, r) > provArea(d, pBefore)) {
+        const t = pBefore.name; pBefore.name = r.name; r.name = t;
+      }
+      cutCount.set(hit.pid, (cutCount.get(hit.pid) ?? 0) + 1);
+      cuts++;
+    }
+  }
+  // Bandstücke entfernen: Provinzen, deren sämtliche Eckpunkte im Kanalband liegen
+  let removed = 0, kept: string | undefined;
+  for (const p of [...d.provinces]) {
+    let verts: number[] = [];
+    for (const part of p.polys) verts = verts.concat(...part);
+    if (!verts.length) continue;
+    if (!verts.every((v) => distToPolyline(d.verts[v], stroke) <= half + 1)) continue;
+    if (p.city || d.nations.some((n) => n.capital === p.id)) { kept = p.name; continue; }
+    removeProvince(d, p.id);
+    removed++;
+  }
+  // Landwege quer durch das neue Wasser lösen (Enden liegen außerhalb des Bandes)
+  const before = d.links.length;
+  d.links = d.links.filter((l) => {
+    if (parseRef(l[0]).kind !== 'p' || parseRef(l[1]).kind !== 'p') return true;
+    const lp = linkPts(d, l);
+    if (!lp || lp.length < 2) return true;
+    if (distToPolyline(lp[0], stroke) <= half || distToPolyline(lp[lp.length - 1], stroke) <= half) return true;
+    return !lp.some((q) => distToPolyline(q, stroke) <= half * 0.8);
+  });
+  return { cuts, removed, linksRemoved: before - d.links.length, kept };
+}
+
 /** Verbindung mit ihren Knickpunkten als durchgehender Zug von Endpunkt zu Endpunkt */
 export function linkPts(d: Draft, l: [NodeRef, NodeRef, Pt[]?]): Pt[] | null {
   const a = nodeAt(d, l[0]), b = nodeAt(d, l[1]);

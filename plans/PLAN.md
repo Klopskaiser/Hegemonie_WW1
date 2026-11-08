@@ -117,7 +117,13 @@
   zum Anlanden).
 - Ausgewählte Armeen zeigen Reichweitenkreise ihrer Fernkampfeinheiten.
 - Landung: Flotte mit Truppen und Ziel an Land fährt bis vor die Küste, die Truppen steigen aus
-  und marschieren weiter, die Schiffe bleiben ohne weiteren Befehl liegen.
+  und marschieren weiter, die Schiffe bleiben ohne weiteren Befehl liegen. Stehen Feinde am Ziel,
+  kommt es zum Kampf – die Landung startet trotzdem automatisch (Order und fortgesetzter Marsch):
+  Die Truppen kämpfen sich zum Strand und haben bis zur Uferlinie halbe Stärke (onShips). Wer auf dem
+  Wasseranteil eines Küstenabschnitts neu geplant wird (Verfolgung, Gewaltmarsch, Wiederaufnahme),
+  landet von dort über die Uferlinie weiter (Startanteil) – der Knoten-Snap auf den nächstliegenden
+  Endpunkt darf nie das Landende eines Küstenabschnitts treffen, solange die Armee physikalisch im
+  Wasser steht (sonst Gratis-Teleport ans Land ohne Rest-Wasserfahrt und Ausschiffungszeit).
 - Fernkampf: alle 10 Spielminuten erfassen Einheiten mit Reichweite Feinde in Reichweite und bleiben
   stehen (stehende Armeen und reine Fernkampfverbände; gemischte Armeen auf dem Marsch ziehen weiter).
   Schaden stündlich. Beschossene dürfen weiterziehen; im Nahkampf Gebundene erst nach Kampfende.
@@ -177,21 +183,21 @@
 - Bauschleife je Provinz: Ist ein Bau im Gange, kommen weitere Gebäude in eine Warteschlange
   (höchstens 6), bezahlt wird beim Baubeginn; Stufe, Voraussetzungen und Ausschlüsse zählen
   geplante Gebäude mit. Nicht mehr mögliche Einträge entfallen mit Meldung. Eroberung leert sie.
-- Bauamt (Vorgabe): 2 Tage, 30000 Geld + 500 Holz, Unterhalt 2000 Geld/Tag, Gebäudebauzeiten
+- Bauamt (Vorgabe): 32 h, 30000 Geld + 500 Holz, Unterhalt 2000 Geld/Tag, Gebäudebauzeiten
   in seiner Provinz −25 % (bestätigt: nur Gebäude, nur eigene Provinz; Einheiten unverändert).
   Abschaltbar wie Kaserne, Wehramt und Eisenbahn (aus: kein Unterhalt, keine Wirkung).
 - Handelsposten (Vorgabe): 1 Stufe, nur in Provinzen ohne Küste (kein Hafen möglich), 12000 Geld, 500 Eisen,
-  2500 Holz, Bauzeit 48 h, Rohstoffproduktion +7 % (nicht Geld), Moral +3 %, Unterhalt 20 Fisch/Tag.
-- Werkstatt (Vorgabe): 1 Stufe, 1 Tag, 5000 Geld, 1500 Eisen, 500 Holz, Moral +1 %, mechanische
+  2500 Holz, Bauzeit 36 h, Rohstoffproduktion +7 % (nicht Geld), Moral +3 %, Unterhalt 20 Fisch/Tag.
+- Werkstatt (Vorgabe): 1 Stufe, 12 h, 5000 Geld, 1000 Eisen, 500 Holz, Moral +1 %, mechanische
   Einheiten (alles außer Infanterie) in der Provinz +10 % Bautempo (Fertigungszeit ÷ 1,1),
   Voraussetzung für die Fabrik (geplante Werkstatt zählt mit). Alte Spielstände: Werkstatt 0,
   bestehende Fabriken bleiben.
 - Manufaktur (Vorgabe): 4 Stufen, Rohstoffproduktion +11 % je Stufe (nicht Geld), Moral +2,5 % je Stufe wie die Fabrik, schließt sich
   mit der Fabrik aus, keine Einheiten.
 - Gebäudekosten (Vorgabe, je Stufe gleich; nur die Festung dauert je Stufe länger): Fabrik 10000 Geld,
-  2500 Eisen/Holz/Öl, 48 h; Manufaktur 10000 Geld, 2000 Eisen/Holz, 3000 Gas, 50 h; Wehramt 2000 Geld, 125 Holz, 125 Eisen, 2 h;
+  2500 Eisen/Holz/Öl, 40 h; Manufaktur 15000 Geld, 2000 Eisen/Holz, 3000 Gas, 40 h; Wehramt 1000 Geld, 2 h;
   Festung 4000 Geld, 2000 Eisen je Stufe, 8·L h; Eisenbahn 10000 Geld, 5000 Holz, 3000 Eisen,
-  1000 Kohle, 72 h; Hafen 10000 Geld, 10000 Holz, 72 h; Kaserne beide Stufen 4000 Geld,
+  1000 Kohle, 60 h; Hafen 10000 Geld, 10000 Holz, 60 h; Kaserne beide Stufen 4000 Geld,
   1500 Getreide, 1500 Holz, 24 h.
 - Bedienung: Linke Maustaste ziehen = Lasso (eigene Armeen, deren Nadel oder Kopf im Lasso liegt;
   Umschalt fügt hinzu), Rechtsklick = Marschbefehl für alle ausgewählten Armeen (auf eine fremde
@@ -307,8 +313,9 @@
   (mindestens halb so weit vom Rand wie der innerste Punkt, nicht direkt am Rohstoffsymbol). Echte Städte
   und Vorgaben (`cityAt`) bleiben. Ergebnis: 33 verlegt, 8 bleiben; Mittelpunkte unter 10 km am Meer
   62 → 29 (davon 19 echte Städte). Je Ortspaar gibt es nur noch eine Abkürzung (die kürzere).
-- Provinzmoral (Vorgabe): Ziel = 85 % − Entfernung zur Hauptstadt (1 % je 100 km ab 300 km, höchstens
-  30 %; ohne Hauptstadt die vollen 30 %; Werte wie in balance.ts MORALE) + Gebäude − 5 % je Krieg (höchstens 25 %) − Mangel (Nahrung 15 %,
+- Provinzmoral (Vorgabe): Ziel = 85 % − Entfernung zur Hauptstadt (−10 % je Marschtag, höchstens
+  30 %; ohne Hauptstadt die vollen 30 %; Marschtag = Infanteriemarsch über das Wegenetz, Bahn und Hafen
+  verkürzen, Ausschiffung und Seezeit zählen mit; Werte wie in balance.ts MORALE) + Gebäude − 5 % je Krieg (höchstens 25 %) − Mangel (Nahrung 15 %,
   Baustoffe 5 %, Energie 10 %) − Kämpfe in der Provinz (Vorgabe: fest −15 % am Ziel, solange seit dem letzten Tageswechsel gekämpft wurde,
   unabhängig von der Dauer; zusätzlich je Kampfrunde in der Provinz – Nahkampf oder Beschuss, zusammen höchstens einmal je Stunde – sofort −0,75 %) − 2 % je angrenzender eigener Provinz
   unter 33 % Moral. Kein Hauptstadtbonus, kein Abzug für besetztes Gebiet. Annäherung je Tag 35 % der
@@ -319,7 +326,7 @@
   verlorene Hauptstadt in ihre wertvollste sichere Provinz. Der Stern auf der Karte zeigt die aktive Hauptstadt.
 - Truppenmoral (nur Infanterie): 10–100 %. Ziel = Provinzmoral (stehend in eigener Provinz) bzw. 50 %
   (sonst), bei Getreidemangel −20 %. Zum Tageswechsel geht sie auf das Ziel zu, nie darüber hinaus:
-  höchstens +10 %/−8 %, bei Getreidemangel +5 %/−13 %. Kampfeffekte wirken je Kampfstunde und unabhängig davon.
+  höchstens +10 %/−10 %, bei Getreidemangel +5 %/−15 %. Kampfeffekte wirken je Kampfstunde und unabhängig davon.
 - Kampfmoral je Stunde (Vorgabe, Nah- und Fernkampf zusammen): Nahkampf −2 %, gegen zwei und mehr Armeen −3 %,
   beschossen −2 % (egal wie viele Schützen), Nahkampf und Beschuss zusammen höchstens −4 % – egal wie viele
   Armeen angreifen. Abschüsse +1 % je Einheit, höchstens +4 %, gegen den Verlust gerechnet (im Nahkampf netto
@@ -391,8 +398,8 @@
   Eisenbahngeschütz 3, Schlachtschiff 6 (auch Fernkampfschaden je Einheit). Artillerie und
   Eisenbahngeschütze kämpfen im Nahkampf mit halbem Wert, Schlachtschiffe voll.
 - Nahkampf (Vorgabe): je Armee kämpfen die stärksten Einheiten vorne (Panzer, Panzerwagen, dann Infanterie,
-  Artillerie und Eisenbahngeschütze mit halbem Wert zuletzt). Platz 1–20 zählt voll, Platz 21–50 linear weniger
-  ((51 − Platz)/31), ab Platz 51 nichts – höchstens 35 „volle“ Einheiten. Fernkampf hat keine Grenze.
+  Artillerie und Eisenbahngeschütze mit halbem Wert zuletzt). Platz 1–20 zählt voll, Platz 21–60 linear weniger
+  ((61 − Platz)/41), ab Platz 61 nichts – höchstens 40 „volle“ Einheiten. Fernkampf hat keine Grenze.
   Treffer (Nah- und Fernkampf) werden je Einheit ausgewürfelt (jede Einheit gleich wahrscheinlich), ein
   Treffer trifft die Einheit, bis sie fällt; Infanterie schützt so teure Technik. Kämpfe auf Wegen
   beschädigen Gebäude der Provinz, in deren Gebiet gekämpft wird.
@@ -417,8 +424,12 @@
   Werkstatt 1; sonst 2). Ein Treffer im Kampf (5 % je Gebäude und Stunde, auch bei Kämpfen auf Wegen) kostet
   ein Leben der obersten Stufe; ohne Leben fällt die
   Stufe weg, die darunter ist heil. Beschädigte Gebäude wirken nicht (Unterhalt läuft weiter), bis sie
-  repariert sind: sofort, Kosten anteilig zu den fehlenden Leben an den Kosten der obersten Stufe (Eisenbahn
-  mit 1/3 Leben: 2/3 des Preises), nicht solange Feinde in der Stadt stehen. Die KI repariert selbst.
+  repariert sind: Reparatur dauert pauschal 2 Stunden (`REPAIR_HOURS`), Kosten anteilig zu den fehlenden
+  Leben an den Kosten der obersten Stufe (Eisenbahn
+  mit 1/3 Leben: 2/3 des Preises), nicht solange Feinde in der Stadt stehen. Eroberung bricht laufende
+  Reparaturen ab. Die KI repariert selbst. In der Provinzübersicht reiht der Knopf „Repaturen einreihen“
+  alle beschädigten Gebäude im Reich ein: je Provinz eine Reparatur auf einmal, der Reihe nach, solange
+  die Ressourcen reichen (Aktion `repairAll`).
 - Grundmoral der Provinzen 80 %. Börse: Höchstpreis 1000 je Einheit.
 - Kampfanzeige (Karte, Armeefenster) nach dem tatsächlichen Ort, nicht dem nächsten Knoten.
 - KI-Angriffe: Feindliche Provinzen greift die KI erst ab einer Stärke von etwa 10 Infanteristen an
@@ -432,10 +443,16 @@
   Friedensangeboten Tribut bei, wenn sie unterlegen ist, und bietet in festgefahrenen Kriegen (ab 8 Tagen) öfter
   Frieden an. Wer den Krieg erklärt (auch beim Einmarsch), bekommt 2 Tage lang −5 % Moralziel (höchstens 5 %, auch bei
   mehreren Erklärungen; jede neue Erklärung verlängert die 2 Tage).
+- Rohstoff-Engpässe (Vorgabe): Getreidemangel senkt nur die Moral der Infanterie (Ziel und Tempo der
+  Moraländerung), nicht die Provinzmoral; Nahrungsmangel wirkt nicht mehr auf Provinzmoral.
+  Ölmangel halbiert das Bewegungstempo aller Einheiten (`oilShortFactor`, Land, See und Transport) und
+  Maschinen reparieren sich zum Tageswechsel nicht. Beide Engpässe werden je Rohstoff gemessen
+  (`resShort`: Vorrat leer, während Nachfrage besteht) und am Tageswechsel zurückgesetzt; Kohle-/Gas-
+  bzw. Material-/Fischmangel bleiben wie bisher Kategorien-Engpässe mit Moralwirkung auf Provinzen.
 - KI-Nahrung: Kasernen werden bei Getreidemangel abgeschaltet (bei Überschuss wieder eingeschaltet) und nur
   bei Getreideüberschuss gebaut; der Provinzunterhalt läuft bevorzugt über Fisch (Getreide bleibt für die
   Infanterie); bei knapper Nahrung baut sie Wirtschaftsgebäude bevorzugt in Getreide- und Fischprovinzen.
-  Wehrämter schaltet sie ebenso ab (jede neue Infanterie isst 18 Getreide). Messung (3 Partien, 14 Großmächte):
+  Wehrämter schaltet sie ebenso ab (jede neue Infanterie isst Getreide und Öl): Messung (3 Partien, 14 Großmächte):
   Nationen ohne Getreide an Tag 10/20/30: 39/41/42 → 0/4/11 von 42; Nahrungsmangel-Tage 286/409/414 → 0/8/77;
   Infanterie an Tag 30: 17.600 → 7.000.
 - KI offensiver (Vorgabe, nur Großmächte; Kleinstaaten bleiben passiv): Großmächte schalten Wehrämter nie ab
@@ -455,7 +472,8 @@
 - Wirtschaft (Vorgabe, neu): Rohstoffertrag je Provinz 3150 pro Tag bei 100 % Moral (Doppelprovinz 6300),
   Grundbedarf je Provinz 800 pro Kategorie (Nahrung, Baustoffe, Energie) und Tag. Geld je Provinz 1600
   (Doppelprovinz 3200).
-- Moral (Vorgabe, neu): Grundwert 85 %, Entfernung zur Hauptstadt −1 % je 100 km ab 300 km (höchstens −30 %),
+- Moral (Vorgabe, neu): Grundwert 85 %, Entfernung zur Hauptstadt −10 % je Marschtag (Infanteriemarsch
+  über das Wegenetz; Bahn und Hafen verkürzen, Ausschiffung und Seezeit zählen mit; höchstens −30 %),
   +1 % je angrenzender eigener Provinz mit mindestens 91 % Moral, Bauamt +2 %, +3 % bei eigenen Truppen mit
   mehr als 20 Stärke in der Stadt.
 - Gebäude: Kaserne Unterhalt 1000 Getreide und 1000 Geld je Stufe; Wehramt Bauzeit 10 min, Unterhalt 500 Geld.

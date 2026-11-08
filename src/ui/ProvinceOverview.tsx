@@ -1,13 +1,15 @@
 // Provinzübersicht im Vollbild: alle eigenen Provinzen mit Gebäuden, Schaltern, Bau- und Fertigungsaufträgen.
 
 import { useState } from 'react';
-import { checkBuild, checkProduce, plannedBuildings, type Action, type ActionResult } from '../game/actions.ts';
+import { checkBuild, checkProduce, harborCandidates, plannedBuildings, type Action, type ActionResult } from '../game/actions.ts';
 import { BUILDING_ORDER, BUILDINGS, buildingLives, RES_NAMES, UNIT_ORDER, UNITS, type Building, type UnitType, siteAllows } from '../game/balance.ts';
-import { activeCapital, provinceOutput } from '../game/economy.ts';
+import { activeCapital, corruptionOf, provinceOutput } from '../game/economy.ts';
 import type { MapData } from '../game/mapdata.ts';
 import type { GameState } from '../game/types.ts';
 import { Bar, Window } from './common.tsx';
 import { fmtDuration, fmtNum, fmtPercent } from './format.ts';
+import { seaPointName } from './harbor.ts';
+import { harborSea } from '../game/graph.ts';
 import { ResIcon } from './icons.tsx';
 import { buildingImage, Picture } from './Picture.tsx';
 
@@ -51,17 +53,32 @@ export function ProvinceOverview({ map, state, act, onSelect, onClose }: Props) 
     setMsg(`${what}: ${ok} von ${list.length}`);
   };
 
+  // Erträge netto inklusive nationaler Korruption (Tooltip zeigt den Rohwert)
+  const corrupt = corruptionOf(state, map, me);
+  const netMul = 1 - corrupt;
+  const corruptPct = `−${(corrupt * 100).toLocaleString('de-DE', { maximumFractionDigits: 1 })} %`;
   const recruitTargets = own.filter(({ i }) => checkBuild(state, map, me, i, 'recruitment').ok);
+  // beschädigte Gebäude, die noch nicht in Reparatur sind (für den Button "Repaturen einreihen")
+  const damagedCount = own.reduce((sum, { ps }) =>
+    sum + Object.entries(ps.damage ?? {}).filter(([b, lost]) => lost > 0 && !ps.repairing?.[b as Building]).length, 0);
   const barracksOn = own.filter(({ ps }) => ps.buildings.barracks > 0 && ps.off?.barracks);
   const barracksOff = own.filter(({ ps }) => ps.buildings.barracks > 0 && !ps.off?.barracks);
 
   return (
     <Window title={`Provinzübersicht (${own.length})`} onClose={onClose} className="overview-panel">
+      <div className="muted small" style={{ margin: '0 0 4px' }}>Erträge netto nach nationaler Korruption ({corruptPct}).</div>
+      <div style={{ margin: '0 0 6px' }}>
+        <button className="btn small" disabled={busy || damagedCount === 0}
+          title="Alle beschädigten Gebäude im Reich zur Reparatur anmelden: je Provinz eine auf einmal, solange die Ressourcen reichen (2 h je Reparatur)"
+          onClick={() => run({ type: 'repairAll' })}>
+          Repaturen einreihen{damagedCount ? ` (${damagedCount})` : ''}
+        </button>
+      </div>
       <div className="overview-scroll">
         <table className="table overview-table">
           <thead>
             <tr>
-              <th>Provinz</th><th>Ertrag/Tag</th><th>Moral</th><th>Gebäude</th><th>Schalter</th><th>Bauen</th><th>Technik in Auftrag geben</th>
+              <th>Provinz</th><th title={`netto nach nationaler Korruption (${corruptPct}); Mauszeiger über dem Wert für den Rohwert`}>Ertrag/Tag</th><th>Moral</th><th>Gebäude</th><th>Schalter</th><th>Bauen</th><th>Technik in Auftrag geben</th>
             </tr>
           </thead>
           <tbody>
@@ -80,7 +97,7 @@ export function ProvinceOverview({ map, state, act, onSelect, onClose }: Props) 
                       {i === capital ? '★ ' : mp.city ? '■ ' : ''}{mp.name}
                     </button>
                   </td>
-                  <td className="small"><ResIcon res={mp.resource} size={14} /> {fmtNum(out.amount)}{mp.double ? ' (×2)' : ''}</td>
+                  <td className="small" title={`vor Korruption: ${fmtNum(out.amount)} (${corruptPct})`}><ResIcon res={mp.resource} size={14} /> {fmtNum(out.amount * netMul)}{mp.double ? ' (×2)' : ''}</td>
                   <td className="overview-morale">
                     <Bar value={ps.morale} color={ps.morale < 0.33 ? '#a33' : ps.morale < 0.6 ? '#c9952f' : '#5d8a3a'} />
                     <span className="small">{fmtPercent(ps.morale)}</span>
@@ -127,6 +144,17 @@ export function ProvinceOverview({ map, state, act, onSelect, onClose }: Props) 
                             </option>
                           ))}
                         </select>
+                        {pickB.b === 'harbor' && (() => {
+                          const cands = harborCandidates(map, i);
+                          if (cands.length < 2) return null;
+                          const cur = ps.harborNode ?? harborSea(map, i) ?? cands[0];
+                          return (
+                            <select value={cur} title="Wo in der Provinz der Hafen liegt – Einschiffnung ist nur dort möglich"
+                              onChange={(e) => run({ type: 'setHarborPoint', province: i, sea: Number(e.target.value) })}>
+                              {cands.map((z) => <option key={z} value={z}>{seaPointName(map, i, z)}</option>)}
+                            </select>
+                          );
+                        })()}
                         <button className="btn small" disabled={!pickB.chk.ok}
                           title={pickB.chk.error ?? `${costText(pickB.chk.cost)} · ${fmtDuration((pickB.chk.hours * 3600_000) / state.speed)}${pickB.chk.queued ? ' · kommt in die Bauschleife' : ''}`}
                           onClick={() => run({ type: 'build', province: i, building: pickB.b })}>

@@ -264,6 +264,61 @@ export function closestOnEdge(map: MapData, u: number, v: number, x: number, y: 
   return best;
 }
 
+/** Eck- und Probenpunkte aller Wege in einem 1-km-Raster (je Karte gebaut) */
+const sampleGridCache = new WeakMap<MapData, Map<string, [number, number][]>>();
+
+function sampleGrid(map: MapData): Map<string, [number, number][]> {
+  let grid = sampleGridCache.get(map);
+  if (!grid) {
+    grid = new Map();
+    const put = (u: number, v: number, x: number, y: number) => {
+      const k = Math.floor(x) + ':' + Math.floor(y);
+      let cell = grid!.get(k);
+      if (!cell) grid!.set(k, (cell = []));
+      let has = false;
+      for (const e of cell) if (e[0] === u && e[1] === v) { has = true; break; }
+      if (!has) cell.push([u, v]);
+    };
+    const n = nodeCount(map);
+    for (let u = 0; u < n; u++) for (const v of nodeNeighbors(map, u)) {
+      if (v <= u) continue;
+      const pts = edgePoints(map, u, v);
+      for (let k = 0; k + 1 < pts.length; k++) {
+        const [ax, ay] = pts[k], [bx, by] = pts[k + 1];
+        const len = Math.hypot(bx - ax, by - ay);
+        const steps = Math.max(1, Math.ceil(len));
+        put(u, v, ax, ay);
+        for (let i = 1; i <= steps; i++) put(u, v, ax + ((bx - ax) * i) / steps, ay + ((by - ay) * i) / steps);
+      }
+    }
+    sampleGridCache.set(map, grid);
+  }
+  return grid;
+}
+
+/**
+ * Gleichwertige Darstellungen eines Wegpunkts: alle Wege, die an dieser Stelle geometrisch
+ * zusammenfallen (zusammengelegte Abschnitte). Dient dazu, den Anmarsch über die kürzeste
+ * Auslegung zu planen – nicht über einen beliebigen Endpunkt der angeklickten Straße.
+ */
+export function roadVariants(map: MapData, u: number, v: number, f: number, eps = 0.06): { a: number; b: number; f: number }[] {
+  const out: { a: number; b: number; f: number }[] = [{ a: u, b: v, f }];
+  const [x, y] = edgePoint(map, u, v, f);
+  const grid = sampleGrid(map);
+  const cx = Math.floor(x), cy = Math.floor(y);
+  const seen = new Set<string>([`${Math.min(u, v)}|${Math.max(u, v)}`]);
+  for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) {
+    for (const [i, j] of grid.get((cx + dx) + ':' + (cy + dy)) ?? []) {
+      const key = `${Math.min(i, j)}|${Math.max(i, j)}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const r = closestOnEdge(map, i, j, x, y);
+      if (r.d <= eps) out.push({ a: i, b: j, f: r.f });
+    }
+  }
+  return out;
+}
+
 export function nodeDist(map: MapData, a: number, b: number): number {
   const pa = nodePos(map, a), pb = nodePos(map, b);
   return Math.hypot(pa[0] - pb[0], pa[1] - pb[1]);

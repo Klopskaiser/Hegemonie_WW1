@@ -7,7 +7,7 @@ import {
 } from './actions.ts';
 import { BasicAI } from './ai.ts';
 import { DEFAULT_COMBAT_MORALE, ALL_RES, BUILDINGS, CATEGORIES, CATEGORY_OF, CATEGORY_RES, DAY, DEFECTION, DIFFICULTY, HOUR, MINUTE, TICKS_PER_DAY, TROOP_MORALE, UNITS, VICTORY_SHARE,
-  type Category, type UnitType,
+  type Building, type Category, type UnitType,
 } from './balance.ts';
 import { observe, type Controller, type NationView, type Observation } from './controller.ts';
 import { allRates, defaultConsumption, moraleTarget, provincePoints, recruitHours, stepMorale, type NationRates, provinceCounts, focusShares } from './economy.ts';
@@ -52,7 +52,7 @@ export class Simulation {
     // Schiffe aus älteren Spielständen, die noch in Häfen liegen, aufs Wasser setzen
     for (const a of state.armies) {
       if (isNaval(a) && !isSea(map, a.node)) {
-        a.node = harborSea(map, a.node) ?? a.node;
+        a.node = state.provinces[a.node]?.harborNode ?? harborSea(map, a.node) ?? a.node;
         a.move = null;
       }
     }
@@ -137,6 +137,7 @@ export class Simulation {
     let next = Infinity;
     for (const ps of this.state.provinces) {
       if (ps.construction && ps.construction.end < next) next = ps.construction.end;
+      for (const t of Object.values(ps.repairing ?? {})) if (t < next) next = t;
       const o = ps.queue[0];
       if (o?.end !== undefined && o.end < next) next = o.end;
     }
@@ -195,6 +196,7 @@ export class Simulation {
         const v = st[res] + d[k];
         if (v < 0) {
           if (res !== 'money') n.shortage[CATEGORY_OF[res]] = true;
+          if (res === 'oil' || res === 'grain') (n.resShort ??= {})[res] = true;
           st[res] = 0;
         } else st[res] = v;
       }
@@ -209,8 +211,11 @@ export class Simulation {
         let need = u;
         for (let k = 0; k < list.length; k++) {
           if (sh[k] <= 0) continue;
-          const take = Math.min(st[list[k]], u * sh[k]);
-          st[list[k]] -= take;
+          const res = list[k];
+          const want = u * sh[k];
+          const take = Math.min(st[res], want);
+          st[res] -= take;
+          if (take < want - 1e-12 && (res === 'oil' || res === 'grain')) (n.resShort ??= {})[res] = true;
           need -= take;
         }
         if (need > 1e-9) n.shortage[CATEGORIES[c]] = true;
@@ -229,6 +234,23 @@ export class Simulation {
         this.log(`${def.name}${def.maxLevel > 1 ? ' Stufe ' + c.level : ''} in ${this.map.provinces[i].name} fertiggestellt.`, ps.owner, i);
         this.invalidateRates();
         this.startBuild(i);
+      }
+      const rep = ps.repairing;
+      if (rep) {
+        for (const b of Object.keys(rep) as Building[]) {
+          if (rep[b]! > s.time) continue;
+          delete rep[b];
+          if (!Object.keys(rep).length) delete ps.repairing;
+          if (ps.damage?.[b]) {
+            delete ps.damage[b];
+            if (!Object.keys(ps.damage).length) delete ps.damage;
+            this.log(`${BUILDINGS[b].name} in ${this.map.provinces[i].name} repariert.`, ps.owner, i);
+            this.invalidateRates();
+          } else {
+            // das Gebäude wurde zerstört, während repariert wurde – der Auftrag erledigt sich
+            this.log(`Reparatur ${BUILDINGS[b].name} in ${this.map.provinces[i].name} hinfällig – Gebäude zerstört.`, ps.owner, i);
+          }
+        }
       }
       const o = ps.queue[0];
       if (o?.end !== undefined && o.end <= s.time) {
@@ -294,8 +316,8 @@ export class Simulation {
   spawn(province: number, owner: string, unit: UnitType, count: number): void {
     const s = this.state;
     const naval = !!UNITS[unit].naval;
-    // Schiffe entstehen im Wasser vor dem Hafen
-    const node = naval ? harborSea(this.map, province) ?? province : province;
+    // Schiffe entstehen im Wasser vor dem Hafen (am gewählten Hafenpunkt, sonst am nächsten Seepunkt)
+    const node = naval ? s.provinces[province]?.harborNode ?? harborSea(this.map, province) ?? province : province;
     let army = s.armies.find((a) => a.owner === owner && a.node === node && !a.move && !a.pos && !a.target && isNaval(a) === naval);
     if (!army) {
       army = { id: s.nextArmyId++, owner, node, units: {} };
@@ -436,14 +458,17 @@ export class Simulation {
     for (const id of this.nationIds) {
       const n = s.nations[id];
       for (const c of Object.keys(n.shortage) as Category[]) {
-        if (n.shortage[c]) this.log(`Engpass bei ${c === 'food' ? 'Nahrung' : c === 'materials' ? 'Baustoffen' : 'Energie'}: Die Moral sinkt.`, id);
+        if (n.shortage[c]) this.log(c === 'food' ? 'Engpass bei Nahrung: Die Moral der Infanterie sinkt.'
+          : `Engpass bei ${c === 'materials' ? 'Baustoffen' : 'Energie'}: Die Moral sinkt.`, id);
       }
+      if (n.resShort?.oil) this.log('Ölmangel: Die Einheiten sind nur halb so schnell, Maschinen reparieren sich nicht.', id);
       n.points = 0;
     }
     s.provinces.forEach((ps, i) => (s.nations[ps.owner].points += provincePoints(this.map, ps, i)));
     for (const id of this.nationIds) {
       const n = s.nations[id];
       n.shortage = { food: false, materials: false, energy: false };
+      n.resShort = undefined;
       n.alive = s.provinces.some((p) => p.owner === id);
     }
     this.checkVictory();

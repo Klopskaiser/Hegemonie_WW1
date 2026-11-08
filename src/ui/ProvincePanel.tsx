@@ -1,14 +1,16 @@
 import { useState } from 'react';
-import { checkBuild, checkCapitalMove, checkProduce, missing, plannedBuildings, requirementsMet, type Action, type ActionResult, checkRepair } from '../game/actions.ts';
+import { checkBuild, checkCapitalMove, checkProduce, harborCandidates, missing, plannedBuildings, requirementsMet, type Action, type ActionResult, checkRepair } from '../game/actions.ts';
 import {
-  BUILDING_ORDER, BUILDINGS, CAPITAL_MOVE, DEFECTION, MILITARY, RES_NAMES, UNIT_ORDER, UNITS, type UnitType, buildingLives, siteAllows } from '../game/balance.ts';
-import { activeCapital, moraleTarget, provinceOutput, provincePoints, recruitHours } from '../game/economy.ts';
+  BUILDING_ORDER, BUILDINGS, CAPITAL_MOVE, DEFECTION, HOUR, MILITARY, REPAIR_HOURS, RES_NAMES, UNIT_ORDER, UNITS, type UnitType, buildingLives, siteAllows } from '../game/balance.ts';
+import { activeCapital, corruptionOf, moraleTarget, provinceOutput, provincePoints, recruitHours } from '../game/economy.ts';
 import type { MapData } from '../game/mapdata.ts';
 import { defectionChance, garrisonStrength } from '../game/military.ts';
 import { armyName } from '../game/names.ts';
 import type { Army, GameState } from '../game/types.ts';
 import { Bar, CostList, Swatch, Window } from './common.tsx';
 import { fmtDuration, fmtNum, fmtPercent } from './format.ts';
+import { seaPointName } from './harbor.ts';
+import { harborSea } from '../game/graph.ts';
 import { ResIcon } from './icons.tsx';
 import { buildingImage, Picture, unitImage } from './Picture.tsx';
 
@@ -30,6 +32,10 @@ export function ProvincePanel({ map, state, id, armies: visibleArmies, act, onSe
   const owner = map.nations.find((n) => n.id === ps.owner)!;
   const own = ps.owner === state.playerNation;
   const out = provinceOutput(map, ps, id);
+  // Anzeige netto inklusive nationaler Korruption (Tooltip zeigt den Rohwert)
+  const corrupt = corruptionOf(state, map, ps.owner);
+  const netMul = 1 - corrupt;
+  const corruptNote = `−${(corrupt * 100).toLocaleString('de-DE', { maximumFractionDigits: 1 })} % Korruption`;
   const planned = plannedBuildings(ps);
   const mt = moraleTarget(state, map, id);
   const stock = state.nations[state.playerNation].stock;
@@ -114,10 +120,13 @@ export function ProvincePanel({ map, state, id, armies: visibleArmies, act, onSe
 
       <h4>Produktion pro Tag</h4>
       <div className="prod-row">
-        <span><ResIcon res={mp.resource} /> {fmtNum(out.amount)} {RES_NAMES[mp.resource]}{mp.double ? ' (doppelt)' : ''}</span>
-        <span><ResIcon res="money" /> {fmtNum(out.money)}</span>
+        <span title={`vor Korruption: ${fmtNum(out.amount)} ${RES_NAMES[mp.resource]} (${corruptNote})`}><ResIcon res={mp.resource} /> {fmtNum(out.amount * netMul)} {RES_NAMES[mp.resource]}{mp.double ? ' (doppelt)' : ''}</span>
+        <span title={`vor Korruption: ${fmtNum(out.money)} Geld (${corruptNote})`}><ResIcon res="money" /> {fmtNum(out.money * netMul)}</span>
       </div>
       {out.bonus > 0 && <div className="muted small">Gebäudebonus +{Math.round(out.bonus * 100)} %</div>}
+      <div className="muted small" title={`Kontrolle = Anteil der Provinzen, die ${ps.owner} hält (wie Rangliste); unter 10 % keine, ab 10 % 1 %, ab 50 % volle 12 %`}>
+        davon Korruption {corruptNote}
+      </div>
 
       {own && (
         <>
@@ -141,6 +150,7 @@ export function ProvincePanel({ map, state, id, armies: visibleArmies, act, onSe
                       {waiting > 0 ? ` · ${waiting} geplant` : ''}
                       {level > 0 && ps.off?.[b] ? ' · abgeschaltet' : ''}
                       {ps.damage?.[b] ? ` · beschädigt (${buildingLives(b) - ps.damage[b]!}/${buildingLives(b)} Leben)` : ''}
+                      {ps.repairing?.[b] ? ' · Reparatur läuft' : ''}
                     </span>
                     {def.switchable && level > 0 && (
                       <button className={'btn small' + (ps.off?.[b] ? ' active' : '')}
@@ -152,11 +162,18 @@ export function ProvincePanel({ map, state, id, armies: visibleArmies, act, onSe
                   </div>
                   <div className="muted small">{def.describe(Math.min(def.maxLevel, Math.max(1, plannedLevel < def.maxLevel ? plannedLevel + 1 : plannedLevel)))}</div>
                   {ps.damage?.[b] ? (() => {
+                    const until = ps.repairing?.[b];
+                    if (until) return (
+                      <div className="progress-row">
+                        <Bar value={(state.time - (until - REPAIR_HOURS * HOUR)) / (REPAIR_HOURS * HOUR)} />
+                        <span className="small">{remaining(until)}</span>
+                      </div>
+                    );
                     const rep = checkRepair(state, state.playerNation, id, b);
                     return (
                       <div className="progress-row">
                         <CostList cost={rep.cost} stock={stock} />
-                        <button className="btn small" disabled={!rep.ok} title={rep.error ?? 'Sofort reparieren – das Gebäude wirkt wieder'}
+                        <button className="btn small" disabled={!rep.ok} title={rep.error ?? `Reparieren – dauert ${REPAIR_HOURS} Stunden`}
                           onClick={() => run({ type: 'repair', province: id, building: b })}>Reparieren</button>
                       </div>
                     );
@@ -168,6 +185,20 @@ export function ProvincePanel({ map, state, id, armies: visibleArmies, act, onSe
                       <button className="btn small" onClick={() => run({ type: 'cancelBuild', province: id })} title="Abbrechen (Kosten kommen zurück)">✕</button>
                     </div>
                   )}
+                  {b === 'harbor' && ps.owner === state.playerNation && (() => {
+                    const cands = harborCandidates(map, id);
+                    if (cands.length < 2) return null;
+                    const cur = ps.harborNode ?? harborSea(map, id) ?? cands[0];
+                    return (
+                      <div className="small muted" style={{ margin: '2px 0' }}>
+                        Hafenpunkt:{' '}
+                        <select value={cur} title="Wo in der Provinz der Hafen liegt – Einschiffnung ist nur dort möglich"
+                          onChange={(e) => run({ type: 'setHarborPoint', province: id, sea: Number(e.target.value) })}>
+                          {cands.map((z) => <option key={z} value={z}>{seaPointName(map, id, z)}</option>)}
+                        </select>
+                      </div>
+                    );
+                  })()}
                   {plannedLevel < def.maxLevel && !excluded && (
                     <div className="progress-row">
                       <CostList cost={chk.cost} stock={stock} />

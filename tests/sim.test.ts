@@ -88,7 +88,7 @@ describe('Simulation', () => {
     sim.advance(2 * DAY);
     const r = sim.apply('DE', { type: 'build', province: target, building: 'railroad' });
     expect(r.ok).toBe(true);
-    sim.advance(71 * HOUR);
+    sim.advance(59 * HOUR);
     expect(sim.state.provinces[target].buildings.railroad).toBe(0);
     sim.advance(1 * HOUR);
     expect(sim.state.provinces[target].buildings.railroad).toBe(1);

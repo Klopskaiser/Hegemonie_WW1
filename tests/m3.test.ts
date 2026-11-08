@@ -53,6 +53,23 @@ describe('Diplomatie-Stufen', () => {
     expect(visibleNodes(newSim().state, map, 'DE').all).toBe(false);
   });
 
+  it('Testszenario: jede Nation startet mit schwerem Anfangsgerät', () => {
+    const state = createGame(map, { id: 't2', name: 'T2', playerNation: 'DE', speed: 1, seed: 3, now: 0, scenario: 'test' });
+    for (const n of map.nations) {
+      const heavy = state.armies.find((a) => a.owner === n.id && a.units.railgun === 1 && a.units.tank === 1 && a.units.artillery === 1);
+      expect(heavy, `Landverband ${n.id}`).toBeTruthy();
+      expect(heavy!.node).toBe(n.capital);
+      const ship = state.armies.find((a) => a.owner === n.id && a.units.battleship === 1);
+      if (map.provinces.some((p) => p.nation === n.id && p.coastal)) {
+        expect(ship, `Schlachtschiff ${n.id}`).toBeTruthy();
+        expect(ship!.node).toBeGreaterThanOrEqual(map.provinces.length); // liegt im Wasser vor dem Hafen
+      } else expect(ship).toBeUndefined();
+    }
+    // im Standardszenario gibt es das Extra nicht
+    const std = createGame(map, { id: 't3', name: 'T3', playerNation: 'DE', speed: 1, seed: 3, now: 0 });
+    expect(std.armies.some((a) => a.units.railgun || a.units.battleship)).toBe(false);
+  });
+
   it('geteilte Karte zeigt die Armeen des Partners', () => {
     const sim = newSim();
     const madrid = garrison(sim, 'ES', prov('Madrid'))!;

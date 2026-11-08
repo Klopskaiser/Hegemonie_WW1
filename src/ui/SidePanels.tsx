@@ -50,8 +50,8 @@ export function EconomyPanel({ map, state, rates, act, onClose }: Props & { act(
         </tbody>
       </table>
       <p className="muted small">
-        Korruption: −{(corruptionOf(state, state.playerNation) * 100).toLocaleString('de-DE', { maximumFractionDigits: 1 })} % auf alle Produktion.
-        Kontrolle (mittlere Moral aller eigenen Provinzen) ab 10 % beginnend, bei 50 % das Maximum von 12 %.
+        Korruption: −{(corruptionOf(state, map, state.playerNation) * 100).toLocaleString('de-DE', { maximumFractionDigits: 1 })} % auf alle Produktion.
+        Kontrolle = eigener Anteil der Provinzen (wie Rangliste): unter 10 % keine Korruption, ab 10 % 1 %, bei 50 % das Maximum von 12 %.
       </p>
       <h4>Verbrauch nach Verursachern (pro Tag)</h4>
       <div className="use-sources">
@@ -102,7 +102,7 @@ export function RankingPanel({ map, state, onClose }: Props) {
               <td>{i + 1}</td>
               <td><Flag nation={r.n.id} /> {r.n.name}</td>
               <td>{r.provinces}</td>
-              <td>{Math.round((r.provinces / total) * 100)} %</td>
+              <td>{((r.provinces / total) * 100).toLocaleString('de-DE', { maximumFractionDigits: 1 })} %</td>
             </tr>
           ))}
         </tbody>

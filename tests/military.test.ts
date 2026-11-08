@@ -185,11 +185,19 @@ describe('See', () => {
     expect(unitHp(mixed, 'tank', map)).toBeCloseTo(UNITS.tank.hp * MILITARY.seaHpFactor, 9);
     expect(unitHp(mixed, 'battleship', map)).toBe(UNITS.battleship.hp);
     expect(armyHp(mixed, map)).toBeCloseTo((10 * UNITS.infantry.hp + UNITS.tank.hp) * MILITARY.seaHpFactor + UNITS.battleship.hp, 9);
-    // an Land voll, beim Ein-/Ausschiffen halb
+    // an Land voll, beim Ein-/Ausschiffen halb – nach überqueter Uferlinie bzw. vollständiger Landung wieder voll
+    const pier = map.provinces.find((p) => p.id !== berlin && (p.seas ?? p.seaLinks)?.length)!;
+    const z = (pier.seas ?? pier.seaLinks)![0];
     const land: Army = { id: 996, owner: 'DE', node: berlin, units: { infantry: 1 }, morale: 1 / 1.2 };
     expect(unitHp(land, 'infantry', map)).toBeCloseTo(UNITS.infantry.hp, 9);
     land.boarding = true;
+    land.pos = { a: map.provinces.length + z, b: pier.id, f: 0.01 }; // noch auf dem Wasserabschnitt der Hafenstraße
     expect(unitHp(land, 'infantry', map)).toBeCloseTo(UNITS.infantry.hp * MILITARY.seaHpFactor, 9);
+    land.pos = { a: pier.id, b: map.provinces.length + z, f: 0.01 }; // umgekehrt: auf dem Landabschnitt direkt an der Stadt
+    expect(unitHp(land, 'infantry', map)).toBeCloseTo(UNITS.infantry.hp, 9);
+    delete land.pos; // vollständig gelandet: volle Lebenspunkte trotz hängengebliebener Markung
+    expect(unitHp(land, 'infantry', map)).toBeCloseTo(UNITS.infantry.hp, 9);
+    expect(armyHp(land, map)).toBeCloseTo(UNITS.infantry.hp, 9);
     // 10 Schaden: an Land eine Wunde, auf See fällt der Infanterist
     const a: Army = { id: 995, owner: 'DE', node: berlin, units: { infantry: 1 }, morale: 1 / 1.2 };
     const b: Army = { ...a, id: 994, node: sea, units: { infantry: 1 } };

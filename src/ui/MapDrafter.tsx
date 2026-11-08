@@ -5,23 +5,25 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { CATEGORY_NAMES, RES_NAMES } from '../game/balance.ts';
 import {
-  addProvince, addVertex, autoLinks, cityOf, coastsWithoutHarbor, DEFAULT_COLORS, deleteBend, deleteVertex, edgeOwners, exportDraft, getProvince, insertBend, insertOnEdge,
+  addProvince, addVertex, autoLinks, cityOf, coastsWithoutHarbor, cutWaterChannel, DEFAULT_COLORS, deleteBend, deleteVertex, edgeOwners, exportDraft, getProvince, insertBend, insertOnEdge,
   mergeProvinces, midPoint, moveBend, moveVertex, nearestEdge, nearestVertex, newDraft, parseRef, provArea, provinceAt, provPts, provRef,
   removeProvince, removeSea, rescaleDraft, seaRef, splitProvince, toggleLink, tracePath, weldVertex,
-  type Draft, type ImportColors, type NodeRef, type Pt,
+  type ChannelResult, type Draft, type ImportColors, type NodeRef, type Pt,
 } from '../game/draft.ts';
 import { DEFAULT_IMPORT, importRaster, rgbToHex, type ImportOptions } from '../game/draftImport.ts';
 import { checkNation } from '../game/mapcheck.ts';
 import { RESOURCES, type Resource } from '../game/mapdata.ts';
+import { Flag, FLAG_CODES } from './Flag.tsx';
 import { iconImage, ResIcon } from './icons.tsx';
 import { forgetMap } from './maps.ts';
 
-type Tool = 'select' | 'draw' | 'split' | 'vertex' | 'merge' | 'sea' | 'link' | 'nation' | 'resource';
+type Tool = 'select' | 'draw' | 'split' | 'channel' | 'vertex' | 'merge' | 'sea' | 'link' | 'nation' | 'resource';
 
 const TOOLS: { id: Tool; name: string; key: string; help: string }[] = [
   { id: 'select', name: 'Auswahl', key: '1', help: 'Provinz oder Seepunkt anklicken. Stadtpunkt und Seepunkte ziehen verschiebt sie, Strg+Klick setzt die Stadt der Provinz an diese Stelle. Ziehen auf freier Fläche verschiebt die Ansicht.' },
   { id: 'draw', name: 'Provinz zeichnen', key: '2', help: 'Punkte setzen; Klick auf den ersten Punkt oder Enter schließt die Provinz. Klicks auf vorhandene Punkte und Kanten rasten ein; zwei Punkte derselben Grenze werden entlang dieser Grenze nachgezeichnet (Alt: gerade). Rücktaste nimmt den letzten Punkt zurück, Esc bricht ab.' },
   { id: 'split', name: 'Teilen', key: '3', help: 'Auf dem Rand einer Provinz beginnen, Punkte im Inneren setzen und auf dem Rand beenden – die Provinz wird entlang dieser Linie geteilt.' },
+  { id: 'channel', name: 'Wasser', key: '0', help: 'Zwei Varianten: 1) Zug über die Landbrücke (Punkte setzen, Enter) – zwischen beiden Schnittlinien wird es Meer; der Zug muss die Brücke beidseitig überqueren. 2) Geschlossener Ring (ersten Punkt zuletzt anklicken) – die Fläche im Ring wird präzise geflutet: Provinzen schrumpfen, neue Städte entstehen keine. Landwege quer durchs Wasser werden gelöst.' },
   { id: 'vertex', name: 'Punkte', key: '4', help: 'Grenzpunkte ziehen (wirkt auf alle Provinzen, die ihn teilen); auf einen anderen Punkt fallen lassen verschweißt beide. Klick auf eine Kante fügt einen Punkt ein, Rechtsklick löscht einen Punkt.' },
   { id: 'merge', name: 'Verschmelzen', key: '5', help: 'Erst die Provinz anklicken, die bleibt, dann die, die in ihr aufgeht.' },
   { id: 'sea', name: 'Seepunkte', key: '6', help: 'Klick ins Wasser setzt einen Seepunkt, Ziehen verschiebt, Rechtsklick löscht.' },
@@ -125,6 +127,7 @@ export function MapDrafter({ onExit }: { onExit(): void }) {
   const [overwrite, setOverwrite] = useState<string | null>(null);
   const [hover, setHover] = useState('');
   const [sizeEdit, setSizeEdit] = useState<{ w: string; h: string } | null>(null);
+  const [channelWidth, setChannelWidth] = useState(20);
 
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -735,6 +738,22 @@ export function MapDrafter({ onExit }: { onExit(): void }) {
     setPath([]);
   };
 
+  const finishChannel = (entries: PathEntry[]) => {
+    if (entries.length < 2) { setStatus('Für den Zug mindestens zwei Punkte setzen.'); return; }
+    const stroke = entries.map((en) => en.pt);
+    const box: { r?: ChannelResult } = {};
+    commit((x) => {
+      const res = cutWaterChannel(x, stroke, channelWidth);
+      if (typeof res === 'string') return res;
+      box.r = res;
+    });
+    setPath([]);
+    if (box.r) {
+      const out = box.r;
+      setStatus(`Wasser eingefügt: ${out.cuts} Schnitte, ${out.removed} Landstücke geflutet, ${out.linksRemoved} Landwege gelöst${out.kept ? ` · „${out.kept}“ blieb liegen (Stadt/Hauptstadt)` : ''}.`);
+    }
+  };
+
   const click = (d: Draft, p: Pt, button: number, e: React.PointerEvent) => {
     if (pick && image) {
       const ix = Math.floor((p[0] / d.width) * image.data.width), iy = Math.floor((p[1] / d.height) * image.data.height);
@@ -789,6 +808,16 @@ export function MapDrafter({ onExit }: { onExit(): void }) {
           return;
         }
         if (en.v !== undefined) { finishSplit([...path, en]); return; }
+        setPath((pp) => [...pp, en]);
+        return;
+      }
+      case 'channel': {
+        if (right) { setPath((pp) => pp.slice(0, -1)); return; }
+        const firstp = path[0];
+        if (path.length >= 3 && firstp && Math.hypot(firstp.pt[0] - p[0], firstp.pt[1] - p[1]) <= px(SNAP_PX)) { finishChannel([...path, path[0]]); return; }
+        const en = entryAt(draftRef.current!, p);
+        if (!en) return;
+        if (path.length >= 3 && en.v !== undefined && en.v === firstp?.v) { finishChannel([...path, path[0]]); return; }
         setPath((pp) => [...pp, en]);
         return;
       }
@@ -888,6 +917,7 @@ export function MapDrafter({ onExit }: { onExit(): void }) {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); void save(); return; }
       if (e.key === 'Escape') { setPath([]); setMergeFrom(null); setLinkFrom(null); setPick(null); return; }
       if (e.key === 'Enter' && tool === 'draw') { finishDraw(path); return; }
+      if (e.key === 'Enter' && tool === 'channel') { finishChannel(path); return; }
       if (e.key === 'Backspace' && path.length) { e.preventDefault(); setPath((pp) => pp.slice(0, -1)); return; }
       if (e.key === 'Delete' && sel) {
         if (sel.kind === 'prov') commit((x) => removeProvince(x, sel.id));
@@ -1082,6 +1112,16 @@ export function MapDrafter({ onExit }: { onExit(): void }) {
   const selSea = sel?.kind === 'sea' ? draft.seas.find((z) => z.id === sel.id) : undefined;
   const colors = draft.colors ?? DEFAULT_COLORS;
   const nationCount = (id: string) => draft.provinces.filter((p) => p.nation === id).length;
+  const setNationId = (i: number, raw: string) => {
+    const v = raw.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 4);
+    const old = draft.nations[i].id;
+    if (!v || v === old) return;
+    commit((x) => {
+      x.nations[i].id = v;
+      for (const p of x.provinces) if (p.nation === old) p.nation = v;
+    }, `nid${i}`);
+    if (brushNation === old) setBrushNation(v);
+  };
   const resCount = (r: Resource) => draft.provinces.reduce((t, p) => t + (p.resource === r ? (p.double ? 2 : 1) : 0), 0);
   const aspectImg = image ? image.data.width / image.data.height : null;
   const aspectMap = draft.width / draft.height;
@@ -1122,6 +1162,11 @@ export function MapDrafter({ onExit }: { onExit(): void }) {
             <h3>{toolInfo.name}</h3>
             <p className="small">{toolInfo.help}</p>
             {tool === 'draw' && path.length > 0 && <p className="small">{path.length} Punkte · Enter schließt</p>}
+            {tool === 'channel' && (
+              <p className="small">Breite: <input type="number" min={5} max={200} value={channelWidth} style={{ width: '4.5em' }}
+                onChange={(e) => setChannelWidth(Math.min(200, Math.max(5, Number(e.target.value) || 5)))} /> km
+                {path.length > 0 && <> · {path.length} Punkte · Enter = Kanalzug, ersten Punkt klicken = Fläche fluten</>}</p>
+            )}
             {tool === 'nation' && <p className="small">Pinsel: <b>{draft.nations.find((n) => n.id === brushNation)?.name ?? '— keine Nation gewählt —'}</b></p>}
             {tool === 'resource' && (
               <div className="editor-res">
@@ -1180,16 +1225,14 @@ export function MapDrafter({ onExit }: { onExit(): void }) {
             <h3>Nationen ({draft.nations.length})</h3>
             {draft.nations.map((n, i) => (
               <div key={i} className={'drafter-nation' + (brushNation === n.id ? ' active' : '')}>
+                <Flag nation={n.id} color={n.color} height={12} title={n.name} />
                 <input type="color" value={n.color} onChange={(e) => { const v = e.target.value; commit((x) => { x.nations[i].color = v; }, `ncol${i}`); }} />
-                <input className="drafter-nid" value={n.id} title="Kürzel (z. B. DE) – bekannte Kürzel bekommen ihre Flagge" onChange={(e) => {
-                  const v = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 4);
-                  const old = n.id;
-                  commit((x) => {
-                    x.nations[i].id = v;
-                    for (const p of x.provinces) if (p.nation === old) p.nation = v;
-                  }, `nid${i}`);
-                  if (brushNation === old) setBrushNation(v);
-                }} />
+                <input className="drafter-nid" value={n.id} title="Kürzel (z. B. DE) – bekannte Kürzel bekommen ihre Flagge" onChange={(e) => setNationId(i, e.target.value)} />
+                <select className="small" style={{ maxWidth: '5.2em' }} title="Flagge wählen – setzt das passende Kürzel"
+                  value={FLAG_CODES.includes(n.id) ? n.id : ''} onChange={(e) => e.target.value && setNationId(i, e.target.value)}>
+                  <option value="">🏳</option>
+                  {FLAG_CODES.filter((c) => c !== 'REB').map((c) => <option key={c} value={c}>{c}</option>)}
+                </select>
                 <input value={n.name} onChange={(e) => { const v = e.target.value; commit((x) => { x.nations[i].name = v; }, `nname${i}`); }} />
                 <label className="small" title="Großmacht (sonst Kleinstaat)"><input type="checkbox" checked={n.major} onChange={(e) => { const v = e.target.checked; commit((x) => { x.nations[i].major = v; }); }} />Groß</label>
                 <button className={'btn small' + (brushNation === n.id ? ' active' : '')} title="Zum Malen wählen" onClick={() => { setBrushNation(n.id); setTool('nation'); }}>✎</button>

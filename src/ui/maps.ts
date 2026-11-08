@@ -9,7 +9,6 @@ export interface MapInfo {
 
 export const MAPS: MapInfo[] = [
   { id: 'europe', name: 'Europa 1914', description: '14 Spielernationen mit je 10 Provinzen und fünfzehn neutrale Kleinstaaten, 189 Provinzen.', available: true },
-  { id: 'europa_real', name: 'Europa 1914 – Seeknoten', description: 'Wie Europa 1914, aber ohne Seegebiete: Schiffe fahren über ein Netz aus Knotenpunkten, jeder Hafen liegt am nächsten Knoten.', available: true },
   { id: 'world', name: 'Weltkarte', description: 'Alle Kontinente, rund dreißig Nationen. Folgt mit Meilenstein M5.', available: false },
   { id: 'asia', name: 'Asien', description: 'Von Persien bis Japan. Folgt mit Meilenstein M5.', available: false },
 ];

@@ -2,21 +2,21 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { ALL_RES, DAY, HOUR, MILITARY, MINUTE, MORALE, UNITS } from '../src/game/balance.ts';
-import { applyCombatMorale, applyDamage, armyLocation, armyPosition, boardingWait, combatRound, conquer, embarkHours, harborLeg, inMelee, markFight, maxRange, meleeOutput, rangedRound, damageBuildings, defections, repairMachines, startMove, troopTarget, unitHp } from '../src/game/military.ts';
-import { activeLevel, capitalOf, moraleTarget, nationRates, recruitHours, stepMorale, totalUse, useSources } from '../src/game/economy.ts';
+import { applyCombatMorale, applyDamage, armyLocation, armyPosition, boardingWait, combatRound, planRoute, conquer, embarkHours, harborLeg, inMelee, markFight, maxRange, meleeOutput, rangedRound, damageBuildings, defections, repairMachines, resumeOrders, startMove, troopTarget, unitHp } from '../src/game/military.ts';
+import { activeLevel, capitalOf, marchDaysToCapital, moraleTarget, nationRates, recruitHours, stepMorale, totalUse, useSources } from '../src/game/economy.ts';
 import type { MapData } from '../src/game/mapdata.ts';
-import { edgeParts, edgePoint, nodePos } from '../src/game/graph.ts';
+import { edgeParts, edgePoint, nodePos, nodeNeighbors } from '../src/game/graph.ts';
 import { segmentHours } from '../src/game/military.ts';
 import { checkRepair, requiredWars } from '../src/game/actions.ts';
 import { priceBounds } from '../src/game/market.ts';
-import { atWar } from '../src/game/diplomacy.ts';
+import { atWar, setRelation } from '../src/game/diplomacy.ts';
 import { armyName } from '../src/game/names.ts';
 import { armyVisible, visibleNodes } from '../src/game/visibility.ts';
 import { makeRng } from '../src/game/rng.ts';
 import { Simulation } from '../src/game/sim.ts';
 import { BasicAI } from '../src/game/ai.ts';
 import { createGame } from '../src/game/state.ts';
-import type { Army } from '../src/game/types.ts';
+import type { Army, GameState } from '../src/game/types.ts';
 
 const map: MapData = JSON.parse(fs.readFileSync(path.join(import.meta.dirname, '..', 'public', 'maps', 'europe.json'), 'utf8'));
 const prov = (name: string) => map.provinces.find((p) => p.name === name)!.id;
@@ -134,17 +134,19 @@ describe('Moral, Abschüsse, Namen', () => {
 });
 
 describe('Provinzmoral und Hauptstadt', () => {
-  it('Moralziel: Grundwert 85 %, kein Hauptstadtbonus, Entfernung 1 % je 100 km (höchstens 30 %), Nachbarn −2 %/+1 %', () => {
+  it('Moralziel: Grundwert 85 %, Marschtage zur Hauptstadt (−10 % je Tag, höchstens 30 %), Nachbarn −2 %/+1 %', () => {
     const sim = newSim();
     const berlin = prov('Berlin');
     const cap = moraleTarget(sim.state, map, berlin);
     expect(cap.parts[0]).toEqual({ label: 'Grundwert', value: 0.85 });
     expect(cap.parts.some((p) => p.label === 'Hauptstadt')).toBe(false);
+    // Abzug nach Marschzeit über das Wegenetz (Bahn und Hafen verkürzen mit)
     const far = map.provinces.filter((p) => p.nation === 'DE' && !p.capital)
-      .map((p) => ({ p, d: Math.hypot(p.center[0] - map.provinces[berlin].center[0], p.center[1] - map.provinces[berlin].center[1]) }))
-      .sort((x, y) => y.d - x.d)[0];
+      .map((p) => ({ p, days: marchDaysToCapital(sim.state, map, 'DE', p.id) ?? 0 }))
+      .sort((x, y) => y.days - x.days)[0];
+    expect(far.days).toBeGreaterThan(0);
     const dist = moraleTarget(sim.state, map, far.p.id).parts.find((x) => x.label === 'Entfernung zur Hauptstadt');
-    if (far.d > MORALE.distanceFree) expect(dist!.value).toBeCloseTo(-Math.min(0.3, ((far.d - MORALE.distanceFree) / 100) * 0.01), 6);
+    expect(dist!.value).toBeCloseTo(-Math.min(MORALE.distanceMax, far.days * MORALE.distancePerDay), 6);
     const n = map.provinces[berlin].neighbors.find((x) => map.provinces[x].nation === 'DE')!;
     sim.state.provinces[n].morale = 0.2;
     expect(moraleTarget(sim.state, map, berlin).parts.find((p) => p.label.startsWith('Unruhe'))!.value).toBeCloseTo(-0.02, 9);
@@ -377,7 +379,7 @@ describe('Nahkampfbegrenzung und zufällige Treffer', () => {
     const at = map.provinces.find((p) => p.nation === 'FR')!.id;
     const a: Army = { id: 1, owner: 'DE', node: at, units: { tank: 2, infantry: 100 }, morale: 1 };
     const b: Army = { id: 2, owner: 'IT', node: at, units: { infantry: 110 }, morale: 1 };
-    expect(meleeOutput(sim.state, map, b)).toBeCloseTo(35 * 1.2, 9);
+    expect(meleeOutput(sim.state, map, b)).toBeCloseTo(40 * 1.2, 9);
     expect(meleeOutput(sim.state, map, a) - meleeOutput(sim.state, map, b)).toBeCloseTo(5.6, 9);
     // unter 20 Einheiten zählt jede voll
     expect(meleeOutput(sim.state, map, { ...b, units: { infantry: 10 } })).toBeCloseTo(12, 9);
@@ -520,7 +522,54 @@ describe('Gebäudeleben und Reparatur', () => {
     expect(rep.cost.money).toBe(Math.ceil(10000 * 2 / 3));
     sim.state.nations.DE.stock.money = 100000;
     expect(sim.apply('DE', { type: 'repair', province: berlin, building: 'railroad' }).ok).toBe(true);
+    // Reparatur dauert 2 Stunden: bis dahin wirkt die Eisenbahn nicht, kein zweiter Auftrag möglich
+    expect(activeLevel(ps, 'railroad')).toBe(0);
+    expect(checkRepair(sim.state, 'DE', berlin, 'railroad').ok).toBe(false);
+    sim.advance(2 * HOUR - MINUTE);
+    expect(activeLevel(ps, 'railroad')).toBe(0);
+    sim.advance(MINUTE);
     expect(activeLevel(ps, 'railroad')).toBe(1);
+    expect(ps.damage?.railroad).toBeUndefined();
+    expect(ps.repairing).toBeUndefined();
+  });
+
+  it('Repaturen einreihen: volle Kasse startet eine Reparatur je beschädigter Provinz', () => {
+    const sim = newSim();
+    const s = sim.state;
+    for (const r of ALL_RES) s.nations.DE.stock[r] = 1_000_000;
+    const hit = { ...sim.ctx, random: () => 0 };
+    const targets = s.provinces.map((ps, i) => ({ ps, i })).filter((x) => x.ps.owner === 'DE').slice(0, 3);
+    expect(targets.length).toBe(3);
+    for (const { i } of targets) {
+      targets[0].ps.buildings.railroad = Math.max(1, targets[0].ps.buildings.railroad);
+      s.provinces[i].buildings.factory = Math.max(1, s.provinces[i].buildings.factory);
+      damageBuildings({ ...hit }, i);
+    }
+    for (const { ps } of targets) expect(ps.damage && Object.keys(ps.damage).length).toBeGreaterThan(0);
+    expect(sim.apply('DE', { type: 'repairAll' }).ok).toBe(true);
+    for (const { ps } of targets) expect(Object.keys(ps.repairing ?? {}).length).toBe(1);
+    // zweite Runde: alle Provinzen haben schon eine laufende Reparatur
+    expect(sim.apply('DE', { type: 'repairAll' }).ok).toBe(false);
+    sim.advance(2 * HOUR);
+    for (const { ps } of targets) expect(Object.keys(ps.repairing ?? {}).length).toBe(0);
+  });
+
+  it('Repaturen einreihen: knappe Kasse startet nur, was bezahlt werden kann', () => {
+    const sim = newSim();
+    const s = sim.state;
+    const owned = s.provinces.map((ps, i) => ({ ps, i })).filter((x) => x.ps.owner === 'DE');
+    expect(owned.length).toBeGreaterThanOrEqual(2);
+    const [a, b] = owned;
+    a.ps.damage = { railroad: 1 };
+    b.ps.damage = { railroad: 1 };
+    // Kasse exakt auf eine Reparatur bemessen
+    const cost = checkRepair(s, 'DE', a.i, 'railroad').cost!;
+    for (const r of ALL_RES) s.nations.DE.stock[r] = cost[r] ?? 0;
+    expect(sim.apply('DE', { type: 'repairAll' }).ok).toBe(true);
+    const started = owned.filter(({ ps }) => Object.keys(ps.repairing ?? {}).length);
+    expect(started.length).toBe(1);
+    expect(started[0].i).toBe(Math.min(a.i, b.i));
+    expect(sim.apply('DE', { type: 'repairAll' }).ok).toBe(false);
   });
 
   it('Börse: Höchstpreis 1000 je Einheit', () => {
@@ -846,5 +895,76 @@ describe('Nahkampfreichweite 1 km', () => {
     sim.advance(DAY);
     expect(sim.state.armies.includes(garrison)).toBe(false);
     expect(sim.state.provinces[q].owner).toBe('DE');
+  });
+});
+
+describe('Landung gegen Widerstand (Regression: Gratis-Teleport durch Kampfverwicklung)', () => {
+  // Küstenkante mit langem Wasseranteil (der alte Bug zündete bei f ≥ 0.5 auf dem Wasser)
+  const coastPair = (state: GameState) => {
+    const P = map.provinces.length;
+    for (let i = 0; i < map.provinces.length; i++) {
+      if (state.provinces[i].owner === 'DE') continue;
+      for (const z of map.provinces[i].seaLinks ?? map.provinces[i].seas ?? []) {
+        const sea = P + z;
+        if (!nodeNeighbors(map, sea).includes(i)) continue; // echter Seeweg zum Ziel
+        const [, len] = edgeParts(map, sea, i);
+        const land = Math.min(len, harborLeg(map, i, sea));
+        if (!(len > 0 && land < len / 3)) continue;
+        const probe: Army = { id: 999999, owner: 'DE', node: sea, units: { infantry: 10 } };
+        const pl = planRoute(state, map, probe, state.time, { node: i });
+        if (pl && pl.path[0] === sea && pl.path[1] === i) return { target: i, sea, f: Math.max(0.5, (1 - land / len) * 0.75) };
+      }
+    }
+    throw new Error('keine geeignete Küstenkante gefunden');
+  };
+
+  const allWar = (sim: Simulation) => { for (const n of Object.keys(sim.state.nations)) if (n !== 'DE') setRelation(sim.state, 'DE', n, 'war'); };
+  it('Flotte auf dem Wasseranteil wird beim Neuplanen nicht ans Land gesetzt, sondern landet von hier', () => {
+    const sim = newSim();
+    allWar(sim);
+    const { target, sea, f } = coastPair(sim.state);
+    const flt: Army = { id: sim.state.nextArmyId++, owner: 'DE', node: sea, units: { infantry: 20 }, morale: 0.9 };
+    sim.state.armies.push(flt);
+    flt.pos = { a: sea, b: target, f };
+    flt.boarding = true;
+    flt.resume = { node: target };
+    resumeOrders(sim.ctx);
+    expect(flt.move).toBeTruthy();
+    expect(flt.move!.path[0]).toBe(sea);
+    expect(flt.move!.path[1]).toBe(target);
+    expect(flt.move!.startFrac).toBeCloseTo(f, 6);
+    expect(flt.node).toBe(sea); // kein Snap an Land
+    expect(flt.move!.segEnd).toBeGreaterThan(sim.state.time + 5 * MINUTE); // Landen kostet Zeit
+  });
+
+  it('Nahkampfbindung stoppt die Landungsorder nicht (assaultLanding)', () => {
+    const sim = newSim();
+    allWar(sim);
+    const { target, sea } = coastPair(sim.state);
+    const flt: Army = { id: sim.state.nextArmyId++, owner: 'DE', node: sea, units: { battleship: 1, infantry: 30 }, morale: 0.9 };
+    const foe: Army = { id: sim.state.nextArmyId++, owner: 'FR', node: sea, units: { infantry: 5 }, morale: 0.9 };
+    sim.state.armies.push(flt, foe);
+    expect(inMelee(sim.state, map, flt)).toBe(true);
+    const res = sim.apply('DE', { type: 'move', army: flt.id, to: target });
+    expect(res.ok).toBe(true);
+    // Landung angestoßen: Transporter gibt die Truppen ab (sofortige Ausschiffung am Seepunkt) oder marschiert
+    const landed = sim.state.armies.some((x) => x.owner === 'DE' && x.id !== flt.id && !(x.units.battleship ?? 0) && (x.units.infantry ?? 0) > 0);
+    expect(landed || !!flt.move).toBe(true);
+  });
+
+  it('beim Anlanden im Nahkampf festgehängt: resumeOrders setzt die Landung automatisch fort', () => {
+    const sim = newSim();
+    allWar(sim);
+    const { target, sea, f } = coastPair(sim.state);
+    const flt: Army = { id: sim.state.nextArmyId++, owner: 'DE', node: sea, units: { infantry: 20 }, morale: 0.9 };
+    const foe: Army = { id: sim.state.nextArmyId++, owner: 'FR', node: sea, pos: { a: sea, b: target, f }, units: { infantry: 5 }, morale: 0.9 };
+    sim.state.armies.push(flt, foe);
+    flt.pos = { a: sea, b: target, f };
+    flt.boarding = true;
+    flt.resume = { node: target };
+    expect(inMelee(sim.state, map, flt)).toBe(true);
+    resumeOrders(sim.ctx);
+    expect(flt.move).toBeTruthy();
+    expect(flt.move!.path[0]).toBe(sea);
   });
 });

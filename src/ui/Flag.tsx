@@ -135,6 +135,12 @@ const FLAGS: Record<string, ReactNode> = {
   BG: h3('#fff', '#00966e', '#d62612'),
   // neue Kleinstaaten (frei gestaltet, angelehnt an Flaggen ab 1918)
   FI: nordic('#fff', '#1d4f91'),
+  PL: <><rect width={W} height={H / 2} fill="#fff" /><rect y={H / 2} width={W} height={H / 2} fill="#dc143c" /></>,
+  UA: <><rect width={W} height={H / 2} fill="#005bbb" /><rect y={H / 2} width={W} height={H / 2} fill="#ffd500" /></>,
+  LT: <><rect width={W} height={H / 3} fill="#FDB913" /><rect y={H / 3} width={W} height={H / 3} fill="#006A44" /><rect y={(2 * H) / 3} width={W} height={H / 3} fill="#C1272D" /></>,
+  ML: <><rect width={W / 3} height={H} fill="#14B53A" /><rect x={W / 3} width={W / 3} height={H} fill="#FCD116" /><rect x={(2 * W) / 3} width={W / 3} height={H} fill="#CE1126" /></>,
+  // Kaukasus (Transkaukasien 1918, frei gestaltet)
+  KA: <><rect width={W} height={H / 3} fill="#3b3024" /><rect y={H / 3} width={W} height={H / 3} fill="#e8c55c" /><rect y={(2 * H) / 3} width={W} height={H / 3} fill="#b3282d" /></>,
   BA: h3('#9e3039', '#fff', '#9e3039'),
   NR: (
     <>
@@ -161,6 +167,9 @@ const FLAGS: Record<string, ReactNode> = {
     </>
   ),
 };
+
+/** alle Kürzel mit Flagge (für Auswahl-Listen) */
+export const FLAG_CODES = Object.keys(FLAGS);
 
 /** Flagge einer Nation; unbekannte Nationen erhalten ein Feld in ihrer Kartenfarbe */
 export function Flag({ nation, color, height = 14, title }: { nation: string; color?: string; height?: number; title?: string }) {

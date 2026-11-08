@@ -4,7 +4,7 @@ import { DEFAULT_COMBAT_MORALE, SUPERIORITY, COMBAT_MORALE_V2, BUILDING_DAMAGE_C
   type Building, type UnitType,
 } from './balance.ts';
 import { atWar, hasRightOfWay, setRelation, noteWarDeclaration } from './diplomacy.ts';
-import { edgeParts, edgePoint, edgePoints, edgeSlice, edgeThrough, isSea, nodeCount, nodeName, nodeNeighbors, nodePos } from './graph.ts';
+import { edgeParts, edgePoint, edgePoints, edgeSlice, edgeThrough, isSea, nodeCount, nodeName, nodeNeighbors, nodePos, roadVariants } from './graph.ts';
 import { inPolys } from './mapedits.ts';
 import type { MapData } from './mapdata.ts';
 import { activeCapital, activeLevel } from './economy.ts';
@@ -40,9 +40,64 @@ export function isRailOnly(a: Army): boolean {
   return unitTypes(a).some((u) => UNITS[u].railOnly);
 }
 
+/**
+ * Auf Schiffen? Die boarding-Markung zählt nur, wo sie physikalisch Sinn hat: beim laufenden
+ * Marsch (Ein-/Ausschiffnung inklusive Wartezeit) und auf dem Wasserabschnitt einer Hafenstraße.
+ * Wer die Uferlinie Richtung Land überquert hat – oder einfach an Land steht –, kämpft wieder
+ * mit vollem Landwert, auch wenn die Markung irgendwo hängen geblieben ist.
+ */
+function onShips(a: Army, map?: MapData): boolean {
+  if (!!map && isSea(map, a.node)) return true;
+  if (!a.boarding) return false;
+  if (a.move) return true;
+  const p = a.pos;
+  if (!p || !map || isSea(map, p.a) === isSea(map, p.b)) return false;
+  const [, len] = edgeParts(map, p.a, p.b);
+  if (len <= 0) return true;
+  if (isSea(map, p.a)) { // Weg beginnt auf dem Wasser: Landanteil ganz am anderen Ende
+    const land = Math.min(len, harborLeg(map, p.b, p.a));
+    return p.f < 1 - land / len; // noch vor der Uferlinie über Wasser
+  }
+  const land = Math.min(len, harborLeg(map, p.a, p.b));
+  return p.f >= land / len; // vom Land kommend wartet man am Hafenpunkt noch an Bord
+}
+
 /** Reichweite eines Einheitentyps am Standort der Armee: auf See haben Landeinheiten keine (sie kämpfen im Nahkampf) */
 export function unitRange(a: Army, u: UnitType, map?: MapData): number {
-  return ((map && isSea(map, a.node)) || a.boarding) && !UNITS[u].naval ? 0 : UNITS[u].range;
+  return onShips(a, map) && !UNITS[u].naval ? 0 : UNITS[u].range;
+}
+
+/** Steht ein Wegpunkt eines Küstenabschnitts (See↔Land) physikalisch noch auf dem Wasseranteil? */
+function onWaterLeg(map: MapData, u: number, v: number, f: number): boolean {
+  if (!map || isSea(map, u) === isSea(map, v)) return false;
+  const [, len] = edgeParts(map, u, v);
+  if (len <= 0) return isSea(map, u);
+  if (isSea(map, u)) { // Weg beginnt auf dem Wasser: Landanteil ganz am anderen Ende
+    const land = Math.min(len, harborLeg(map, v, u));
+    return f < 1 - land / len;
+  }
+  const land = Math.min(len, harborLeg(map, u, v));
+  return f >= land / len;
+}
+
+/**
+ * Knoten-Anker für Marsch-Neuplanungen: steht die Armee physikalisch auf dem Wasseranteil eines
+ * Küstenabschnitts, gewinnt immer der Seepunkt – sonst setzte das Snap (f ≥ 0.5) sie gratis an Land.
+ */
+function anchorNode(map: MapData, a: Army, time: number): number {
+  const loc = armyLocation(a, time);
+  return 'road' in loc && onWaterLeg(map, loc.road.a, loc.road.b, loc.road.f)
+    ? (isSea(map, loc.road.a) ? loc.road.a : loc.road.b)
+    : nearestNode(map, a, time);
+}
+
+/**
+ * Landung gegen Widerstand: die Armee steht physikalisch auf dem Wasser (oder ist beim Ein-/Ausschiffen)
+ * und ihr Ziel liegt an Land. Nahkampfbindung hindert sie dann nicht am weiteren Anlanden –
+ * sie kämpft sich zum Strand, halbe Stärke bis zur Uferlinie (onShips leitet das her).
+ */
+export function assaultLanding(state: GameState, map: MapData, a: Army, target: MoveTarget): boolean {
+  return onShips(a, map) && 'node' in target && !isSea(map, target.node);
 }
 
 /**
@@ -64,8 +119,14 @@ export function isRangedOnly(a: Army, map?: MapData): boolean {
   return t.length > 0 && t.every((u) => unitRange(a, u, map) > 0);
 }
 
-export function armySpeed(a: Army): number {
-  return Math.min(...unitTypes(a).map((u) => UNITS[u].speed));
+export function armySpeed(a: Army, state?: GameState): number {
+  const s = Math.min(...unitTypes(a).map((u) => UNITS[u].speed));
+  return state && state.nations[a.owner]?.resShort?.oil ? s * MILITARY.oilShortFactor : s;
+}
+
+/** Ölmangel der Nation: halbes Bewegungstempo (Land, See und Transport) */
+function oilFactor(state: GameState, a: Army): number {
+  return state.nations[a.owner]?.resShort?.oil ? MILITARY.oilShortFactor : 1;
 }
 
 export function maxRange(a: Army, map?: MapData): number {
@@ -86,6 +147,11 @@ export function isMoving(a: Army): boolean {
 /** Darf die Armee den Weg u→v nehmen? Bei Abkürzungen auch durch das Gebiet dazwischen. */
 export function canTraverse(state: GameState, map: MapData, a: Army, u: number, v: number): boolean {
   if (!canEnter(state, map, a, v)) return false;
+  // Hafen als Nadelöhr: steht in der Provinz ein aktiver Hafen, führt jede Einschiffnung nur über seinen Punkt
+  if (!isSea(map, u) && isSea(map, v)) {
+    const ps = state.provinces[u];
+    if (ps?.harborNode != null && activeLevel(ps, 'harbor') > 0 && v !== ps.harborNode) return false;
+  }
   // Eisenbahngeschütze brauchen auch dort intakte Schienen, wo sie losfahren (beschädigte: festgefahren bis zur Reparatur)
   if (isRailOnly(a) && !isSea(map, u) && activeLevel(state.provinces[u], 'railroad') <= 0) return false;
   const t = edgeThrough(map, u, v);
@@ -147,7 +213,7 @@ export function harborLeg(map: MapData, u: number, v: number): number {
 
 function landSpeed(state: GameState, a: Army, province: number): number {
   const ps = state.provinces[province];
-  const base = armySpeed(a);
+  const base = armySpeed(a, state);
   const own = ps.owner === a.owner;
   // Eisenbahngeschütze: auf eigenen Schienen und mit Durchmarschrecht voll, auf fremden sonst halb so schnell
   if (isRailOnly(a)) return own || hasRightOfWay(state, a.owner, ps.owner) ? base : base * MILITARY.enemyRailFactor;
@@ -190,9 +256,9 @@ export function segmentProfile(state: GameState, map: MapData, a: Army, u: numbe
     // Flotte; mit Truppen an Bord höchstens Transporttempo
     const ships = Math.min(...unitTypes(a).filter((t) => UNITS[t].naval).map((t) => UNITS[t].speed));
     const carrying = unitTypes(a).some((t) => !UNITS[t].naval);
-    return [0, 0, 1, d / ((carrying ? Math.min(ships, MILITARY.transportSpeed) : ships) * marchFactor(a))];
+    return [0, 0, 1, d / ((carrying ? Math.min(ships, MILITARY.transportSpeed) : ships) * marchFactor(a) * oilFactor(state, a))];
   }
-  const transport = MILITARY.transportSpeed * marchFactor(a);
+  const transport = MILITARY.transportSpeed * marchFactor(a) * oilFactor(state, a);
   if (su && sv) return [0, 0, 1, d / transport];
   // Abkürzung über eine Kreuzung im Gebiet einer dritten Provinz: drei Abschnitte mit eigenem Tempo
   const through = !su && !sv ? edgeThrough(map, u, v) : null;
@@ -423,22 +489,45 @@ export function planRoute(state: GameState, map: MapData, a: Army, time: number,
     const here = currentProvince(map, a, time);
     if (here >= 0 && activeLevel(state.provinces[here], 'railroad') <= 0) return null;
   }
+  // Steht die Armee auf dem Wasseranteil eines Küstenabschnitts und das Ziel liegt an Land:
+  // immer von hier über die Uferlinie weiter (Startanteil). Der reguläre Straßenstart würde den
+  // Ausstieg an der Landseite wählen und dabei Rest-Wasserfahrt + Ausschiffung verschlucken –
+  // ein Gratis-Teleport ans Land (der gemeldete Stundenwert stimmte, die Rekonstruktion nicht).
+  if ('node' in to && !isSea(map, to.node) && 'road' in from && onWaterLeg(map, from.road.a, from.road.b, from.road.f)) {
+    const sea = isSea(map, from.road.a) ? from.road.a : from.road.b;
+    const land = sea === from.road.a ? from.road.b : from.road.a;
+    const p = planMove(state, map, a, sea, to.node);
+    if (p && p.path[0] === sea && p.path[1] === land) {
+      p.startFrac = isSea(map, from.road.a) ? from.road.f : 1 - from.road.f;
+      return p;
+    }
+    if (p) return p; // anderer Hafen: zurück zum Seepunkt, von dort regulär
+  }
   // Flotte mit Truppen an Land schicken: Landung wie bisher (vom nächsten Knoten aus)
   if ('node' in to && isNaval(a) && !isSea(map, to.node)) {
     const start = 'node' in from ? from.node : from.road.f < 0.5 ? from.road.a : from.road.b;
     return planMove(state, map, a, start, to.node);
   }
+  // Ziel auf einem Weg: alle geometrisch gleichen Darstellungen prüfen (zusammengelegte Abschnitte) –
+  // maßgeblich ist der kürzeste Anmarsch, nicht der Endpunkt der angeklickten Straße
+  const roadT = 'road' in to ? roadVariants(map, to.road.a, to.road.b, to.road.f) : null;
   // Start und Ziel auf demselben Weg: direkt dorthin
-  if ('road' in from && 'road' in to) {
-    const r = from.road, t = to.road;
-    const same = r.a === t.a && r.b === t.b ? t.f : r.a === t.b && r.b === t.a ? 1 - t.f : null;
-    if (same !== null) {
+  if ('road' in from && roadT) {
+    const r = from.road;
+    let direct: MovePlan | null = null;
+    for (const t of roadT) {
+      const same = r.a === t.a && r.b === t.b ? t.f : r.a === t.b && r.b === t.a ? 1 - t.f : null;
+      if (same === null) continue;
+      if (Math.abs(same - r.f) < 1e-6) return null; // steht genau dort (auch über eine andere Auslegung)
       // nicht über die Grenze hinaus, wenn das Land dahinter nicht betreten werden darf
       const ahead = same > r.f ? Math.min(same, roadLimit(state, map, a, r.a, r.b)) : Math.max(same, 1 - roadLimit(state, map, a, r.b, r.a));
-      if (Math.abs(ahead - r.f) < 1e-6 || (ahead - r.f) * (same - r.f) <= 0) return null;
-      if (ahead > r.f) return { path: [r.a, r.b], startFrac: r.f, endFrac: ahead, hours: seg(r.a, r.b) * (ahead - r.f) };
-      return { path: [r.b, r.a], startFrac: 1 - r.f, endFrac: 1 - ahead, hours: seg(r.b, r.a) * (r.f - ahead) };
+      if ((ahead - r.f) * (same - r.f) <= 0) continue;
+      const plan: MovePlan = ahead > r.f
+        ? { path: [r.a, r.b], startFrac: r.f, endFrac: ahead, hours: seg(r.a, r.b) * (ahead - r.f) }
+        : { path: [r.b, r.a], startFrac: 1 - r.f, endFrac: 1 - ahead, hours: seg(r.b, r.a) * (r.f - ahead) };
+      if (!direct || plan.hours < direct.hours) direct = plan;
     }
+    if (direct) return direct;
   }
   const starts: Leg[] = 'node' in from
     ? [{ node: from.node, path: [from.node], frac: 0, hours: 0 }]
@@ -448,10 +537,10 @@ export function planRoute(state: GameState, map: MapData, a: Army, time: number,
     ].filter((l) => canEnter(state, map, a, l.node));
   const ends: Leg[] = 'node' in to
     ? [{ node: to.node, path: [to.node], frac: 1, hours: 0 }]
-    : [
-      { node: to.road.a, path: [to.road.a, to.road.b], frac: to.road.f, hours: seg(to.road.a, to.road.b) * to.road.f },
-      { node: to.road.b, path: [to.road.b, to.road.a], frac: 1 - to.road.f, hours: seg(to.road.b, to.road.a) * (1 - to.road.f) },
-    ];
+    : roadT!.flatMap((t) => [
+      { node: t.a, path: [t.a, t.b], frac: t.f, hours: seg(t.a, t.b) * t.f },
+      { node: t.b, path: [t.b, t.a], frac: 1 - t.f, hours: seg(t.b, t.a) * (1 - t.f) },
+    ]);
   let best: MovePlan | null = null;
   for (const s of starts) {
     const tree = pathsFrom(state, map, a, s.node);
@@ -669,8 +758,10 @@ function catchWaiting(map: MapData, state: GameState, a: Army): void {
     const [bx, by] = armyPosition(map, b, state.time);
     if (Math.hypot(bx - x, by - y) > MILITARY.meleeKm) continue;
     halt(map, b, state.time, true);
-    b.node = a.node;
-    b.pos = a.pos ? { ...a.pos } : null;
+    if (!b.pos) { // ohne eigene Wegposition (frisch vom Knoten) gilt der Ort des Angreifers
+      b.node = a.node;
+      b.pos = a.pos ? { ...a.pos } : null;
+    }
   }
 }
 
@@ -704,7 +795,9 @@ export function resumeOrders(ctx: MilitaryContext): void {
       a.resume = null; // die Verfolgung bestimmt den Weg
       continue;
     }
-    if (inMelee(state, map, a) || engagedTarget(state, map, a)) continue;
+    // Landungstruppe, die auf dem Wasser im Nahkampf festhängt: weiter zum Strand kämpfen (halbe Stärke bis an Land)
+    const landing = !!a.resume && 'node' in a.resume && !isSea(map, a.resume.node) && onShips(a, map);
+    if (!landing && (inMelee(state, map, a) || engagedTarget(state, map, a))) continue;
     const plan = planRoute(state, map, a, state.time, a.resume);
     a.resume = null;
     if (!plan || plan.path.length < 2) continue;
@@ -768,6 +861,7 @@ export function processArrivals(ctx: MilitaryContext): void {
       }
       if (m.seg >= m.path.length - 1) {
         a.move = null;
+        if (!isSea(map, a.node)) delete a.boarding; // gelandet: es gilt wieder der volle Landwert
         if (m.then) disembark(ctx, a, m.then);
         else mergeInto(ctx, a);
         break;
@@ -1100,11 +1194,11 @@ export interface TroopTarget {
 
 /**
  * Zielmoral der Infanterie (zum Tageswechsel): stehend in eigener Provinz deren Moral, sonst neutral;
- * Getreidemangel senkt das Ziel.
+ * Getreidemangel senkt das Ziel (nur die Infanterie – Maschinen haben keine Moral).
  */
 export function troopTarget(state: GameState, map: MapData, a: Army): TroopTarget {
   const n = state.nations[a.owner];
-  const hungry = !n || n.stock.grain < 1 || n.shortage.food;
+  const hungry = !n || n.stock.grain < 1 || !!n.resShort?.grain;
   // maßgeblich ist das Gebiet, in dem die Armee gerade ist (auch unterwegs): eigenes → dessen Moral
   const prov = currentProvince(map, a, state.time);
   const home = prov >= 0 && state.provinces[prov].owner === a.owner;
@@ -1117,8 +1211,8 @@ export function troopTarget(state: GameState, map: MapData, a: Army): TroopTarge
 }
 
 /**
- * Moral der Infanterie nach einem Tageswechsel, nie über das Ziel hinaus: höchstens +10 % bzw. −8 %;
- * bei Getreidemangel fällt sie 5 Punkte schneller (−13 %) und steigt 5 Punkte langsamer (+5 %).
+ * Moral der Infanterie nach einem Tageswechsel, nie über das Ziel hinaus: höchstens +10 % bzw. −10 %;
+ * bei Getreidemangel fällt sie 5 Punkte schneller (−15 %) und steigt 5 Punkte langsamer (+5 %).
  */
 export function nextTroopMorale(m: number, t: TroopTarget): number {
   const gap = t.target - m;
@@ -1177,14 +1271,14 @@ export function applyDamage(a: Army, dmg: number, random: () => number, keep = 0
  * Landtruppen auf See und beim Ein-/Ausschiffen halb (mit `map`; Schlachtschiffe voll).
  */
 export function unitHp(a: Army, u: UnitType, map?: MapData): number {
-  const sea = !UNITS[u].naval && (!!a.boarding || (map !== undefined && isSea(map, a.node)));
+  const sea = !UNITS[u].naval && onShips(a, map);
   return UNITS[u].hp * (u === 'infantry' ? infantryStrength(a) : 1) * (sea ? MILITARY.seaHpFactor : 1);
 }
 
-/** Tageswechsel: Maschinen außerhalb von Kämpfen bekommen einen Teil ihrer fehlenden Lebenspunkte zurück */
+/** Tageswechsel: Maschinen außerhalb von Kämpfen bekommen einen Teil ihrer fehlenden Lebenspunkte zurück; bei Ölmangel der Nation repariert nichts */
 export function repairMachines(state: GameState, map: MapData): void {
   for (const a of state.armies) {
-    if (!a.wounds || inMelee(state, map, a) || (a.forcedMarch && a.move)) continue;
+    if (!a.wounds || inMelee(state, map, a) || (a.forcedMarch && a.move) || state.nations[a.owner]?.resShort?.oil) continue;
     for (const u of Object.keys(a.wounds) as UnitType[]) {
       if (u === 'infantry' || !a.wounds[u]) continue;
       const w = a.wounds[u]!;
@@ -1213,7 +1307,7 @@ function soldierFactor(a: Army, u: UnitType): number {
 
 export function meleeOutput(state: GameState, map: MapData, a: Army): number {
   // auf See und beim Ein-/Ausschiffen kämpfen Landeinheiten mit halber Stärke
-  const sea = isSea(map, a.node) || !!a.boarding;
+  const sea = onShips(a, map);
   const defending = !sea && state.provinces[a.node].owner === a.owner;
   return meleePower(a, map, defending, sea);
 }
@@ -1426,7 +1520,7 @@ export function halt(map: MapData, a: Army, time: number, keepOrder = false, exa
   const loc: MoveTarget = exact && f > 1e-6 && f < 1 - 1e-6 ? { road: { a: a.move.path[a.move.seg], b: a.move.path[a.move.seg + 1], f } } : armyLocation(a, time);
   const t = keepOrder ? finalTarget(a) : null;
   a.boarding = (keepOrder && isBoarding(map, a)) || undefined;
-  a.node = nearestNode(map, a, time);
+  a.node = anchorNode(map, a, time);
   a.pos = 'road' in loc ? loc.road : null;
   a.move = null;
   a.resume = t;
@@ -1614,6 +1708,7 @@ export function conquer(ctx: MilitaryContext, node: number, by: string): void {
   const mp = map.provinces[node];
   ps.owner = by;
   ps.construction = null;
+  ps.repairing = undefined;
   ps.buildQueue = [];
   ps.queue = [];
   ps.repeat = false;
@@ -1917,7 +2012,9 @@ export function pursue(ctx: MilitaryContext, only?: Army): void {
       if (a.target === id) a.target = null;
       continue;
     }
-    a.node = nearestNode(map, a, state.time);
+    // Steht die Armee physikalisch noch auf dem Wasseranteil eines Küstenabschnitts, darf der
+    // Knoten-Snap sie nicht gratis ans Land setzen – Anker ist dann der Seepunkt.
+    a.node = anchorNode(map, a, state.time);
     startMove(ctx, a, plan.path, plan.then, plan);
     ctx.invalidate();
   }
@@ -2023,7 +2120,7 @@ export function replan(ctx: MilitaryContext, a: Army): void {
   if (!a.move || !t || boardingWait(map, a, state.time)) return;
   const plan = planRoute(state, map, a, state.time, t);
   if (!plan || plan.path.length < 2) return;
-  a.node = nearestNode(map, a, state.time);
+  a.node = anchorNode(map, a, state.time);
   startMove(ctx, a, plan.path, plan.then, plan);
 }
 

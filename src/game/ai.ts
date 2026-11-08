@@ -122,7 +122,7 @@ export class BasicAI implements Controller {
     // Nahrungslage: Getreide ernährt die Infanterie, Fisch den Provinzunterhalt
     const grainNet = netRate(view.rates, 'grain'), fishNet = netRate(view.rates, 'fish');
     const foodShort = grainNet < 0 || fishNet < 0 || stock.grain < 3000;
-    // Kasernen (1000 Getreide je Stufe und Tag) und Wehrämter (jede neue Infanterie isst 18 Getreide am Tag):
+    // Kasernen (1000 Getreide je Stufe und Tag) und Wehrämter (jede neue Infanterie isst 15 Getreide und 5 Öl am Tag):
     // bei Getreidemangel abschalten, bei Überschuss wieder an. Großmächte lassen ihre Wehrämter immer an –
     // statt die Truppen auszudünnen, greifen sie an und erobern neues Land (siehe military/diplomacy).
     const starving = grainNet < 0 && stock.grain < -grainNet * 5, plenty = grainNet > 1500 && stock.grain > 10000;

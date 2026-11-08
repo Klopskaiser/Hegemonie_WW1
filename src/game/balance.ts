@@ -33,21 +33,28 @@ export const PROVINCE = {
   /** Rohstoffproduktion pro Tag bei 100 % Moral */
   resourceBase: 3150,
   /** Geld je Tag: Grundbetrag + Moral in % × moneyPerMoralePct; Doppelprovinz das Doppelte */
-  moneyBase: 710,
-  moneyPerMoralePct: 19,
+  moneyBase: 700,
+  moneyPerMoralePct: 18,
+  /** Größen-Bonus aufs Geld (Fläche in km²): unter moneyAreaNone kein Bonus, bei moneyAreaNone +1 %,
+   * bei moneyAreaFlat +10 % (Cap), dazwischen linear. Wirkt multiplikativ nach allen anderen Boni; Korruption danach. */
+  moneyAreaNone: 50_000,
+  moneyAreaStartBonus: 0.01,
+  moneyAreaFlat: 100_000,
+  moneyAreaFlatBonus: 0.1,
   /** Unterhalt je Provinz und Tag in jeder Kategorie (Nahrung, Baustoffe, Energie), verteilt nach Verbrauchsregler */
-  upkeep: 800,
+  upkeep: 750,
 };
 
 // ---------------------------------------------------------------- Korruption
 
 export const CORRUPTION = {
-  /** Abzug von allen produzierten Ressourcen bei geringer bzw. voller Kontrolle */
+  /** Abzug von allen produzierten Ressourcen: unter dem Anfangsanteil 0 %, ab ihm linear vom Anfangswert */
   min: 0.01,
   max: 0.12,
-  /** Kontrolle (mittlere Moral aller eigenen Provinzen): hier beginnt die Korruption, hier erreicht sie das Maximum */
-  startControl: 0.10,
-  fullControl: 0.50,
+  /** Kontrolle = eigener Anteil der Provinzen (wie Rangliste und Siegbedingung):
+   *  hier beginnt die Korruption, hier erreicht sie das Maximum */
+  startShare: 0.10,
+  fullShare: 0.50,
 };
 
 // ---------------------------------------------------------------- Gebäude
@@ -91,7 +98,7 @@ export const BUILDINGS: Record<Building, BuildingDef> = {
   railroad: {
     name: 'Eisenbahn', maxLevel: 1,
     cost: () => ({ money: 10000, lumber: 5000, iron: 3000, coal: 1000 }),
-    hours: () => 72,
+    hours: () => 60,
     prodBonus: (l) => (l >= 1 ? 0.33 : 0),
     morale: (l) => (l >= 1 ? 0.07 : 0),
     upkeep: { coal: 500 },
@@ -103,15 +110,15 @@ export const BUILDINGS: Record<Building, BuildingDef> = {
   harbor: {
     name: 'Hafen', maxLevel: 1, coastal: true, fromDay: 3, lives: 3,
     cost: () => ({ money: 10000, lumber: 10000 }),
-    hours: () => 72,
+    hours: () => 60,
     prodBonus: (l) => (l >= 1 ? 0.25 : 0),
     morale: (l) => (l >= 1 ? 0.07 : 0),
-    describe: () => 'Produktion +25 %, Moral +7 %, ermöglicht Schiffe und Einschiffen.',
+    describe: () => 'Produktion +25 %, Moral +7 %, ermöglicht Schiffe und Einschiffnung nur am gewählten Hafenpunkt.',
   },
   tradepost: {
     name: 'Handelsposten', maxLevel: 1, inland: true, lives: 1,
     cost: () => ({ money: 12000, iron: 500, lumber: 2500 }),
-    hours: () => 48,
+    hours: () => 36,
     prodBonus: (l) => (l >= 1 ? 0.07 : 0),
     moneyBonus: (l) => (l >= 1 ? 0.08 : 0),
     morale: (l) => (l >= 1 ? 0.02 : 0),
@@ -120,8 +127,8 @@ export const BUILDINGS: Record<Building, BuildingDef> = {
   },
   workshop: {
     name: 'Werkstatt', maxLevel: 1, lives: 1,
-    cost: () => ({ money: 5000, iron: 1500, lumber: 500 }),
-    hours: () => 24,
+    cost: () => ({ money: 5000, iron: 1000, lumber: 500 }),
+    hours: () => 12,
     prodBonus: () => 0,
     morale: (l) => (l >= 1 ? 0.01 : 0),
     describe: () => `Mechanische Einheiten (alles außer Infanterie) werden ${Math.round(WORKSHOP_SPEEDUP * 100)} % schneller gebaut, Moral +1 %. Voraussetzung für die Fabrik.`,
@@ -130,7 +137,7 @@ export const BUILDINGS: Record<Building, BuildingDef> = {
     name: 'Fabrik', maxLevel: 4, fromDay: 3,
     requires: { workshop: 1 },
     cost: () => ({ money: 10000, iron: 2500, lumber: 2500, oil: 2500 }),
-    hours: () => 48,
+    hours: () => 40,
     prodBonus: (l) => FACTORY_BONUS[l],
     morale: (l) => 0.025 * l,
     excludes: ['manufactory'],
@@ -138,8 +145,8 @@ export const BUILDINGS: Record<Building, BuildingDef> = {
   },
   manufactory: {
     name: 'Manufaktur', maxLevel: 4,
-    cost: () => ({ money: 10000, iron: 2000, lumber: 2000, gas: 3000 }),
-    hours: () => 50,
+    cost: () => ({ money: 15000, iron: 2000, lumber: 2000, gas: 3000 }),
+    hours: () => 40,
     prodBonus: (l) => 0.11 * l,
     morale: (l) => 0.025 * l,
     excludes: ['factory'],
@@ -158,7 +165,7 @@ export const BUILDINGS: Record<Building, BuildingDef> = {
   },
   recruitment: {
     name: 'Wehramt', maxLevel: 1, switchable: true, lives: 1,
-    cost: () => ({ money: 2000, lumber: 125, iron: 125 }),
+    cost: () => ({ money: 1000 }),
     hours: () => 1 / 6,
     prodBonus: () => 0,
     morale: () => 0,
@@ -168,9 +175,9 @@ export const BUILDINGS: Record<Building, BuildingDef> = {
   office: {
     name: 'Bauamt', maxLevel: 1, switchable: true, lives: 1,
     cost: () => ({ money: 30000, lumber: 500 }),
-    hours: () => 48,
+    hours: () => 32,
     prodBonus: () => 0,
-    morale: () => 0.02,
+    morale: (l) => (l >= 1 ? 0.02 : 0),
     upkeep: { money: 2000 },
     describe: () => `Bauzeiten von Gebäuden in dieser Provinz −${Math.round(OFFICE_SPEEDUP * 100)} %, Moral +2 %. Unterhalt 2000 Geld/Tag.`,
   },
@@ -211,6 +218,8 @@ export const RECRUIT_HOURS = [32, 21, 16];
 export const RECRUIT_WITHOUT_OFFICE = 0.5;
 /** Kampf in einer Provinz: Wahrscheinlichkeit je Stunde und Gebäude, eine Stufe zu verlieren */
 export const BUILDING_DAMAGE_CHANCE = 0.05;
+/** Dauer einer Gebäudereparatur in Spielstunden (unabhängig von Kosten und Gebäude) */
+export const REPAIR_HOURS = 2;
 /** Abbruch eines Baus, einer Fertigung oder einer Hauptstadtverlegung: Anteil der Kosten, der zurückkommt */
 export const BUILD_REFUND = 1;
 
@@ -251,28 +260,28 @@ export interface UnitDef {
 export const UNITS: Record<UnitType, UnitDef> = {
   infantry: {
     name: 'Infanterie', short: 'Inf', cost: {}, hours: 0,
-    requires: {}, auto: true, speed: 36, attack: 1, defense: 1.1, hp: 20, range: 0, upkeep: { grain: 18 },
+    requires: {}, auto: true, speed: 36, attack: 1, defense: 1.1, hp: 20, range: 0, upkeep: { grain: 15, oil: 5 },
   },
   artillery: {
     name: 'Artillerie', short: 'Art', cost: { money: 10000, iron: 3000, oil: 2000 }, hours: 96,
-    requires: { factory: 1 }, speed: 25, attack: 1.5, defense: 1.5, hp: 15, range: 65, upkeep: { oil: 15 },
+    requires: { factory: 1 }, speed: 25, attack: 1.5, defense: 1.5, hp: 15, range: 60, upkeep: { grain: 10, oil: 10 },
   },
   armoredCar: {
     name: 'Panzerwagen', short: 'PzW', cost: { money: 7000, iron: 2000, oil: 1500 }, hours: 16,
-    requires: { factory: 1 }, speed: 72, attack: 2, defense: 2, hp: 25, range: 0, upkeep: { oil: 15 },
+    requires: { factory: 1 }, speed: 72, attack: 2, defense: 2, hp: 25, range: 0, upkeep: { grain: 5, oil: 10 },
   },
   tank: {
     name: 'Panzer', short: 'Pz', cost: { money: 20000, iron: 5000, oil: 2500 }, hours: 40,
-    requires: { factory: 2 }, speed: 36, attack: 4, defense: 4, hp: 50, range: 0, upkeep: { oil: 30 },
+    requires: { factory: 2 }, speed: 36, attack: 4, defense: 4, hp: 50, range: 0, upkeep: { oil: 20 },
   },
   railgun: {
     name: 'Eisenbahngeschütz', short: 'EBG', cost: { money: 50000, iron: 10000, lumber: 5000, coal: 5000, oil: 10000 }, hours: 62,
-    requires: { factory: 3, railroad: 1 }, speed: 12.5, attack: 3, defense: 3, hp: 30, range: 200,
+    requires: { factory: 3, railroad: 1 }, speed: 12.5, attack: 3, defense: 3, hp: 30, range: 185,
     upkeep: { oil: 10, coal: 40 }, railOnly: true, sight: 200,
   },
   battleship: {
     name: 'Schlachtschiff', short: 'SS', cost: { money: 50000, iron: 15000, coal: 10000, oil: 5000 }, hours: 96,
-    requires: { factory: 3, harbor: 1 }, speed: 30, attack: 6, defense: 6, hp: 80, range: 100, upkeep: { oil: 30, coal: 30 }, naval: true, sight: 200,
+    requires: { factory: 3, harbor: 1 }, speed: 30, attack: 6, defense: 6, hp: 80, range: 90, upkeep: { oil: 30, coal: 30 }, naval: true, sight: 200,
   },
 };
 
@@ -306,13 +315,15 @@ export const MILITARY = {
   forcedMarchWear: 0.04,
   /** Nahkampf je Armee: die stärksten Einheiten zuerst; bis Platz `meleeFull` voll, danach linear weniger, ab Platz `meleeMax` + 1 nichts */
   meleeFull: 20,
-  meleeMax: 50,
+  meleeMax: 60,
   /** Maschinen (alles außer Infanterie) reparieren sich zum Tageswechsel außerhalb von Kämpfen um diesen Anteil der fehlenden Lebenspunkte */
   repairShare: 1 / 7,
   /** mindestens so viel der vollen Lebenspunkte je Tag, damit Maschinen ganz heil werden */
   repairMin: 0.05,
   /** Landtruppen auf See kämpfen mit halber Stärke (Schlachtschiffe voll) */
   seaFactor: 0.5,
+  /** Ölmangel: Bewegungstempo aller Einheiten auf dieser Faktor; Maschinen reparieren sich dann nicht */
+  oilShortFactor: 0.5,
   /** Lebenspunkte der Landtruppen auf See und beim Ein-/Ausschiffen (Schlachtschiffe voll) */
   seaHpFactor: 0.5,
   /** Zufallsstreuung des Schadens (±) */
@@ -335,10 +346,8 @@ export const FACTORY_SPEEDUP = 0.25;
 
 export const MORALE = {
   base: 0.85,
-  /** Abzug je `distanceStep` km Entfernung zur Hauptstadt ab `distanceFree` km; ohne Hauptstadt der volle Abzug */
-  distancePerStep: 0.01,
-  distanceStep: 100,
-  distanceFree: 300,
+  /** Abzug nach Marschtagen zur Hauptstadt (Infanteriemarsch über das Wegenetz, Bahn/Hafen verkürzen); ohne Hauptstadt der volle Abzug */
+  distancePerDay: 0.1,
   distanceMax: 0.3,
   /** Kämpfe in der Provinz seit dem letzten Tageswechsel: fester Abzug am Moralziel (unabhängig von der Dauer) */
   battle: 0.15,
@@ -357,7 +366,7 @@ export const MORALE = {
   declareWarDays: 2,
   warEach: 0.05,
   warMax: 0.25,
-  shortage: { food: 0.15, materials: 0.05, energy: 0.1 } as Record<Category, number>,
+  shortage: { materials: 0.05, energy: 0.1 } as Partial<Record<Category, number>>,
   min: 0.05,
   /** Anteil der Lücke zum Zielwert, der pro Tag geschlossen wird; mindestens minStep (sonst die Restlücke), höchstens maxStep je Tag */
   adapt: 0.35,
@@ -378,7 +387,7 @@ export const TROOP_MORALE = {
   hunger: 0.05,
   /** Annäherung an das Ziel je Tageswechsel: volle Lücke, höchstens so viel */
   rise: { max: 0.1 },
-  fall: { max: 0.08 },
+  fall: { max: 0.1 },
   /**
    * Je Kampfrunde (stündlich): Nahkampf −2 %, gegen zwei und mehr Armeen −1 % zusätzlich, beschossen −2 %
    * (egal wie viele Schützen). Zusammen höchstens lossMax, egal wie viele Armeen beteiligt sind.

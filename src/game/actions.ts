@@ -2,22 +2,25 @@
 // ausschließlich über diese Aktionen.
 
 import {
-CAPITAL_MOVE, DAY, buildingLives,   ALL_RES, BUILD_QUEUE_LIMIT, BUILD_REFUND, BUILDINGS, CATEGORY_RES, FACTORY_SPEEDUP, HOUR, OFFICE_SPEEDUP, QUEUE_LIMIT, RES_NAMES, UNITS, WORKSHOP_SPEEDUP,
+CAPITAL_MOVE, DAY, buildingLives,   ALL_RES, BUILD_QUEUE_LIMIT, BUILD_REFUND, BUILDINGS, BUILDING_ORDER, CATEGORY_RES, FACTORY_SPEEDUP, HOUR, OFFICE_SPEEDUP, QUEUE_LIMIT, REPAIR_HOURS, RES_NAMES, UNITS, WORKSHOP_SPEEDUP,
   type Building, type Category, type Cost, type Res, type UnitType,
 } from './balance.ts';
 import { validShares, activeCapital, activeLevel } from './economy.ts';
 import { atWar, hasRightOfWay, relation, relationRank, RELATION_NAMES, setRelation, noteWarDeclaration } from './diplomacy.ts';
-import { isSea, nodeNeighbors } from './graph.ts';
+import { harborSea, isSea, nodeNeighbors } from './graph.ts';
 import type { MapData, Resource } from './mapdata.ts';
 import { acceptOffer, cancelOffer, postOffer } from './market.ts';
 import {
   boardingWait, currentProvince, garrisonKeep, halt, inMelee, isNaval, isRailOnly, mergeArmies, nearestNode, planRoute, pursue, rejoinSplits, replan, samePlace, startMove, unitCount, unitTypes,
+  assaultLanding,
   type MilitaryContext, type MoveTarget,
 } from './military.ts';
 import type { Army, GameState, ProvinceState, Relation, Stock } from './types.ts';
 
 export type ProvinceAction =
-  | { type: 'build'; province: number; building: Building }
+  | { type: 'build'; province: number; building: Building; harborPoint?: number }
+  /** Hafenpunkt wählen/verlegen (nur eigene Küstenprovinz; wirkt, sobald ein Hafen aktiv ist) */
+  | { type: 'setHarborPoint'; province: number; sea: number }
   /** laufenden Bau abbrechen (volle Erstattung); der nächste geplante startet */
   | { type: 'cancelBuild'; province: number }
   /** geplantes Gebäude aus der Bauschleife nehmen (noch nicht bezahlt) */
@@ -29,6 +32,7 @@ export type ProvinceAction =
   | { type: 'switchBuilding'; province: number; building: Building; on: boolean }
   /** beschädigtes Gebäude reparieren (Kosten: Anteil der fehlenden Leben an den Kosten der obersten Stufe) */
   | { type: 'repair'; province: number; building: Building }
+  | { type: 'repairAll' }
   /** Hauptstadt in diese Provinz verlegen (CAPITAL_MOVE: Kosten, 48 h; je Nation eine Verlegung gleichzeitig) */
   | { type: 'moveCapital'; province: number };
 
@@ -175,6 +179,13 @@ export function checkBuild(state: GameState, map: MapData, nation: string, provi
   return res();
 }
 
+/** Als Hafen wählbare Seepunkte der Provinz (globale Knotennummern). */
+export function harborCandidates(map: MapData, province: number): number[] {
+  const p = map.provinces[province];
+  const seas = p.seaLinks ?? p.seas ?? [];
+  return seas.map((z) => map.provinces.length + z);
+}
+
 /** Reparatur eines beschädigten Gebäudes: Kosten anteilig zu den fehlenden Leben der obersten Stufe */
 export function checkRepair(state: GameState, nation: string, province: number, building: Building): { ok: boolean; error?: string; cost: Cost } {
   const ps = state.provinces[province];
@@ -185,6 +196,7 @@ export function checkRepair(state: GameState, nation: string, province: number, 
   for (const r of Object.keys(full) as Res[]) cost[r] = Math.ceil((full[r] ?? 0) * share);
   if (!ps || ps.owner !== nation) return { ok: false, error: 'Provinz gehört nicht dir', cost };
   if (!lost) return { ok: false, error: 'Nicht beschädigt', cost };
+  if (ps.repairing?.[building]) return { ok: false, error: 'Wird bereits repariert', cost };
   if (state.armies.some((a) => a.node === province && !a.pos && !a.move && atWar(state, nation, a.owner) && unitCount(a) > 0)) {
     return { ok: false, error: 'Feinde in der Stadt – erst nach dem Kampf', cost };
   }
@@ -268,6 +280,30 @@ export function applyAction(ctx: ActionContext, nation: string, action: Action):
     ctx.invalidate();
     return { ok: true };
   }
+  if (action.type === 'repairAll') {
+    // Alle beschädigten Gebäude im Reich zur Reparatur anmelden: je Provinz eine auf einmal,
+    // der Reihe nach, solange die Ressourcen reichen (2 h Bauzeit pro Reparatur).
+    const { state } = ctx;
+    const stock = state.nations[nation].stock;
+    let count = 0;
+    state.provinces.forEach((ps, i) => {
+      if (ps.owner !== nation || !ps.damage) return;
+      if (ps.repairing && Object.keys(ps.repairing).length) return; // je Provinz läuft schon eine
+      for (const b of BUILDING_ORDER) {
+        if (!ps.damage[b]) continue;
+        const chk = checkRepair(state, nation, i, b);
+        if (!chk.ok || !canAfford(stock, chk.cost)) continue;
+        pay(stock, chk.cost);
+        (ps.repairing ??= {})[b] = state.time + REPAIR_HOURS * HOUR;
+        count++;
+        break;
+      }
+    });
+    if (!count) return { ok: false, error: 'Nichts zu reparieren oder zu wenig Ressourcen' };
+    ctx.log(`${count} Reparatur${count > 1 ? 'en' : ''} eingereiht.`, nation);
+    ctx.invalidate();
+    return { ok: true };
+  }
   if (action.type === 'cancelCapitalMove') {
     const n = ctx.state.nations[nation];
     if (!n?.capitalMove) return { ok: false, error: 'Keine Verlegung der Hauptstadt im Gange' };
@@ -285,11 +321,26 @@ export function applyAction(ctx: ActionContext, nation: string, action: Action):
     case 'build': {
       const chk = checkBuild(state, map, nation, action.province, action.building);
       if (!chk.ok) return { ok: false, error: chk.error! };
+      if (action.building === 'harbor') {
+        // Hafenpunkt festlegen: gewählter Punkt, sonst der bisher gemerkte, sonst der nächste Seepunkt
+        const cands = harborCandidates(map, action.province);
+        if (action.harborPoint != null) {
+          if (!cands.includes(action.harborPoint)) return { ok: false, error: 'Kein Seepunkt in dieser Provinz' };
+          ps.harborNode = action.harborPoint;
+        } else if (ps.harborNode == null && cands.length > 0) ps.harborNode = harborSea(map, action.province) ?? undefined;
+      }
       if (chk.queued) ps.buildQueue.push(action.building);
       else {
         pay(stock, chk.cost);
         ps.construction = { building: action.building, level: chk.level, start: state.time, end: state.time + Math.round(chk.hours * HOUR) };
       }
+      ctx.invalidate();
+      return { ok: true };
+    }
+    case 'setHarborPoint': {
+      if (ps.owner !== nation) return { ok: false, error: 'Provinz gehört nicht dir' };
+      if (!harborCandidates(map, action.province).includes(action.sea)) return { ok: false, error: 'Kein Seepunkt in dieser Provinz' };
+      ps.harborNode = action.sea;
       ctx.invalidate();
       return { ok: true };
     }
@@ -335,8 +386,7 @@ export function applyAction(ctx: ActionContext, nation: string, action: Action):
       const chk = checkRepair(state, nation, action.province, action.building);
       if (!chk.ok) return { ok: false, error: chk.error! };
       pay(stock, chk.cost);
-      delete ps.damage![action.building];
-      if (!Object.keys(ps.damage!).length) delete ps.damage;
+      (ps.repairing ??= {})[action.building] = state.time + REPAIR_HOURS * HOUR;
       ctx.invalidate();
       return { ok: true };
     }
@@ -395,7 +445,6 @@ function applyArmyAction(ctx: ActionContext, nation: string, action: ArmyAction)
   if (!a || a.owner !== nation) return { ok: false, error: 'Armee gehört nicht dir' };
   switch (action.type) {
     case 'move': {
-      if (inMelee(state, map, a)) return { ok: false, error: 'Im Nahkampf gebunden – erst nach Kampfende beweglich' };
       const N = map.provinces.length + map.seas.length;
       if (!Number.isInteger(action.to) || action.to < 0 || action.to >= N) return { ok: false, error: 'Unbekanntes Ziel' };
       let target: MoveTarget = { node: action.to };
@@ -404,6 +453,8 @@ function applyArmyAction(ctx: ActionContext, nation: string, action: ArmyAction)
         if (!nodeNeighbors(map, action.to).includes(action.toward) || !(f >= 0 && f <= 1)) return { ok: false, error: 'Ungültiger Wegpunkt' };
         target = { road: { a: action.to, b: action.toward, f } };
       }
+      // Nahkampfbindung stoppt – außer Landungstruppen kämpfen sich an den Strand (halbe Stärke bis an Land)
+      if (inMelee(state, map, a) && !assaultLanding(state, map, a, target)) return { ok: false, error: 'Im Nahkampf gebunden – erst nach Kampfende beweglich' };
       // Kriegserklärung beim Eintreffen: an die Besitzer des Ziels, mit denen kein Krieg und kein Durchmarsch besteht
       const warOn = action.declareWar ? requiredWars(state, map, a, target) : [];
       // Besatzung: verlässt die letzte Armee eine eigene Stadt, bleibt eine Einheit zurück

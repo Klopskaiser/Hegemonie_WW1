@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { BUILDINGS, DAY, PROVINCE } from '../src/game/balance.ts';
-import { allRates, corruptionOf, defaultConsumption, netRate, provinceOutput, toShares, type NationRates } from '../src/game/economy.ts';
+import { allRates, areaMoneyBonus, corruptionOf, defaultConsumption, moraleTarget, netRate, provinceOutput, toShares, type NationRates } from '../src/game/economy.ts';
 import type { MapData } from '../src/game/mapdata.ts';
 import { Simulation } from '../src/game/sim.ts';
 import { createGame } from '../src/game/state.ts';
@@ -16,25 +16,44 @@ function newSim() {
 }
 
 describe('Geld und Unterhalt', () => {
-  it('Geld: 710 + Moral-% × 19 je Provinz, Doppelprovinz das Doppelte; Rohstoff 3150', () => {
+  it('Geld: 700 + Moral-% × 18 je Provinz, Doppelprovinz das Doppelte; Rohstoff 3150; je Fläche der Größen-Bonus', () => {
     const sim = newSim();
     const single = map.provinces.find((p) => !p.double)!, double = map.provinces.find((p) => p.double)!;
     const ps = { ...sim.state.provinces[single.id], morale: 1, buildings: { ...sim.state.provinces[single.id].buildings, railroad: 0, harbor: 0, factory: 0, manufactory: 0 } };
-    expect(provinceOutput(map, ps, single.id).money).toBe(710 + 100 * 19);
+    const abf = (a: number) => (a < 50_000 ? 1 : a >= 100_000 ? 1.1 : 1 + 0.01 + ((a - 50_000) / 50_000) * 0.09);
+    const ab = abf(single.area);
+    expect(provinceOutput(map, ps, single.id).money).toBe((700 + 100 * 18) * ab);
     expect(provinceOutput(map, ps, single.id).amount).toBe(3150);
-    expect(provinceOutput(map, { ...ps, morale: 0.5 }, single.id).money).toBe(710 + 50 * 19);
-    expect(provinceOutput(map, { ...sim.state.provinces[double.id], morale: 1 }, double.id).money).toBe(2 * (710 + 100 * 19));
+    expect(provinceOutput(map, { ...ps, morale: 0.5 }, single.id).money).toBe((700 + 50 * 18) * ab);
+    expect(provinceOutput(map, { ...sim.state.provinces[double.id], morale: 1 }, double.id).money).toBe(2 * (700 + 100 * 18) * abf(double.area));
   });
 
-  it('Provinzunterhalt 800 je Kategorie, Eisenbahn 500 Kohle', () => {
+  it('Flächen-Bonus: unter 50.000 km² keiner, bei 50.000 +1 %, bei 100.000 +10 % als Cap, dazwischen linear', () => {
+    expect(areaMoneyBonus(49_999)).toBe(0);
+    expect(areaMoneyBonus(50_000)).toBe(0.01);
+    expect(areaMoneyBonus(75_000)).toBeCloseTo(0.055, 10);
+    expect(areaMoneyBonus(100_000)).toBe(0.1);
+    expect(areaMoneyBonus(350_000)).toBe(0.1); // Cap
+    expect(areaMoneyBonus(undefined)).toBe(0);
+    // Handelsposten (+8 %) und Fläche (+5,5 % bei 75.000 km²) multiplizieren sich
+    const sim = newSim();
+    const p = map.provinces[0];
+    const fakeMap = { ...map, provinces: map.provinces.map((q) => (q.id === p.id ? { ...q, area: 75_000 } : q)) };
+    const ps = { ...sim.state.provinces[p.id], morale: 1, owner: 'DE' as const, revolt: false, buildings: { ...sim.state.provinces[p.id].buildings, tradepost: 1 } };
+    sim.state.provinces[p.id] = ps;
+    expect(provinceOutput(fakeMap, ps, p.id).money).toBeCloseTo((700 + 100 * 18) * 1.08 * 1.055, 6);
+  });
+
+  it('Provinzunterhalt 750 je Kategorie, Eisenbahn 500 Kohle', () => {
     const sim = newSim();
     const own = sim.state.provinces.filter((p) => p.owner === 'DE').length;
     const r = allRates(sim.state, map).DE;
     expect(r.upkeep).toBe(own * PROVINCE.upkeep);
     expect(BUILDINGS.railroad.upkeep?.coal).toBe(500);
-    // Infanterie verbraucht fest Getreide
+    // Infanterie verbraucht fest Getreide und Öl
     const infantry = sim.state.armies.filter((a) => a.owner === 'DE').reduce((t, a) => t + (a.units.infantry ?? 0), 0);
-    expect(r.cons.grain).toBe(infantry * 18);
+    expect(r.cons.grain).toBe(infantry * 15);
+    expect(r.cons.oil).toBe(infantry * 5);
   });
 });
 
@@ -129,22 +148,30 @@ function focusSharesOf(r: NationRates) {
 }
 
 describe('Korruption', () => {
-  const setControl = (sim: ReturnType<typeof newSim>, morale: number) => {
-    for (const p of sim.state.provinces) if (p.owner === 'DE') p.morale = morale;
+  /** gibt dem Land so viele Provinzen, bis der Zielanteil erreicht ist; liefert den echten Anteil */
+  const setShare = (sim: ReturnType<typeof newSim>, target: number): number => {
+    const total = sim.state.provinces.length;
+    for (const p of sim.state.provinces) p.owner = 'FR';
+    let own = 0;
+    for (let i = 0; i < sim.state.provinces.length && own / total < target; i++) {
+      sim.state.provinces[i].owner = 'DE';
+      own++;
+    }
+    return own / total;
   };
+  const expected = (s: number) => (s < 0.1 ? 0 : s >= 0.5 ? 0.12 : 0.01 + ((s - 0.1) / 0.4) * 0.11);
 
-  it('beginnt bei 10 % Kontrolle mit 1 % und erreicht bei 50 % die vollen 12 %', () => {
+  it('beginnt bei 10 % Kartenkontrolle mit 1 % und erreicht bei 50 % die vollen 12 %', () => {
     const sim = newSim();
-    setControl(sim, 0.05); expect(corruptionOf(sim.state, 'DE')).toBeCloseTo(0.01, 9);
-    setControl(sim, 0.10); expect(corruptionOf(sim.state, 'DE')).toBeCloseTo(0.01, 9);
-    setControl(sim, 0.30); expect(corruptionOf(sim.state, 'DE')).toBeCloseTo(0.065, 9);
-    setControl(sim, 0.50); expect(corruptionOf(sim.state, 'DE')).toBeCloseTo(0.12, 9);
-    setControl(sim, 0.90); expect(corruptionOf(sim.state, 'DE')).toBeCloseTo(0.12, 9);
+    for (const target of [0.05, 0.1, 0.3, 0.5, 0.9]) {
+      const share = setShare(sim, target);
+      expect(corruptionOf(sim.state, map, 'DE')).toBeCloseTo(expected(share), 9);
+    }
   });
 
   it('zieht am Ende von allen produzierten Ressourcen ab, auch vom Geld', () => {
     const sim = newSim();
-    setControl(sim, 0.3); // 6,5 % Abzug
+    setShare(sim, 0.3); // rund 6,5 % Abzug
     const r = allRates(sim.state, map).DE;
     let rawMoney = 0, rawGrain = 0;
     for (const [i, ps] of sim.state.provinces.entries()) {
@@ -153,9 +180,25 @@ describe('Korruption', () => {
       rawMoney += po.money;
       if (po.resource === 'grain') rawGrain += po.amount;
     }
-    expect(r.prod.money).toBeCloseTo(rawMoney * 0.935, 6);
-    if (rawGrain > 0) expect(r.prod.grain).toBeCloseTo(rawGrain * 0.935, 6);
+    const keep = 1 - corruptionOf(sim.state, map, 'DE');
+    expect(r.prod.money).toBeCloseTo(rawMoney * keep, 6);
+    if (rawGrain > 0) expect(r.prod.grain).toBeCloseTo(rawGrain * keep, 6);
     // der Verbrauch bleibt unberührt
     expect(r.cons.grain).toBeGreaterThan(0);
+  });
+});
+
+describe('Moraleziel und Gebäudeboni', () => {
+  it('Bauamt zählt nur, wenn es gebaut ist – nicht in jeder Provinz', () => {
+    const sim = newSim();
+    const id = map.provinces.find((p) => p.nation === 'DE')!.id;
+    const ps = sim.state.provinces[id];
+    expect(ps.buildings.office).toBe(0);
+    expect(moraleTarget(sim.state, map, id).parts.some((x) => x.label === 'Bauamt')).toBe(false);
+    ps.buildings.office = 1;
+    const withOffice = moraleTarget(sim.state, map, id);
+    expect(withOffice.parts.some((x) => x.label === 'Bauamt' && x.value > 0)).toBe(true);
+    ps.off = { office: true }; // abgeschaltet: kein Bonus
+    expect(moraleTarget(sim.state, map, id).parts.some((x) => x.label === 'Bauamt')).toBe(false);
   });
 });

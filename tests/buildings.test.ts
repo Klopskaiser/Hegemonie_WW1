@@ -58,7 +58,7 @@ describe('Bauschleife', () => {
     const ps = sim.state.provinces[berlin];
     sim.apply('DE', { type: 'build', province: berlin, building: 'railroad' });
     sim.apply('DE', { type: 'build', province: berlin, building: 'office' });
-    sim.advance(71 * HOUR);
+    sim.advance(59 * HOUR);
     sim.state.nations.DE.stock.money = 0;
     sim.advance(2 * HOUR);
     expect(ps.construction).toBeNull();
@@ -73,10 +73,10 @@ describe('Bauamt und Manufaktur', () => {
   it('Bauamt verkürzt Bauzeiten der Provinz um 25 % und kostet 2000 Geld am Tag', () => {
     const sim = newSim();
     const ps = sim.state.provinces[berlin];
-    expect(checkBuild(sim.state, map, 'DE', berlin, 'railroad').hours).toBe(72);
+    expect(checkBuild(sim.state, map, 'DE', berlin, 'railroad').hours).toBe(60);
     ps.buildings.office = 1;
-    expect(checkBuild(sim.state, map, 'DE', berlin, 'railroad').hours).toBe(54);
-    expect(BUILDINGS.office.hours(1)).toBe(48);
+    expect(checkBuild(sim.state, map, 'DE', berlin, 'railroad').hours).toBe(45);
+    expect(BUILDINGS.office.hours(1)).toBe(32);
     expect(BUILDINGS.office.cost(1)).toEqual({ money: 30000, lumber: 500 });
     // Unterhalt: das Bauamt kostet 2000 Geld zusätzlich (Wehrämter und Kasernen kosten eigenes Geld)
     ps.buildings.office = 0;
@@ -105,7 +105,7 @@ describe('Bauamt und Manufaktur', () => {
   it('Werkstatt: Voraussetzung für die Fabrik, Fertigung 10 % schneller, Moral +1 %; Bauamt abschaltbar', () => {
     const sim = newSim();
     const ps = sim.state.provinces[berlin];
-    expect(BUILDINGS.workshop.cost(1)).toEqual({ money: 5000, iron: 1500, lumber: 500 });
+    expect(BUILDINGS.workshop.cost(1)).toEqual({ money: 5000, iron: 1000, lumber: 500 });
     expect(checkBuild(sim.state, map, 'DE', berlin, 'factory').error).toBe('Benötigt Werkstatt');
     expect(sim.apply('DE', { type: 'build', province: berlin, building: 'workshop' }).ok).toBe(true);
     // geplante Werkstatt reicht für die Bauschleife
@@ -122,8 +122,8 @@ describe('Bauamt und Manufaktur', () => {
     expect(sim.apply('DE', { type: 'switchBuilding', province: berlin, building: 'office', on: false }).ok).toBe(true);
     // abgeschaltet: kein Unterhalt, keine Verkürzung
     expect(on - allRates(sim.state, map).DE.cons.money).toBe(2000);
-    expect(checkBuild(sim.state, map, 'DE', berlin, 'railroad').hours).toBe(72);
-    expect(BUILDINGS.workshop.hours(1)).toBe(24);
+    expect(checkBuild(sim.state, map, 'DE', berlin, 'railroad').hours).toBe(60);
+    expect(BUILDINGS.workshop.hours(1)).toBe(12);
   });
 
   it('Handelsposten: nur ohne Küste, Rohstoffe +7 %, Moral +3 %, Unterhalt 20 Fisch', () => {

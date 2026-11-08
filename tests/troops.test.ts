@@ -5,7 +5,8 @@ import { DAY, HOUR, TROOP_MORALE } from '../src/game/balance.ts';
 import { setRelation } from '../src/game/diplomacy.ts';
 import { edgeLength, edgePoint, nodePos } from '../src/game/graph.ts';
 import type { MapData } from '../src/game/mapdata.ts';
-import { armyPosition, defectionChance, defections, planRoute, infantryStrength, nextTroopMorale, unitCount } from '../src/game/military.ts';
+import { armyPosition, defectionChance, defections, planRoute, infantryStrength, nextTroopMorale, repairMachines, segmentHours, troopTarget, unitCount } from '../src/game/military.ts';
+import { moraleTarget } from '../src/game/economy.ts';
 import { armyDesignation, armyName } from '../src/game/names.ts';
 import { Simulation } from '../src/game/sim.ts';
 import { createGame } from '../src/game/state.ts';
@@ -123,9 +124,9 @@ describe('Truppenmoral', () => {
     sim.advance(DAY);
     expect(a.morale!).toBeLessThan(m);
     expect(m - a.morale!).toBeLessThanOrEqual(TROOP_MORALE.fall.max + TROOP_MORALE.hunger + 1e-9);
-    // Beispiel: Ziel 80 % (Provinz 100 % − 20 % Getreidemangel), Einheit 100 % → nach einem Tag 87 %
+    // Beispiel: Ziel 80 % (Provinz 100 % − 20 % Getreidemangel), Einheit 100 % → nach einem Tag 85 %
     const t = { target: 0.8, parts: [], hungry: true };
-    expect(nextTroopMorale(1, t)).toBeCloseTo(0.87, 9);
+    expect(nextTroopMorale(1, t)).toBeCloseTo(0.85, 9);
     expect(nextTroopMorale(0.82, t)).toBeCloseTo(0.8, 9);
     expect(nextTroopMorale(0.5, { ...t, hungry: false })).toBeCloseTo(0.6, 9);
     // unter dem Ziel fällt nichts, der Anstieg ist bei Getreidemangel nur +5 %
@@ -330,5 +331,39 @@ describe('Wegkreuzungen', () => {
     expect(canTraverse(sim.state, fake, army, x, y)).toBe(true);
     sim.state.provinces[berlin].owner = 'FR';
     expect(canTraverse(sim.state, fake, army, x, y)).toBe(false);
+  });
+});
+
+describe('Öl- und Getreidemangel', () => {
+  it('Ölmangel: halbes Tempo auf dem Land, Maschinen reparieren sich nicht', () => {
+    const sim = newSim();
+    const berlin = prov('Berlin'), n = map.provinces[berlin].neighbors[0];
+    const inf: Army = { id: sim.state.nextArmyId++, owner: 'DE', node: berlin, units: { infantry: 10 } };
+    sim.state.armies.push(inf);
+    const h0 = segmentHours(sim.state, map, inf, berlin, n);
+    sim.state.nations.DE.resShort = { oil: true };
+    expect(segmentHours(sim.state, map, inf, berlin, n)).toBeCloseTo(h0 * 2, 6);
+    const tank: Army = { id: sim.state.nextArmyId++, owner: 'DE', node: berlin, units: { tank: 3 }, wounds: { tank: 7 } };
+    sim.state.armies.push(tank);
+    repairMachines(sim.state, map);
+    expect(tank.wounds!.tank).toBe(7);
+    delete sim.state.nations.DE.resShort;
+    repairMachines(sim.state, map);
+    expect(tank.wounds!.tank).toBeLessThan(7);
+  });
+
+  it('Nahrungsmangel senkt nicht mehr die Provinzmoral; nur Getreide macht die Infanterie hungrig', () => {
+    const sim = newSim();
+    const berlin = prov('Berlin');
+    sim.state.nations.DE.shortage.food = true;
+    expect(moraleTarget(sim.state, map, berlin).parts.some((p) => p.label.startsWith('Mangel'))).toBe(false);
+    sim.state.nations.DE.shortage.materials = true;
+    expect(moraleTarget(sim.state, map, berlin).parts.some((p) => p.label === 'Mangel (Baustoffe)')).toBe(true);
+    // Fischmangel (Kategorie Nahrung) ohne Getreideengpass: Infanterie bleibt satt
+    expect(sim.state.nations.DE.stock.grain).toBeGreaterThanOrEqual(1);
+    const a = cityArmy(sim, 'DE', berlin)!;
+    expect(troopTarget(sim.state, map, a).hungry).toBe(false);
+    sim.state.nations.DE.resShort = { grain: true };
+    expect(troopTarget(sim.state, map, a).hungry).toBe(true);
   });
 });

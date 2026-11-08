@@ -6,8 +6,8 @@ import {
 } from './balance.ts';
 import { RESOURCES, type MapData, type Resource } from './mapdata.ts';
 import { warCount } from './diplomacy.ts';
-import { garrisonStrength } from './military.ts';
-import type { GameState, ProvinceState } from './types.ts';
+import { garrisonStrength, planRoute } from './military.ts';
+import type { Army, GameState, ProvinceState } from './types.ts';
 
 export interface ProvinceOutput {
   resource: Resource;
@@ -52,12 +52,20 @@ export function moneyProductionBonus(ps: ProvinceState): number {
   return b;
 }
 
+/** Flächen-Bonus aufs Geld: unter 50.000 km² keiner, bei 50.000 +1 %, bei 100.000 +10 % (Cap), dazwischen linear */
+export function areaMoneyBonus(area: number | undefined): number {
+  if (!area || area < PROVINCE.moneyAreaNone) return 0;
+  if (area >= PROVINCE.moneyAreaFlat) return PROVINCE.moneyAreaFlatBonus;
+  const t = (area - PROVINCE.moneyAreaNone) / (PROVINCE.moneyAreaFlat - PROVINCE.moneyAreaNone);
+  return PROVINCE.moneyAreaStartBonus + t * (PROVINCE.moneyAreaFlatBonus - PROVINCE.moneyAreaStartBonus);
+}
+
 export function provinceOutput(map: MapData, ps: ProvinceState, id: number): ProvinceOutput {
   const mp = map.provinces[id];
   const bonus = productionBonus(ps);
   const size = mp.double ? 2 : 1;
   const amount = PROVINCE.resourceBase * size * ps.morale * (1 + bonus);
-  const money = (PROVINCE.moneyBase + ps.morale * 100 * PROVINCE.moneyPerMoralePct) * size * (1 + moneyProductionBonus(ps));
+  const money = (PROVINCE.moneyBase + ps.morale * 100 * PROVINCE.moneyPerMoralePct) * size * (1 + moneyProductionBonus(ps)) * (1 + areaMoneyBonus(mp.area));
   return { resource: mp.resource, amount, money, bonus };
 }
 
@@ -66,14 +74,15 @@ export function provinceOutput(map: MapData, ps: ProvinceState, id: number): Pro
  * Kontrolle = mittlere Moral über alle eigenen Provinzen; unter 10 % Kontrolle 1 % Abzug,
  * ab 50 % Kontrolle die vollen 12 %, dazwischen linear.
  */
-export function corruptionOf(state: GameState, nation: string): number {
-  const own = state.provinces.filter((p) => p.owner === nation);
-  if (!own.length) return CORRUPTION.min;
-  const control = own.reduce((t, p) => t + p.morale, 0) / own.length;
-  const { min, max, startControl, fullControl } = CORRUPTION;
-  if (control <= startControl) return min;
-  if (control >= fullControl) return max;
-  return min + ((control - startControl) / (fullControl - startControl)) * (max - min);
+export function corruptionOf(state: GameState, _map: MapData, nation: string): number {
+  // Kontrolle = Anteil der gehaltenen Provinzen – dieselbe Zählweise wie Rangliste und Siegbedingung
+  let own = 0;
+  for (const p of state.provinces) if (p.owner === nation) own++;
+  const control = state.provinces.length > 0 ? own / state.provinces.length : 0;
+  const { min, max, startShare, fullShare } = CORRUPTION;
+  if (control < startShare) return 0; // unter der Schwelle keine Korruption
+  if (control >= fullShare) return max;
+  return min + ((control - startShare) / (fullShare - startShare)) * (max - min);
 }
 
 /** Raten aller Nationen in einem Durchlauf. */
@@ -108,7 +117,7 @@ export function allRates(state: GameState, map: MapData): Record<string, NationR
   }
   // Korruption: am Ende prozentualer Abzug von allen produzierten Ressourcen der Nation
   for (const [id, r] of Object.entries(out)) {
-    const keep = 1 - corruptionOf(state, id);
+    const keep = 1 - corruptionOf(state, map, id);
     for (const k of ALL_RES) r.prod[k] *= keep;
   }
   return out;
@@ -263,6 +272,40 @@ export function warsOf(state: GameState, nation: string): number {
   return warCount(state, nation);
 }
 
+/** Struktur-Stempel: Bahn/Hafen-Stufen, Besitzer, Hauptstädte und Beziehungen — alles, was Marschzeiten ändert */
+function marchStamp(state: GameState, map: MapData): string {
+  let h = '';
+  for (const ps of state.provinces) h += ps.owner + activeLevel(ps, 'railroad') + activeLevel(ps, 'harbor') + ',';
+  for (const id of Object.keys(state.nations)) h += capitalOf(state, map, id) + ',';
+  return h + JSON.stringify(state.relations);
+}
+
+const marchCache = new WeakMap<GameState, { stamp: string; days: Map<string, number | null> }>();
+
+/**
+ * Marschtage von einer Provinz zur eigenen Hauptstadt: regulärer Infanteriemarsch über das Wegenetz,
+ * daher verkürzen Eisenbahnen und Häfen die Zeit (Ausschiffen und Seezeit zählen mit).
+ * null = kein Weg (feindliche Grenzen sperren) oder Hauptstadt verloren.
+ */
+export function marchDaysToCapital(state: GameState, map: MapData, nation: string, province: number): number | null {
+  const cap = capitalOf(state, map, nation);
+  if (cap === null) return null;
+  if (cap === province) return 0;
+  const stamp = marchStamp(state, map);
+  let cache = marchCache.get(state);
+  if (!cache || cache.stamp !== stamp) {
+    cache = { stamp, days: new Map() };
+    marchCache.set(state, cache);
+  }
+  const key = `${nation}>${province}`;
+  if (cache.days.has(key)) return cache.days.get(key)!;
+  const dummy: Army = { id: -1, owner: nation, node: province, units: { infantry: 1 } };
+  const plan = planRoute(state, map, dummy, state.time, { node: cap });
+  const days = plan ? plan.hours / 24 : null;
+  cache.days.set(key, days);
+  return days;
+}
+
 export function moraleTarget(state: GameState, map: MapData, id: number): MoraleBreakdown {
   const ps = state.provinces[id];
   const mp = map.provinces[id];
@@ -272,14 +315,14 @@ export function moraleTarget(state: GameState, map: MapData, id: number): Morale
   if (cap !== id) {
     let pen = MORALE.distanceMax;
     if (cap !== null) {
-      const c = map.provinces[cap].center;
-      const d = Math.hypot(c[0] - mp.center[0], c[1] - mp.center[1]);
-      pen = Math.min(MORALE.distanceMax, (Math.max(0, d - MORALE.distanceFree) / MORALE.distanceStep) * MORALE.distancePerStep);
+      const days = marchDaysToCapital(state, map, ps.owner, id);
+      pen = days === null ? MORALE.distanceMax : Math.min(MORALE.distanceMax, days * MORALE.distancePerDay);
     }
     if (pen > 0) parts.push({ label: cap === null ? 'Hauptstadt verloren (verlegen!)' : 'Entfernung zur Hauptstadt', value: -pen });
   }
   for (const k of BUILDING_ORDER) {
     const lvl = activeLevel(ps, k);
+    if (lvl <= 0) continue; // ohne gebautes Gebäude wirkt kein Gebäudebonus
     const v = BUILDINGS[k].morale(lvl);
     if (v > 0) parts.push({ label: BUILDINGS[k].maxLevel > 1 ? `${BUILDINGS[k].name} Stufe ${lvl}` : BUILDINGS[k].name, value: v });
   }
@@ -297,7 +340,8 @@ export function moraleTarget(state: GameState, map: MapData, id: number): Morale
   if (wars > 0) parts.push({ label: 'Kriege', value: -Math.min(MORALE.warMax, wars * MORALE.warEach) });
   if (nation) {
     for (const c of Object.keys(nation.shortage) as Category[]) {
-      if (nation.shortage[c]) parts.push({ label: `Mangel (${c === 'food' ? 'Nahrung' : c === 'materials' ? 'Baustoffe' : 'Energie'})`, value: -MORALE.shortage[c] });
+      const pen = MORALE.shortage[c];
+      if (nation.shortage[c] && pen) parts.push({ label: `Mangel (${c === 'materials' ? 'Baustoffe' : 'Energie'})`, value: -pen });
     }
   }
   const sum = parts.reduce((s, p) => s + p.value, 0);

@@ -35,6 +35,8 @@ export interface ProvinceState {
   off?: Partial<Record<Building, boolean>>;
   /** verlorene Leben der obersten Stufe (beschädigt: keine Wirkung, bis repariert) */
   damage?: Partial<Record<Building, number>>;
+  /** laufende Reparaturen: Gebäude → Fertigstellungszeit (Schaden bleibt bis dahin bestehen) */
+  repairing?: Partial<Record<Building, number>>;
   /** seit dem letzten Tageswechsel wurde in der Provinz gekämpft (senkt das Moralziel) */
   fought?: boolean;
   /** Spielstunde der letzten Kampfrunde in der Provinz (Sofortabzug höchstens einmal je Stunde) */
@@ -43,6 +45,8 @@ export interface ProvinceState {
   battleDays?: number;
   /** zuletzt erobert: vorheriger Besitzer und Spieltag (Rückeroberung am selben Tag mit höherer Moral) */
   lost?: { owner: string; day: number } | null;
+  /** gewählter Hafenpunkt (Seeknoten) – steht ein aktiver Hafen, führt jede Einschiffnung nur über ihn */
+  harborNode?: number;
 }
 
 /** Marsch entlang eines Weges im Bewegungsnetz (Provinzen und Seegebiete). */
@@ -219,6 +223,8 @@ export interface NationState {
   points: number;
   /** Engpässe seit dem letzten Tageswechsel */
   shortage: Record<Category, boolean>;
+  /** Engpass einzelner Rohstoffe (über die Kategorie hinaus): Getreide → Infanteriemoral, Öl → Tempo und Maschinenreparatur */
+  resShort?: Partial<Record<'grain' | 'oil', boolean>>;
   /** bisher vergebene Namen für Schlachtschiffe und Eisenbahngeschütze */
   named?: number;
   /** verlegte Hauptstadt (Provinz); fehlt das Feld, gilt die Hauptstadt der Karte */
