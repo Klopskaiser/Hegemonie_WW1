@@ -3,7 +3,8 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Sight } from '../game/visibility.ts';
-import { closestOnEdge, edgeParts, edgePoints, edgeSlice, harborSea, isSea, nodeCount, nodeNeighbors, nodePos } from '../game/graph.ts';
+import { closestOnEdge, edgePoint, edgeParts, edgePoints, edgeSlice, harborSea, isSea, nodeCount, nodeNeighbors, nodePos } from '../game/graph.ts';
+import { mergeRailSegs } from '../game/pathsnap.ts';
 import { activeLevel } from '../game/economy.ts';
 import type { MapData } from '../game/mapdata.ts';
 import { armyPosition, isNaval, normalizeTarget, remainingRoute, unitCount, unitRange, type MoveTarget, boardingWait } from '../game/military.ts';
@@ -231,8 +232,9 @@ export function MapCanvas(props: Props) {
       const node = harborSea(map, i);
       if (node === null) return null;
       const c = map.seas[node - map.provinces.length].center;
-      // Hafen am Knickpunkt des Wasserwegs (Küstenpunkt zum vorgelagerten Seegebiet)
-      const best = edgePoints(map, i, node)[1] ?? mp.center;
+      // Hafen am Wasseraustritt des Wasserwegs (Knick oder split-Punkt der geraden Straße)
+      const [l1, lenAll] = edgeParts(map, i, node);
+      const best = lenAll > 0 ? edgePoint(map, i, node, l1 / lenAll) : mp.center;
       const len = Math.hypot(c[0] - best[0], c[1] - best[1]) || 1;
       return { x: best[0], y: best[1], dx: (c[0] - best[0]) / len, dy: (c[1] - best[1]) / len };
     });
@@ -517,7 +519,7 @@ export function MapCanvas(props: Props) {
       const P = map.provinces.length;
       const add = (pts: [number, number][]) => {
         if (!pts.some(([x, y]) => visible(X(x), Y(y), 400))) return;
-        for (let k = 0; k + 1 < pts.length; k++) rails.push([X(pts[k][0]), Y(pts[k][1]), X(pts[k + 1][0]), Y(pts[k + 1][1])]);
+        for (let k = 0; k + 1 < pts.length; k++) rails.push([pts[k][0], pts[k][1], pts[k + 1][0], pts[k + 1][1]]);
       };
       map.provinces.forEach((mp, i) => {
         // beschädigte Eisenbahn (Reparatur nötig) wird nicht gezeichnet – sie ist nicht befahrbar
@@ -526,9 +528,14 @@ export function MapCanvas(props: Props) {
           const [l1, len] = edgeParts(map, i, n);
           add(edgeSlice(map, i, n, 0, len > 0 ? l1 / len : 0.5));
         }
-        for (const z of mp.seaLinks ?? mp.seas) add(edgePoints(map, i, P + z).slice(0, 2));
+        // Hafenwege: Schienen nur an Land bis zum Wasseraustritt (split), nie übers Wasser
+        for (const z of mp.seaLinks ?? mp.seas) {
+          const [l1, len] = edgeParts(map, i, P + z);
+          add(edgeSlice(map, i, P + z, 0, len > 0 ? l1 / len : 0));
+        }
       });
-      drawRails(ctx, rails, s);
+      // überlappende Abschnitte (gesnappte Wegkorridore) zu je einem Zug zusammenfassen
+      drawRails(ctx, mergeRailSegs(rails).map(([x1, y1, x2, y2]) => [X(x1), Y(y1), X(x2), Y(y2)] as [number, number, number, number]), s);
     }
 
     // Symbole wachsen beim Hineinzoomen mit, höchstens um 40 % (bei größter Zoomstufe); kleiner als bisher werden sie nie

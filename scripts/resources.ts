@@ -1,7 +1,9 @@
 // Rohstoffverteilung beim Kartenbau.
 // 1. Jede Provinz bekommt nach Lage einen Wunschrohstoff (Rohstoffzentren, Küste, Breite, Wüste).
 // 2. Gesamtkarte: grob 40 % Energie, 30 % Baustoffe, 30 % Nahrung (gewichtet: Doppelprovinz = 2).
-// 3. Je Nation (ab 3 Provinzen): jede Kategorie mindestens einmal, keine über 60 %.
+// 3. Je Nation (ab 3 Provinzen): jede Kategorie mindestens einmal, keine über 60 % — nur wenn
+//    opts.nationLimits; sonst verteilt die Lage die Rohstoffe frei über Nationsgrenzen hinweg,
+//    die Prüfung (mapcheck) meldet Abweichungen dann weiterhin als Warnung.
 // Öl gibt es nur in der Nähe historischer Ölorte.
 
 import type { MapProvince, Resource } from '../src/game/mapdata.ts';
@@ -37,12 +39,19 @@ export interface ResourceInput {
   desert: boolean;
 }
 
+export interface ResourceOptions {
+  /** Harte Grenzen je Nation (Kategorie-Quoten 15–60 %, Öl-Obergrenze) durchsetzen; Standard an */
+  nationLimits?: boolean;
+}
+
 export function assignResources(
   items: ResourceInput[],
   spots: { r: Resource; pos: Pt }[],
   rnd: () => number,
   oilLimit: (nation: string) => number,
+  opts: ResourceOptions = {},
 ): void {
+  const nationLimits = opts.nationLimits ?? true;
   // ------------------------------------------------ Eignung je Provinz und Rohstoff
   const score = items.map(({ province: p, shape, lat, desert }) => {
     const near = (r: Resource) => {
@@ -80,7 +89,7 @@ export function assignResources(
   const nationOf = (i: number) => byNation.get(items[i].province.nation)!;
 
   // Öl begrenzen: je Nation nur die besten Ölstandorte, alle anderen verlieren die Öloption
-  for (const [nation, own] of byNation) {
+  if (nationLimits) for (const [nation, own] of byNation) {
     const oil = own.filter((i) => isFinite(score[i].oil)).sort((a, b) => score[b].oil - score[a].oil);
     oil.slice(oilLimit(nation)).forEach((i) => (score[i].oil = -Infinity));
     for (const i of own) if (items[i].province.resource === 'oil' && !isFinite(score[i].oil)) items[i].province.resource = argmax(i);
@@ -94,8 +103,8 @@ export function assignResources(
     const from = catOf(i);
     const old = items[i].province.resource;
     items[i].province.resource = best(i, to);
-    const ok = (own.length < 3 || count(own, from) >= 1) && share(own, to) <= NATION_MAX + 1e-9
-      && (own.length < 5 || share(own, from) >= NATION_MIN - 1e-9);
+    const ok = !nationLimits || ((own.length < 3 || count(own, from) >= 1) && share(own, to) <= NATION_MAX + 1e-9
+      && (own.length < 5 || share(own, from) >= NATION_MIN - 1e-9));
     items[i].province.resource = old;
     return ok;
   };
@@ -114,6 +123,7 @@ export function assignResources(
   };
 
   const nationRules = () => {
+    if (!nationLimits) return;
     for (const own of byNation.values()) {
       if (own.length < 3) {
         // Kleinststaaten: wenigstens zwei verschiedene Kategorien, falls möglich

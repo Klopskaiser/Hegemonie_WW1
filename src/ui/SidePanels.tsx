@@ -1,6 +1,6 @@
 import type { Action, ActionResult } from '../game/actions.ts';
 import { ALL_RES, BUILDINGS, CATEGORY_NAMES, PROVINCE, RES_NAMES, VICTORY_SHARE, type Building, type Category } from '../game/balance.ts';
-import { netRate, totalUse, useSources, type NationRates } from '../game/economy.ts';
+import { corruptionOf, netRate, totalUse, useSources, type NationRates } from '../game/economy.ts';
 import type { MapData } from '../game/mapdata.ts';
 import type { GameState } from '../game/types.ts';
 import { Window } from './common.tsx';
@@ -49,6 +49,10 @@ export function EconomyPanel({ map, state, rates, act, onClose }: Props & { act(
           })}
         </tbody>
       </table>
+      <p className="muted small">
+        Korruption: −{(corruptionOf(state, state.playerNation) * 100).toLocaleString('de-DE', { maximumFractionDigits: 1 })} % auf alle Produktion.
+        Kontrolle (mittlere Moral aller eigenen Provinzen) ab 10 % beginnend, bei 50 % das Maximum von 12 %.
+      </p>
       <h4>Verbrauch nach Verursachern (pro Tag)</h4>
       <div className="use-sources">
         {ALL_RES.filter((r) => sources[r].length).map((r) => (

@@ -144,7 +144,7 @@ function onModel(m: FromModel): void {
 async function loadMap(id: string): Promise<MapData> {
   let m = maps.get(id);
   if (!m) {
-    const res = await fetch(new URL(`/maps/${id}.json`, self.location.origin));
+    const res = await fetch(new URL(`/maps/${id}.json`, self.location.origin), { cache: 'no-store' });
     if (!res.ok) throw new Error(`Karte ${id} nicht gefunden`);
     m = (await res.json()) as MapData;
     maps.set(id, m);

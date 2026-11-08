@@ -4,7 +4,7 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { HOUR } from '../src/game/balance.ts';
 import { setRelation } from '../src/game/diplomacy.ts';
-import { edgePoints, harborSea, isSea, nodeNeighbors } from '../src/game/graph.ts';
+import { edgeLength, edgePoints, harborSea, isSea, nodeNeighbors } from '../src/game/graph.ts';
 import type { MapData } from '../src/game/mapdata.ts';
 import { Simulation } from '../src/game/sim.ts';
 import { createGame } from '../src/game/state.ts';
@@ -43,6 +43,24 @@ describe('Seeknoten-Karte', () => {
       // Hafenweg: Stadt → Hafenpunkt an der Küste → Knoten
       expect(edgePoints(map, p.id, P + p.seaLinks![0]).length, p.name).toBeGreaterThanOrEqual(3);
     }
+  });
+
+  it('Seewege zwischen Knoten verlaufen gerade (keine Knicke an Kunstgrenzen)', () => {
+    const N = map.provinces.length + map.seas.length;
+    const roadKeys = new Set((map.roads ?? []).map((r) => Math.min(r.a, r.b) * N + Math.max(r.a, r.b)));
+    let seen = 0;
+    for (let z = 0; z < map.seas.length; z++) {
+      for (const s of map.seas[z].seas) {
+        if (s < z) continue;
+        if (roadKeys.has((P + z) * N + P + s)) continue; // bewusste Wegvorgaben aus dem Kartenbau bleiben
+        seen++;
+        const pts = edgePoints(map, P + z, P + s);
+        expect(pts, `${map.seas[z].name}–${map.seas[s].name}`).toHaveLength(2);
+        const [a, b] = pts;
+        expect(edgeLength(map, P + z, P + s)).toBeCloseTo(Math.hypot(a[0] - b[0], a[1] - b[1]), 6);
+      }
+    }
+    expect(seen).toBeGreaterThan(100);
   });
 
   it('Knoten sind nur mit Häfen und anderen Knoten verbunden', () => {

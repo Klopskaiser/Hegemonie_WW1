@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
-  addProvince, addVertex, autoLinks, exportDraft, insertOnEdge, mergeProvinces, newDraft, provArea, provRef, seaRef,
+  addProvince, addVertex, autoLinks, coastalProvinceIds, coastsWithoutHarbor, deleteBend, exportDraft, insertBend, insertOnEdge, mergeProvinces, moveBend, newDraft, provArea, provRef, seaRef,
   splitProvince, toggleLink, tracePath, type Draft,
 } from '../src/game/draft.ts';
 import { importRaster, type RasterImage } from '../src/game/draftImport.ts';
-import { edgePoints, nodeNeighbors } from '../src/game/graph.ts';
+import { edgeLength, edgeParts, edgePoints, nodeNeighbors } from '../src/game/graph.ts';
 import { createGame } from '../src/game/state.ts';
 
 /** zwei Quadrate 100×100 km nebeneinander mit gemeinsamer Kante */
@@ -50,13 +50,200 @@ describe('Kartenentwurf', () => {
     expect(nodeNeighbors(m, P).sort()).toEqual([1, P + 1]);
     expect(m.provinces[1].coastal).toBe(true);
     expect(m.seas[0].coasts).toEqual([1]);
-    // Einzugsbereich ohne Land: der Hafen knickt an der Küste (x = 250)
+    // gezogener gerader Hafenweg: Straße Stadt → Seepunkt, split am Wasseraustritt (x = 250)
     const pts = edgePoints(m, 1, P);
-    expect(pts).toHaveLength(3);
-    expect(pts[1][0]).toBeCloseTo(250, 0);
+    expect(pts).toHaveLength(2);
+    expect(m.roads!.some((r) => r.a === 1 && r.b === P && Math.abs(r.split - 0.5) < 0.02)).toBe(true);
+    // gerader Landweg: Straße Stadt → Stadt (kein vom Spiel erfundener Grenzknick), split an der Provinzgrenze
+    const land = m.roads!.find((r) => r.a === 0 && r.b === 1)!;
+    expect(land).toBeTruthy();
+    expect(edgePoints(m, 0, 1)).toEqual([[100, 100], [200, 100]]);
+    expect(Math.abs(land.split - 0.5)).toBeLessThan(0.02);
     // das Spiel lässt sich damit anlegen
     const g = createGame(m, { id: 'g', name: 'G', playerNation: 'A', speed: 1, seed: 1, now: 0 });
     expect(g.provinces).toHaveLength(2);
+  });
+
+  it('Knickpunkte biegen Landwege und werden zu Weggeometrie in der Karte', () => {
+    const d = twoSquares();
+    const [w, o] = d.provinces;
+    toggleLink(d, provRef(w.id), provRef(o.id));
+    expect(insertBend(d, provRef(w.id), provRef(o.id), [150, 20])).toBe(true);
+    const m = exportDraft(d).map!;
+    expect(m.roads).toHaveLength(1);
+    const road = m.roads![0];
+    const pts = edgePoints(m, road.a, road.b);
+    expect(pts).toHaveLength(3);
+    expect(pts[1]).toEqual([150, 20]);
+    expect(pts[0]).toEqual(m.provinces[road.a].center);
+    expect(pts[2]).toEqual(m.provinces[road.b].center);
+    expect(road.split).toBeGreaterThan(0);
+    expect(road.split).toBeLessThan(1);
+    // das Spiel biegt die Truppenmarsche über den Knick
+    const g = createGame(m, { id: 'g', name: 'G', playerNation: 'A', speed: 1, seed: 1, now: 0 });
+    expect(g.provinces).toHaveLength(2);
+
+    expect(moveBend(d, provRef(w.id), provRef(o.id), 0, [150, 180])).toBe(true);
+    expect(edgePoints(exportDraft(d).map!, road.a, road.b)[1]).toEqual([150, 180]);
+    expect(deleteBend(d, provRef(w.id), provRef(o.id), 0)).toBe(true);
+    // ohne Knick bleibt die gerade gezogene Linie als Straße erhalten (kein gespielter Grenzknick)
+    const straight = exportDraft(d).map!.roads!;
+    expect(straight).toHaveLength(1);
+    expect(straight[0].pts).toEqual([100, 100, 200, 100]);
+    // Verbindung löschen nimmt die Knickpunkte mit
+    insertBend(d, provRef(w.id), provRef(o.id), [150, 60]);
+    toggleLink(d, provRef(w.id), provRef(o.id));
+    expect(d.links).toHaveLength(0);
+  });
+
+  it('Knicks an Verbindungen über See werden gemeldet, Seewege bleiben gerade', () => {
+    const d = twoSquares();
+    d.seas.push({ id: d.nextId++, name: 'S1', at: [300, 100] }, { id: d.nextId++, name: 'S2', at: [350, 180] });
+    toggleLink(d, seaRef(d.seas[0].id), seaRef(d.seas[1].id));
+    insertBend(d, seaRef(d.seas[0].id), seaRef(d.seas[1].id), [340, 120]);
+    const r = exportDraft(d);
+    expect(r.map!.roads).toHaveLength(0);
+    expect(r.warnings.some((w) => w.includes('Knick') && w.includes('Wasser'))).toBe(true);
+  });
+
+  it('Hafenverbindung: Knick an Land wird Weggeometrie, Knick im Wasser verworfen', () => {
+    const d = twoSquares();
+    d.seas.push({ id: d.nextId++, name: 'S1', at: [300, 100] }, { id: d.nextId++, name: 'S2', at: [350, 180] });
+    const o = d.provinces[1];
+    toggleLink(d, provRef(o.id), seaRef(d.seas[0].id));
+    expect(insertBend(d, provRef(o.id), seaRef(d.seas[0].id), [230, 80])).toBe(true);   // an Land (Ost: x ≤ 250)
+    expect(insertBend(d, provRef(o.id), seaRef(d.seas[0].id), [280, 60])).toBe(true);   // im Wasser
+    const m = exportDraft(d).map!;
+    expect(m.roads).toHaveLength(1);
+    const road = m.roads![0];
+    expect(Math.min(road.a, road.b)).toBe(1);
+    const pts = edgePoints(m, 1, m.provinces.length);
+    expect(pts).toHaveLength(3);                       // Stadt → Landknick → Seeende (Wasserknick weg)
+    expect(pts[1]).toEqual([230, 80]);
+    expect(pts[2]).toEqual(m.seas[0].center);
+    expect(road.split).toBeGreaterThan(0);
+    expect(road.split).toBeLessThan(1);                // split = Wasseraustritt an der Küste x = 250
+    // in Gegenrichtung zeigt der Verlauf die umgekehrte Punktfolge
+    expect(edgePoints(m, m.provinces.length, 1)[1]).toEqual([230, 80]);
+  });
+
+  it('Gerader Hafenweg ohne Knicke: Straße mit gezogener Linie und Wasseraustritt als split', () => {
+    const d = twoSquares();
+    d.seas.push({ id: d.nextId++, name: 'S1', at: [300, 100] });
+    const o = d.provinces[1];
+    toggleLink(d, seaRef(d.seas[0].id), provRef(o.id));   // ohne Knick, Seepunkt vorn
+    const m = exportDraft(d).map!;
+    expect(m.roads).toHaveLength(1);
+    const road = m.roads![0];
+    expect(road.a).toBe(1);                               // a ist die Provinzseite
+    expect(road.b).toBe(m.provinces.length);
+    expect(edgePoints(m, 1, m.provinces.length)).toEqual([road.pts.slice(0, 2), road.pts.slice(2)].map(([x, y]) => [x, y]));
+    expect(edgeParts(m, 1, m.provinces.length)[0]).toBeCloseTo(road.split * edgeLength(m, 1, m.provinces.length), 3);
+    // Küste bei x = 250 von Stadt (200, 100) nach (300, 100): halbe Weglänge
+    expect(road.split).toBeCloseTo(0.5, 2);
+  });
+
+  it('Hafenweg rückwärts (Seepunkt vorn): alle Landknicke bleiben, der letzte zählt als Hafen', () => {
+    const d = twoSquares();
+    d.seas.push({ id: d.nextId++, name: 'S1', at: [300, 100] });
+    const o = d.provinces[1];
+    toggleLink(d, seaRef(d.seas[0].id), provRef(o.id));   // Seepunkt steht im Entwurf vorn
+    // Knickliste folgt der Zugrichtung Seepunkt → Provinz: zuerst der Wasserknick, zuletzt der an Land
+    expect(insertBend(d, seaRef(d.seas[0].id), provRef(o.id), [275, 60])).toBe(true);    // im Wasser
+    expect(insertBend(d, seaRef(d.seas[0].id), provRef(o.id), [249, 95])).toBe(true);    // knapp vor der Küste x = 250
+    expect(insertBend(d, seaRef(d.seas[0].id), provRef(o.id), [230, 80])).toBe(true);    // an Land
+    const m = exportDraft(d).map!;
+    expect(m.roads).toHaveLength(1);
+    const P = m.provinces.length;
+    const pts = edgePoints(m, 1, P);                     // Stadt → ... → Seeende
+    expect(pts.slice(1, -1)).toEqual([[230, 80], [249, 95]]); // beide Landknicke in Zugfolge, Wasserknick weg
+    expect(pts[pts.length - 1]).toEqual(m.seas[0].center);
+    // split gilt ab road.a (hier der Seepunkt): das Wasserstück ist kürzer als das halbe Band
+    expect(m.roads![0].split).toBeGreaterThan(0.5);
+    expect(m.roads![0].split).toBeLessThan(1);
+  });
+
+  it('Kartenrand ist keine Küste: Provinzen, die an der Kartengrenze enden, haben keinen Seezugang', () => {
+    const d = newDraft('rf', 'Rand', 400, 200);
+    // zwei Provinzen über die volle Höhe; die rechte endet bündig am Kartenrand (rechts nur Land)
+    const v = [[50, 0], [250, 0], [400, 0], [400, 200], [250, 200], [50, 200]].map((p) => addVertex(d, p as [number, number]));
+    addProvince(d, [v[0], v[1], v[4], v[5]], { name: 'Innen', nation: 'A' });
+    addProvince(d, [v[1], v[2], v[3], v[4]], { name: 'Rand', nation: 'A' });
+    d.nations = [{ id: 'A', name: 'Alpha', color: '#aa0000', major: true, capital: d.provinces[0].id }];
+    d.seas.push({ id: d.nextId++, name: 'S1', at: [25, 100] });     // Wasser links im Randstreifen
+    const [innen, rand] = d.provinces;
+    expect(coastalProvinceIds(d)).toEqual([innen.id]);              // nur die Innenprovinz grenzt an Wasser
+    expect(coastsWithoutHarbor(d)).toEqual([innen.id]);             // Rand fehlt trotz fehlendem Anschluss
+    autoLinks(d);
+    expect(d.links.some(([x, y]) => (x === provRef(rand.id) || y === provRef(rand.id)) && (x[0] === 's' || y[0] === 's'))).toBe(false);
+    // nach der Ergänzung meldet die Exportprüfung keine Küste ohne Hafen mehr
+    expect(exportDraft(d).warnings.some((w) => w.includes('ohne Hafen-Verbindung'))).toBe(false);
+  });
+
+  it('Hervorhebung: Küstenprovinzen ohne Wasserweg werden gemeldet', () => {
+    const d = twoSquares();
+    d.seas.push({ id: d.nextId++, name: 'S1', at: [300, 100] });
+    const [w, o] = d.provinces;
+    expect(coastsWithoutHarbor(d).sort()).toEqual([w.id, o.id].sort()); // beide am Wasser, beide ohne Anschluss
+    toggleLink(d, provRef(o.id), seaRef(d.seas[0].id));
+    expect(coastsWithoutHarbor(d)).toEqual([w.id]);                     // Ost ist versorgt
+    w.noHarbor = true;
+    expect(coastsWithoutHarbor(d)).toEqual([]);                         // markierte zählen nicht als Fehler
+  });
+
+  it('Markierung „kein Hafen“: keine automatische und keine exportierte Wasserverbindung', () => {
+    const d = twoSquares();
+    d.seas.push({ id: d.nextId++, name: 'S1', at: [300, 100] });
+    const [w] = d.provinces;
+    w.noHarbor = true;
+    autoLinks(d);                                                   // West bleibt außen vor, Ost bekommt den Seepunkt
+    const seaLinks = d.links.filter(([x, y]) => x[0] === 's' || y[0] === 's');
+    expect(seaLinks).toHaveLength(1);
+    expect(seaLinks[0]).toContain(provRef(d.provinces[1].id));      // nur Ost ist verbunden
+    let m = exportDraft(d).map!;
+    expect(m.provinces[0].seaLinks).toEqual([]);
+    expect(m.provinces[0].coastal).toBe(false);
+    // vorhandene Wasserwege markierter Provinzen werden ignoriert und gemeldet
+    toggleLink(d, provRef(w.id), seaRef(d.seas[0].id));
+    const r = exportDraft(d);
+    m = r.map!;
+    expect(m.provinces[0].seaLinks).toEqual([]);
+    expect(m.seas[0].coasts).toEqual([1]);
+    expect(r.warnings.some((x) => x.includes('kein Hafen') && x.includes('ignoriert'))).toBe(true);
+    // die allgemeine Warnung „Provinzen am Wasser ohne Hafen“ trifft für markierte Provinzen nicht mehr zu
+    expect(r.warnings.some((x) => x.includes('ohne Hafen-Verbindung'))).toBe(false);
+  });
+
+  it('Markierung bleibt beim Teilen erhalten und fällt beim Verschmelzen zurück', () => {
+    const d = newDraft('nh', 'T', 400, 300);
+    const v = [[0, 0], [200, 0], [200, 300], [0, 300]].map((p) => addVertex(d, p as [number, number]));
+    const p = addProvince(d, v);
+    p.noHarbor = true;
+    // bei x = 100 teilen: beide Hälften erben die Markierung
+    const m1 = addVertex(d, [100, 0]), m2 = addVertex(d, [100, 300]);
+    const np = splitProvince(d, p.id, [v[0], m1, m2, v[3]]) as Draft['provinces'][number];
+    expect(typeof np !== 'string' && np.noHarbor).toBe(true);
+    expect(mergeProvinces(d, p.id, np.id)).toBeNull();
+    expect(p.noHarbor).toBe(true);
+    // Verschmelzen mit einer unmarkierten Nachbarprovinz hebt die Sperre auf
+    const w1 = addVertex(d, [300, 0]), w2 = addVertex(d, [300, 300]);
+    const q = addProvince(d, [v[1], w1, w2, v[2]]);
+    expect(mergeProvinces(d, p.id, q.id)).toBeNull();
+    expect(p.noHarbor).toBe(false);
+  });
+
+  it('Hafenverbindung ohne Knick an Land bleibt unverändert gerade', () => {
+    const d = twoSquares();
+    d.seas.push({ id: d.nextId++, name: 'S1', at: [300, 100] }, { id: d.nextId++, name: 'S2', at: [350, 180] });
+    const o = d.provinces[1];
+    toggleLink(d, provRef(o.id), seaRef(d.seas[0].id));
+    expect(insertBend(d, provRef(o.id), seaRef(d.seas[0].id), [270, 70])).toBe(true);   // nur im Wasser
+    const r = exportDraft(d);
+    expect(r.map!.roads).toHaveLength(0);
+    expect(r.warnings.some((w) => w.includes('Knick') && w.includes('Wasser'))).toBe(true);
+    const pts = edgePoints(r.map!, 1, r.map!.provinces.length);
+    expect(pts).toHaveLength(3);                       // Default-Hafen: knickt an der Küste (x = 250)
+    expect(pts[1][0]).toBeCloseTo(250, 0);
   });
 
   it('Teilen und wieder Verschmelzen', () => {

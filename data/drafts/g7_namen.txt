@@ -1,0 +1,179 @@
+Belgien              5934   Amsterdam
+Belgien              5940   Rotterdam
+Belgien              5949   Brüssel
+Bulgarien            5999   Sofia
+Bulgarien            6009   Janina
+Deutsches Reich      5918   Allenstein
+Deutsches Reich      5922   Hamburg
+Deutsches Reich      5926   Graudenz
+Deutsches Reich      5930   Berlin
+Deutsches Reich      5933   Hannover
+Deutsches Reich      5943   Oppeln
+Deutsches Reich      5945   Köln
+Deutsches Reich      5946   Würzburg
+Deutsches Reich      5955   Straßburg
+Deutsches Reich      5959   Salzburg
+Dänemark             5868   Reykjavík
+Dänemark             5870   Akureyri
+Dänemark             5911   Aarhus
+Dänemark             5915   Odense
+Dänemark             5917   Kopenhagen
+Finnland             5869   Skellefteå
+Finnland             5872   Vaasa
+Finnland             5881   Lahti
+Finnland             5883   Tampere
+Finnland             5888   Wiborg
+Finnland             5889   Turku
+Finnland             5893   Helsinki
+Frankreich           5947   Lille
+Frankreich           5952   Brest
+Frankreich           5958   Paris
+Frankreich           5960   Nancy
+Frankreich           5969   Limoges
+Frankreich           5971   Genf
+Frankreich           5977   Bordeaux
+Frankreich           5985   Toulouse
+Frankreich           5987   Aix-en-Provence
+Frankreich           6003   Bastia
+Griechenland         6013   Salonich
+Griechenland         6022   Volo
+Griechenland         6026   Athen
+Griechenland         6027   Patras
+Griechenland         6042   Chania
+Großbritanien        5901   Dundee
+Großbritanien        5908   Newcastle
+Großbritanien        5912   Belfast
+Großbritanien        5919   Manchester
+Großbritanien        5920   Dublin
+Großbritanien        5923   Limerick
+Großbritanien        5924   Chester
+Großbritanien        5932   Birmingham
+Großbritanien        5939   London
+Großbritanien        5942   Southampton
+Italien              5980   Mailand
+Italien              5981   Venedig
+Italien              5986   Ravenna
+Italien              5988   Genua
+Italien              5997   Rom
+Italien              6006   Neapel
+Italien              6012   Lecce
+Italien              6015   Cagliari
+Italien              6018   Reggio Calabria
+Italien              6028   Palermo
+Kaukasus             5953   Cherson
+Kaukasus             5961   Tiflis
+Mali                 6032   Constantine
+Mali                 6033   Annaba
+Mali                 6034   Bizerta
+Mali                 6039   Kairouan
+Mali                 6045   El Oued
+Marokko              6029   Tanger
+Marokko              6030   Algier
+Marokko              6031   Bougie
+Marokko              6036   Oran
+Marokko              6037   Melilla
+Marokko              6038   Kenitra
+Marokko              6040   Rabat
+Marokko              6041   El Jadida
+Marokko              6043   Marrakesch
+Marokko              6044   Laghouat
+Norwegen             5864   Kiruna
+Norwegen             5865   Luleå
+Norwegen             5867   Mo i Rana
+Norwegen             5874   Steinkjer
+Norwegen             5878   Trondheim
+Norwegen             5884   Lillehammer
+Norwegen             5890   Ålesund
+Norwegen             5892   Bergen
+Norwegen             5894   Oslo
+Norwegen             5896   Stavanger
+Osmanisches Reich    5993   Burgas
+Osmanisches Reich    5998   Samsun
+Osmanisches Reich    6000   Kirsehir
+Osmanisches Reich    6005   Konstantinopel
+Osmanisches Reich    6008   Dardanellen
+Osmanisches Reich    6014   Kütahya
+Osmanisches Reich    6017   Karaman
+Osmanisches Reich    6021   Aidin
+Osmanisches Reich    6024   Adalia
+Osmanisches Reich    6035   Limasol
+Polen                5914   Bobruisk
+Polen                5921   Lida
+Polen                5925   Pinsk
+Polen                5927   Mosyr
+Polen                5931   Lutzk
+Polen                5936   Kielce
+Polen                5938   Schitomir
+Polen                5944   Warschau
+Polen                5948   Rzeszów
+Polen                5954   Kischinau
+Portugal             5994   Vigo
+Portugal             6002   Porto
+Portugal             6007   Lissabon
+Portugal             6016   Setúbal
+Russland             5863   Onega
+Russland             5866   Rovaniemi
+Russland             5873   Petrosawodsk
+Russland             5876   Kuopio
+Russland             5879   Rybinsk
+Russland             5882   Kostroma
+Russland             5885   Moskau
+Russland             5891   Murom
+Russland             5899   Kaluga
+Russland             5907   Woronesch
+Schweden             5871   Umeå
+Schweden             5875   Örnsköldsvik
+Schweden             5877   Östersund
+Schweden             5880   Härnösand
+Schweden             5886   Uppsala
+Schweden             5887   Karlstad
+Schweden             5895   Helsingborg
+Schweden             5897   Jönköping
+Schweden             5906   Karlskrona
+Schweden             6046   Stockholm
+Schweiz              5970   Bern
+Schweiz              5973   Luzern
+Serbien              5963   Odessa
+Serbien              5966   Fokschan
+Serbien              5967   Piatra Neamț
+Serbien              5975   Klausenburg
+Serbien              5976   Konstanza
+Serbien              5982   Belgrad
+Serbien              5984   Pitești
+Serbien              5991   Stara Sagora
+Serbien              5992   Nisch
+Serbien              5995   Pernik
+Spanien              5983   Corunna
+Spanien              5989   Santander
+Spanien              5996   Mataró
+Spanien              6001   Salamanca
+Spanien              6004   Madrid
+Spanien              6010   Valencia
+Spanien              6011   Badajoz
+Spanien              6019   Palma
+Spanien              6020   Sevilla
+Spanien              6023   Málaga
+Ukraine              5903   Brjansk
+Ukraine              5905   Polazk
+Ukraine              5916   Homel
+Ukraine              5928   Konotop
+Ukraine              5929   Belgorod
+Ukraine              5935   Kiew
+Ukraine              5937   Poltawa
+Ukraine              5941   Uman
+Ukraine              5950   Mariupol
+Ukraine              5972   Jalta
+litauen              5898   Riga
+litauen              5902   Wilna
+litauen              5910   Schaulen
+litauen              5913   Kauen
+Österreich           5951   Prag
+Österreich           5956   Czernowitz
+Österreich           5957   Kaschau
+Österreich           5964   Wien
+Österreich           5965   Großwardein
+Österreich           5968   Miskolc
+Österreich           5974   Innsbruck
+Österreich           5978   Reschitz
+Österreich           5979   Rijeka
+Österreich           5990   Sarajevo

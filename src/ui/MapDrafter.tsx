@@ -5,8 +5,8 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { CATEGORY_NAMES, RES_NAMES } from '../game/balance.ts';
 import {
-  addProvince, addVertex, autoLinks, cityOf, DEFAULT_COLORS, deleteVertex, edgeOwners, exportDraft, getProvince, insertOnEdge,
-  mergeProvinces, midPoint, moveVertex, nearestEdge, nearestVertex, newDraft, parseRef, provArea, provinceAt, provPts, provRef,
+  addProvince, addVertex, autoLinks, cityOf, coastsWithoutHarbor, DEFAULT_COLORS, deleteBend, deleteVertex, edgeOwners, exportDraft, getProvince, insertBend, insertOnEdge,
+  mergeProvinces, midPoint, moveBend, moveVertex, nearestEdge, nearestVertex, newDraft, parseRef, provArea, provinceAt, provPts, provRef,
   removeProvince, removeSea, rescaleDraft, seaRef, splitProvince, toggleLink, tracePath, weldVertex,
   type Draft, type ImportColors, type NodeRef, type Pt,
 } from '../game/draft.ts';
@@ -25,7 +25,7 @@ const TOOLS: { id: Tool; name: string; key: string; help: string }[] = [
   { id: 'vertex', name: 'Punkte', key: '4', help: 'Grenzpunkte ziehen (wirkt auf alle Provinzen, die ihn teilen); auf einen anderen Punkt fallen lassen verschweißt beide. Klick auf eine Kante fügt einen Punkt ein, Rechtsklick löscht einen Punkt.' },
   { id: 'merge', name: 'Verschmelzen', key: '5', help: 'Erst die Provinz anklicken, die bleibt, dann die, die in ihr aufgeht.' },
   { id: 'sea', name: 'Seepunkte', key: '6', help: 'Klick ins Wasser setzt einen Seepunkt, Ziehen verschiebt, Rechtsklick löscht.' },
-  { id: 'link', name: 'Verbindungen', key: '7', help: 'Zwei Orte nacheinander anklicken (Provinz = ihre Stadt, oder Seepunkt): Verbindung an/aus. Danach geht es vom zweiten Ort weiter; Esc beendet. Rechtsklick auf eine Linie löscht sie.' },
+  { id: 'link', name: 'Verbindungen', key: '7', help: 'Zwei Orte nacheinander anklicken (Provinz = ihre Stadt, oder Seepunkt): Verbindung an/aus. Danach geht es vom zweiten Ort weiter; Esc beendet. Klick auf eine Linie setzt einen Knickpunkt, Ziehen verbiegt den Verlauf, Rechtsklick auf einen Knick löscht ihn, Rechtsklick auf die Linie löscht die Verbindung.' },
   { id: 'nation', name: 'Nation malen', key: '8', help: 'Klick weist die gewählte Nation zu, Umschalt+Klick macht die Provinz zur Hauptstadt ihrer Nation, Rechtsklick entfernt die Nation.' },
   { id: 'resource', name: 'Rohstoff malen', key: '9', help: 'Klick setzt den gewählten Rohstoff, Rechtsklick schaltet Doppelprovinz um, Umschalt+Klick entfernt den Rohstoff.' },
 ];
@@ -67,8 +67,11 @@ interface PathEntry { v?: number; pt: Pt }
 type Sel = { kind: 'prov'; id: number } | { kind: 'sea'; id: number } | null;
 interface View { s: number; ox: number; oy: number }
 interface Drag {
-  kind: 'pan' | 'vertex' | 'sea' | 'city';
+  kind: 'pan' | 'vertex' | 'sea' | 'city' | 'bend';
   id: number;
+  /** bei Knickzug: Index der Verbindung in d.links und des Knickpunkts */
+  li?: number;
+  bk?: number;
   sx: number;
   sy: number;
   view: View;
@@ -102,6 +105,7 @@ export function MapDrafter({ onExit }: { onExit(): void }) {
   const [image, setImage] = useState<ImageInfo | null>(null);
   const [imgOpacity, setImgOpacity] = useState(0.6);
   const [imgVisible, setImgVisible] = useState(true);
+  const [hlCoasts, setHlCoasts] = useState(false); // Küstenprovinzen ohne Wasserweg hervorheben
   const [history, setHistory] = useState<Draft[]>([]);
   const [future, setFuture] = useState<Draft[]>([]);
   const [dirty, setDirty] = useState(false);
@@ -228,6 +232,9 @@ export function MapDrafter({ onExit }: { onExit(): void }) {
     return { paths, inner, national, coast };
   }, [draft]);
 
+  // Küsten ohne Hafenanschluss (für die Hervorhebung); neu bei jeder Entwurfsänderung
+  const noHarborIds = useMemo(() => (draft ? new Set(coastsWithoutHarbor(draft)) : new Set<number>()), [draft]);
+
   const nodePos = (d: Draft, r: NodeRef): Pt | null => {
     const { kind, id } = parseRef(r);
     if (kind === 's') return d.seas.find((z) => z.id === id)?.at ?? null;
@@ -324,24 +331,40 @@ export function MapDrafter({ onExit }: { onExit(): void }) {
       ctx.lineWidth = 3 / s;
       ctx.stroke(pp);
     };
+    if (hlCoasts) for (const pid of noHarborIds) outline(pid, '#1f9bb8');
     if (sel?.kind === 'prov') outline(sel.id, '#e8b730');
     if (mergeFrom !== null) outline(mergeFrom, '#2a7ad4');
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    // Verbindungen
-    for (const [a, b] of d.links) {
-      const pa = nodePos(d, a), pb = nodePos(d, b);
-      if (!pa || !pb) continue;
-      const sea = a[0] === 's' || b[0] === 's';
-      ctx.strokeStyle = sea ? 'rgba(30, 80, 140, 0.75)' : 'rgba(110, 60, 20, 0.8)';
+    // Verbindungen (Knickpunkte dazwischen, beim Ziehen live)
+    const bendPts: Pt[] = [];
+    d.links.forEach((l, li) => {
+      const pa = nodePos(d, l[0]), pb = nodePos(d, l[1]);
+      if (!pa || !pb) return;
+      const sea = l[0][0] === 's' || l[1][0] === 's';
+      // Wasserweg an einer „kein Hafen“-Markierung: blass gestrichelt, er wird beim Export ignoriert
+      const ignored = sea && ((l[0][0] === 'p' && getProvince(d, parseRef(l[0]).id)?.noHarbor) || (l[1][0] === 'p' && getProvince(d, parseRef(l[1]).id)?.noHarbor));
+      const bends = (l[2] ?? []).map((q, k) => (dr?.kind === 'bend' && dr.li === li && dr.bk === k && dr.moved ? dr.at : q));
+      ctx.strokeStyle = ignored ? 'rgba(120, 120, 120, 0.45)' : sea ? 'rgba(30, 80, 140, 0.75)' : 'rgba(110, 60, 20, 0.8)';
       ctx.lineWidth = 1.6;
-      ctx.setLineDash(a[0] === 's' && b[0] === 's' ? [5, 4] : []);
+      ctx.setLineDash(ignored ? [2, 3] : l[0][0] === 's' && l[1][0] === 's' ? [5, 4] : []);
       ctx.beginPath();
       ctx.moveTo(X(pa[0]), Y(pa[1]));
+      for (const q of bends) { ctx.lineTo(X(q[0]), Y(q[1])); bendPts.push(q); }
       ctx.lineTo(X(pb[0]), Y(pb[1]));
       ctx.stroke();
-    }
+    });
     ctx.setLineDash([]);
+    // Knickpunkte greifbar machen
+    if (tool === 'link') {
+      ctx.fillStyle = '#fff';
+      ctx.strokeStyle = '#6e3c14';
+      ctx.lineWidth = 1.4;
+      for (const q of bendPts) {
+        ctx.fillRect(X(q[0]) - 3, Y(q[1]) - 3, 6, 6);
+        ctx.strokeRect(X(q[0]) - 3, Y(q[1]) - 3, 6, 6);
+      }
+    }
     // Rohstoffe
     const size = Math.max(10, Math.min(22, 26 * s));
     for (const p of d.provinces) {
@@ -385,6 +408,16 @@ export function MapDrafter({ onExit }: { onExit(): void }) {
         ctx.lineWidth = 1.2;
         ctx.fillRect(x - r, y - r, 2 * r, 2 * r);
         ctx.strokeRect(x - r, y - r, 2 * r, 2 * r);
+      }
+      if (p.noHarbor) {
+        // Verbotssymbol neben der Stadt: keine Wasserwege
+        ctx.strokeStyle = '#3d4a52';
+        ctx.lineWidth = 1.6;
+        ctx.beginPath();
+        ctx.arc(x + 9, y - 9, 4.5, 0, Math.PI * 2);
+        ctx.moveTo(x + 5.8, y - 5.8);
+        ctx.lineTo(x + 12.2, y - 12.2);
+        ctx.stroke();
       }
       if (s > 0.45) {
         ctx.font = '12px "Palatino Linotype", Georgia, serif';
@@ -524,16 +557,31 @@ export function MapDrafter({ onExit }: { onExit(): void }) {
     }
     return best;
   };
-  const linkHit = (d: Draft, p: Pt): [NodeRef, NodeRef] | null => {
-    let best: [NodeRef, NodeRef] | null = null, bd = px(EDGE_PX);
+  const linkHit = (d: Draft, p: Pt): Draft['links'][number] | null => {
+    let best: Draft['links'][number] | null = null, bd = px(EDGE_PX);
     for (const l of d.links) {
       const a = nodePos(d, l[0]), b = nodePos(d, l[1]);
       if (!a || !b) continue;
-      const dx = b[0] - a[0], dy = b[1] - a[1], l2 = dx * dx + dy * dy;
-      const t = l2 ? Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / l2)) : 0;
-      const dd = Math.hypot(p[0] - a[0] - dx * t, p[1] - a[1] - dy * t);
-      if (dd < bd) { bd = dd; best = l; }
+      const line = [a, ...(l[2] ?? []), b];
+      for (let k = 0; k + 1 < line.length; k++) {
+        const [p0, p1] = [line[k], line[k + 1]];
+        const dx = p1[0] - p0[0], dy = p1[1] - p0[1], l2 = dx * dx + dy * dy;
+        const t = l2 ? Math.max(0, Math.min(1, ((p[0] - p0[0]) * dx + (p[1] - p0[1]) * dy) / l2)) : 0;
+        const dd = Math.hypot(p[0] - p0[0] - dx * t, p[1] - p0[1] - dy * t);
+        if (dd < bd) { bd = dd; best = l; }
+      }
     }
+    return best;
+  };
+  /** Knickpunkt-Treffer: Verbindung Index in d.links + Punkt Index */
+  const bendHit = (d: Draft, p: Pt): { i: number; k: number } | null => {
+    let best: { i: number; k: number } | null = null, bd = px(SNAP_PX);
+    d.links.forEach((l, i) => {
+      (l[2] ?? []).forEach((q, k) => {
+        const dd = Math.hypot(q[0] - p[0], q[1] - p[1]);
+        if (dd < bd) { bd = dd; best = { i, k }; }
+      });
+    });
     return best;
   };
   const snapAt = (d: Draft, p: Pt) => {
@@ -574,6 +622,10 @@ export function MapDrafter({ onExit }: { onExit(): void }) {
     if (tool === 'vertex') {
       const v = nearestVertex(d, p[0], p[1], px(SNAP_PX));
       if (v !== null) { drag.current = { kind: 'vertex', id: v, ...base }; return; }
+    }
+    if (tool === 'link') {
+      const bh = bendHit(d, p);
+      if (bh) { drag.current = { kind: 'bend', id: 0, li: bh.i, bk: bh.k, ...base }; return; }
     }
     drag.current = { kind: 'pan', id: 0, ...base };
   };
@@ -629,6 +681,9 @@ export function MapDrafter({ onExit }: { onExit(): void }) {
         if (q && !provinceAt(d, dr.at[0], dr.at[1])) setStatus('Die Stadt muss in ihrer Provinz liegen.');
         else if (q && provinceAt(d, dr.at[0], dr.at[1])?.id !== q.id) setStatus('Die Stadt muss in ihrer Provinz liegen.');
         else commit((x) => { const r = getProvince(x, dr.id); if (r) r.city = [Math.round(dr.at[0] * 10) / 10, Math.round(dr.at[1] * 10) / 10]; });
+      } else if (dr.kind === 'bend') {
+        const l = d.links[dr.li ?? -1];
+        if (l) commit((x) => { moveBend(x, l[0], l[1], dr.bk ?? 0, dr.at); });
       }
       schedule();
       return;
@@ -770,12 +825,30 @@ export function MapDrafter({ onExit }: { onExit(): void }) {
       }
       case 'link': {
         if (right) {
+          const bh = bendHit(d, p);
+          if (bh) {
+            const lb = d.links[bh.i];
+            if (lb) commit((x) => { deleteBend(x, lb[0], lb[1], bh.k); });
+            return;
+          }
           const l = linkHit(d, p);
           if (l) commit((x) => { toggleLink(x, l[0], l[1]); });
           return;
         }
         const z = seaHit(d, p);
-        const node = z !== null ? seaRef(z) : prov ? provRef(prov.id) : null;
+        let node: NodeRef | null = z !== null ? seaRef(z) : null;
+        if (node === null) {
+          // Klick auf eine Linie (fern der Endpunkte) setzt einen Knickpunkt
+          const l = linkHit(d, p);
+          if (l) {
+            const ea = nodePos(d, l[0]), eb = nodePos(d, l[1]);
+            const nearEnd =
+              (ea !== null && Math.hypot(ea[0] - p[0], ea[1] - p[1]) < px(SNAP_PX)) ||
+              (eb !== null && Math.hypot(eb[0] - p[0], eb[1] - p[1]) < px(SNAP_PX));
+            if (!nearEnd) { commit((x) => { insertBend(x, l[0], l[1], p); }); return; }
+          }
+          node = prov ? provRef(prov.id) : null;
+        }
         if (!node) { setLinkFrom(null); return; }
         if (!linkFrom) { setLinkFrom(node); return; }
         if (node === linkFrom) { setLinkFrom(null); return; }
@@ -1080,6 +1153,7 @@ export function MapDrafter({ onExit }: { onExit(): void }) {
               ))}
               <label className="small"><input type="checkbox" checked={selProv.double} onChange={(e) => { const v = e.target.checked; commit((x) => { getProvince(x, selProv.id)!.double = v; }); }} /> Doppelprovinz</label>
               <label className="small"><input type="checkbox" checked={selProv.bigCity} onChange={(e) => { const v = e.target.checked; commit((x) => { getProvince(x, selProv.id)!.bigCity = v; }); }} /> Größere Stadt (mehr Siegpunkte)</label>
+              <label className="small" title="Kein Wasserweg, auch nicht ans nächste Seegebiet – z. B. für Provinzen, die nur an einen See ohne Seepunkt grenzen"><input type="checkbox" checked={selProv.noHarbor} onChange={(e) => { const v = e.target.checked; commit((x) => { getProvince(x, selProv.id)!.noHarbor = v; }); }} /> Kein Hafen (keine Wasserwege)</label>
               <p className="small muted">{Math.round(provArea(draft, selProv)).toLocaleString('de-DE')} km² · {linkCount(selProv.id)} Verbindungen · Stadt {selProv.city ? 'gesetzt' : 'automatisch'}</p>
               <div className="editor-buttons">
                 {selProv.nation && (
@@ -1201,9 +1275,12 @@ export function MapDrafter({ onExit }: { onExit(): void }) {
               </div>}
             <p className="small muted">{draft.provinces.length} Provinzen · {draft.seas.length} Seepunkte · {draft.links.length} Verbindungen</p>
             <div className="editor-buttons">
-              <button className="btn small" title="Nachbarprovinzen verbinden, Küstenprovinzen ohne Hafen an den nächsten Seepunkt, benachbarte Seepunkte untereinander (fehlende ergänzen)"
+              <button className="btn small" title="Nachbarprovinzen verbinden, Küstenprovinzen ohne Hafen an den nächsten Seepunkt (als „kein Hafen“ markierte auslassen), benachbarte Seepunkte untereinander (fehlende ergänzen)"
                 onClick={() => { let n = 0; commit((x) => { n = autoLinks(x); }); setStatus(`${n} Verbindungen ergänzt.`); }}>Verbindungen ergänzen</button>
               <button className="btn small" title="Alle Verbindungen löschen" onClick={() => commit((x) => { x.links = []; })}>Verbindungen leeren</button>
+              <button className="btn small" title="Küstenprovinzen ohne Verbindung zu einem Seepunkt türkis umranden (als „kein Hafen“ markierte zählen nicht)"
+                onClick={() => { const n = noHarborIds.size, next = !hlCoasts; setHlCoasts(next); setStatus(next ? (n ? `${n} Küsten ohne Hafenanschluss hervorgehoben.` : 'Alle Küsten haben einen Hafenanschluss.') : 'Hervorhebung aus.'); }}>
+                {hlCoasts ? 'Hervorhebung aus' : 'Küsten ohne Hafen'} ({noHarborIds.size})</button>
             </div>
           </section>
 

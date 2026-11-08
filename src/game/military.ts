@@ -5,6 +5,7 @@ import { DEFAULT_COMBAT_MORALE, SUPERIORITY, COMBAT_MORALE_V2, BUILDING_DAMAGE_C
 } from './balance.ts';
 import { atWar, hasRightOfWay, setRelation, noteWarDeclaration } from './diplomacy.ts';
 import { edgeParts, edgePoint, edgePoints, edgeSlice, edgeThrough, isSea, nodeCount, nodeName, nodeNeighbors, nodePos } from './graph.ts';
+import { inPolys } from './mapedits.ts';
 import type { MapData } from './mapdata.ts';
 import { activeCapital, activeLevel } from './economy.ts';
 import { armyName } from './names.ts';
@@ -118,11 +119,30 @@ export function roadLimit(state: GameState, map: MapData, a: Army, u: number, v:
 /** Abstand zur Grenze, an dem ein Marsch auf einem Weg endet, der nicht weiter darf (km) */
 const BORDER_GAP_KM = 0.5;
 
-/** Länge des Landstücks eines Hafenweges: von der Stadt bis zum Hafenpunkt */
+/**
+ * Länge des Landstücks eines Hafenweges: von der Stadt über alle Knicke an Land bis zur
+ * Wassergrenze (Einschiffpunkt). Knicke auf dem Land wirken so auf Tempo und Verlauf;
+ * Knicke im Wasser bleiben reine Zeichenhilfe und ändern am Landstück nichts.
+ */
 export function harborLeg(map: MapData, u: number, v: number): number {
   const pts = edgePoints(map, u, v);
-  const [c, h] = isSea(map, u) ? [pts[pts.length - 1], pts[pts.length - 2]] : [pts[0], pts[1]];
-  return Math.hypot(h[0] - c[0], h[1] - c[1]);
+  const prov = isSea(map, u) ? v : u;
+  const line = isSea(map, u) ? [...pts].reverse() : pts;
+  const polys = map.provinces[prov].polys;
+  let land = 0;
+  outer: for (let k = 0; k + 1 < line.length; k++) {
+    const [x0, y0] = line[k], [x1, y1] = line[k + 1];
+    const seg = Math.hypot(x1 - x0, y1 - y0);
+    const n = Math.max(1, Math.ceil(seg / 0.5));
+    for (let s = 1; s <= n; s++) {
+      const f = s / n;
+      if (!inPolys(polys, x0 + (x1 - x0) * f, y0 + (y1 - y0) * f)) { land += seg * f; break outer; }
+      if (s === n) land += seg;
+    }
+  }
+  // Ausreißer der Flächenprüfung (Stadt exakt auf einer Polygonkante): altes Maß Stadt→erster Knick
+  if (land <= 0 && line.length > 2) land = Math.hypot(line[1][0] - line[0][0], line[1][1] - line[0][1]);
+  return land;
 }
 
 function landSpeed(state: GameState, a: Army, province: number): number {
@@ -1622,6 +1642,17 @@ export function conquer(ctx: MilitaryContext, node: number, by: string): void {
     for (const p of state.provinces) {
       if (p.owner === by) p.morale = Math.min(1, p.morale + MILITARY.capitalMoraleBonus);
       else if (p.owner === old) p.morale = Math.max(MORALE.min, p.morale - MILITARY.capitalMoralePenalty);
+    }
+    // Plünderung: ein Anteil der gegnerischen Kasse wandert zum Eroberer (Großmacht wie Kleinstaat)
+    const loot = state.nations[by]?.stock;
+    const loss = state.nations[old]?.stock;
+    if (loot && loss) {
+      const amount = Math.floor(loss.money * MILITARY.capitalPlunder);
+      if (amount > 0) {
+        loss.money -= amount;
+        loot.money += amount;
+        ctx.log(`${byName} plündert ${amount.toLocaleString('de-DE')} Geld aus der Hauptstadt ${mp.name}.`, undefined, node);
+      }
     }
   }
   if (!state.provinces.some((p) => p.owner === old) && state.nations[old]) {

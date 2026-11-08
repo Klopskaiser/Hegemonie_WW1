@@ -1,7 +1,7 @@
 // Produktion, Verbrauch, Moral und Siegpunkte.
 
 import {
-  ALL_RES, BUILDING_ORDER, BUILDINGS, CATEGORIES, CATEGORY_OF, CATEGORY_RES, DEFECTION, MORALE, POINTS, PROVINCE, RECRUIT_HOURS,
+  ALL_RES, BUILDING_ORDER, BUILDINGS, CATEGORIES, CATEGORY_OF, CATEGORY_RES, CORRUPTION, DEFECTION, MORALE, POINTS, PROVINCE, RECRUIT_HOURS,
   RECRUIT_WITHOUT_OFFICE, UNITS, type Building, type Category, type Res, type UnitType,
 } from './balance.ts';
 import { RESOURCES, type MapData, type Resource } from './mapdata.ts';
@@ -45,12 +45,35 @@ export function productionBonus(ps: ProvinceState): number {
   return b;
 }
 
+/** Bonus auf die Geldproduktion (derzeit nur der Handelsposten mit +8 %) */
+export function moneyProductionBonus(ps: ProvinceState): number {
+  let b = 0;
+  for (const k of Object.keys(ps.buildings) as Building[]) b += BUILDINGS[k].moneyBonus?.(activeLevel(ps, k)) ?? 0;
+  return b;
+}
+
 export function provinceOutput(map: MapData, ps: ProvinceState, id: number): ProvinceOutput {
   const mp = map.provinces[id];
   const bonus = productionBonus(ps);
   const size = mp.double ? 2 : 1;
   const amount = PROVINCE.resourceBase * size * ps.morale * (1 + bonus);
-  return { resource: mp.resource, amount, money: PROVINCE.money * size * ps.morale, bonus };
+  const money = (PROVINCE.moneyBase + ps.morale * 100 * PROVINCE.moneyPerMoralePct) * size * (1 + moneyProductionBonus(ps));
+  return { resource: mp.resource, amount, money, bonus };
+}
+
+/**
+ * Korruption: Abzug von allen produzierten Ressourcen einer Nation.
+ * Kontrolle = mittlere Moral über alle eigenen Provinzen; unter 10 % Kontrolle 1 % Abzug,
+ * ab 50 % Kontrolle die vollen 12 %, dazwischen linear.
+ */
+export function corruptionOf(state: GameState, nation: string): number {
+  const own = state.provinces.filter((p) => p.owner === nation);
+  if (!own.length) return CORRUPTION.min;
+  const control = own.reduce((t, p) => t + p.morale, 0) / own.length;
+  const { min, max, startControl, fullControl } = CORRUPTION;
+  if (control <= startControl) return min;
+  if (control >= fullControl) return max;
+  return min + ((control - startControl) / (fullControl - startControl)) * (max - min);
 }
 
 /** Raten aller Nationen in einem Durchlauf. */
@@ -82,6 +105,11 @@ export function allRates(state: GameState, map: MapData): Record<string, NationR
       const up = UNITS[u].upkeep;
       for (const k of Object.keys(up) as Res[]) r.cons[k] += up[k]! * n;
     }
+  }
+  // Korruption: am Ende prozentualer Abzug von allen produzierten Ressourcen der Nation
+  for (const [id, r] of Object.entries(out)) {
+    const keep = 1 - corruptionOf(state, id);
+    for (const k of ALL_RES) r.prod[k] *= keep;
   }
   return out;
 }

@@ -1122,7 +1122,7 @@ export function MapEditor({ onExit }: { onExit(): void }) {
             <section>
               <h3>{name(selEdge.u)} – {name(selEdge.v)}</h3>
               <p className="small">
-                {selEdge.kind === 'land' ? 'Landweg' : selEdge.kind === 'harbor' ? 'Hafenweg (erster Knick = Einschiffpunkt)' : 'Seeweg'} ·
+                {selEdge.kind === 'land' ? 'Landweg' : selEdge.kind === 'harbor' ? 'Hafenweg (Knicke an Land wirken, im Wasser nicht)' : 'Seeweg'} ·
                 {' '}{Math.round(selLen)} km · {selEdge.pts.length - 2} Knicke{selCustom ? ' · eigener Verlauf' : ''}
               </p>
               {selChecks.map((c) => <p key={c} className="small warn">⚠ {c}</p>)}

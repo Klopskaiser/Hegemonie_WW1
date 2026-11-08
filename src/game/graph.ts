@@ -91,6 +91,7 @@ function graph(map: MapData): Graph {
       }
     });
     map.seas.forEach((z, i) => {
+      if (map.seaNodes) return; // Seeknoten-Karten: Seewege verlaufen gerade, keine Grenze zwischen Knoten
       const own = new Set(seaPts[i].map(([x, y]) => `${x},${y}`));
       for (const s of z.seas) {
         if (s < i) continue;

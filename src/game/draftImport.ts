@@ -510,7 +510,7 @@ export function importRaster(img: RasterImage, opt: ImportOptions, kmW: number, 
   const seaPts = components(W, H, (i) => cls[i] === C.Sea, true);
   const provId = Array.from({ length: labels }, () => nextId++);
   const provinces: DraftProvince[] = provId.map((id, l) => ({
-    id, name: `Provinz ${l + 1}`, nation: null, polys: polysOf[l], city: null, bigCity: false, resource: null, double: false,
+    id, name: `Provinz ${l + 1}`, nation: null, polys: polysOf[l], city: null, bigCity: false, resource: null, double: false, noHarbor: false,
   }));
   // Knoten für Verbindungen: Scheiben um die Punkte
   interface Node { ref: NodeRef; x: number; y: number; r: number }

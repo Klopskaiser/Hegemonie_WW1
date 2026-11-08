@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { BUILDINGS, DAY, PROVINCE } from '../src/game/balance.ts';
-import { allRates, defaultConsumption, netRate, provinceOutput, toShares, type NationRates } from '../src/game/economy.ts';
+import { allRates, corruptionOf, defaultConsumption, netRate, provinceOutput, toShares, type NationRates } from '../src/game/economy.ts';
 import type { MapData } from '../src/game/mapdata.ts';
 import { Simulation } from '../src/game/sim.ts';
 import { createGame } from '../src/game/state.ts';
@@ -16,13 +16,14 @@ function newSim() {
 }
 
 describe('Geld und Unterhalt', () => {
-  it('Geld: 1600 je Provinz bei 100 % Moral, Doppelprovinz das Doppelte; Rohstoff 3150', () => {
+  it('Geld: 710 + Moral-% × 19 je Provinz, Doppelprovinz das Doppelte; Rohstoff 3150', () => {
     const sim = newSim();
     const single = map.provinces.find((p) => !p.double)!, double = map.provinces.find((p) => p.double)!;
     const ps = { ...sim.state.provinces[single.id], morale: 1, buildings: { ...sim.state.provinces[single.id].buildings, railroad: 0, harbor: 0, factory: 0, manufactory: 0 } };
-    expect(provinceOutput(map, ps, single.id).money).toBe(1600);
+    expect(provinceOutput(map, ps, single.id).money).toBe(710 + 100 * 19);
     expect(provinceOutput(map, ps, single.id).amount).toBe(3150);
-    expect(provinceOutput(map, { ...sim.state.provinces[double.id], morale: 1 }, double.id).money).toBe(3200);
+    expect(provinceOutput(map, { ...ps, morale: 0.5 }, single.id).money).toBe(710 + 50 * 19);
+    expect(provinceOutput(map, { ...sim.state.provinces[double.id], morale: 1 }, double.id).money).toBe(2 * (710 + 100 * 19));
   });
 
   it('Provinzunterhalt 800 je Kategorie, Eisenbahn 500 Kohle', () => {
@@ -126,3 +127,35 @@ function focusSharesOf(r: NationRates) {
   const grain = Math.floor(Math.min(1, avail / r.upkeep) * 100);
   return { grain, fish: 100 - grain };
 }
+
+describe('Korruption', () => {
+  const setControl = (sim: ReturnType<typeof newSim>, morale: number) => {
+    for (const p of sim.state.provinces) if (p.owner === 'DE') p.morale = morale;
+  };
+
+  it('beginnt bei 10 % Kontrolle mit 1 % und erreicht bei 50 % die vollen 12 %', () => {
+    const sim = newSim();
+    setControl(sim, 0.05); expect(corruptionOf(sim.state, 'DE')).toBeCloseTo(0.01, 9);
+    setControl(sim, 0.10); expect(corruptionOf(sim.state, 'DE')).toBeCloseTo(0.01, 9);
+    setControl(sim, 0.30); expect(corruptionOf(sim.state, 'DE')).toBeCloseTo(0.065, 9);
+    setControl(sim, 0.50); expect(corruptionOf(sim.state, 'DE')).toBeCloseTo(0.12, 9);
+    setControl(sim, 0.90); expect(corruptionOf(sim.state, 'DE')).toBeCloseTo(0.12, 9);
+  });
+
+  it('zieht am Ende von allen produzierten Ressourcen ab, auch vom Geld', () => {
+    const sim = newSim();
+    setControl(sim, 0.3); // 6,5 % Abzug
+    const r = allRates(sim.state, map).DE;
+    let rawMoney = 0, rawGrain = 0;
+    for (const [i, ps] of sim.state.provinces.entries()) {
+      if (ps.owner !== 'DE' || ps.revolt) continue;
+      const po = provinceOutput(map, ps, i);
+      rawMoney += po.money;
+      if (po.resource === 'grain') rawGrain += po.amount;
+    }
+    expect(r.prod.money).toBeCloseTo(rawMoney * 0.935, 6);
+    if (rawGrain > 0) expect(r.prod.grain).toBeCloseTo(rawGrain * 0.935, 6);
+    // der Verbrauch bleibt unberührt
+    expect(r.cons.grain).toBeGreaterThan(0);
+  });
+});

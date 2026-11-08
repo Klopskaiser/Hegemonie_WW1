@@ -32,10 +32,22 @@ export const CATEGORY_RES: Record<Category, Resource[]> = {
 export const PROVINCE = {
   /** Rohstoffproduktion pro Tag bei 100 % Moral */
   resourceBase: 3150,
-  /** Geld pro Tag bei 100 % Moral; Doppelprovinz das Doppelte */
-  money: 1600,
+  /** Geld je Tag: Grundbetrag + Moral in % × moneyPerMoralePct; Doppelprovinz das Doppelte */
+  moneyBase: 710,
+  moneyPerMoralePct: 19,
   /** Unterhalt je Provinz und Tag in jeder Kategorie (Nahrung, Baustoffe, Energie), verteilt nach Verbrauchsregler */
   upkeep: 800,
+};
+
+// ---------------------------------------------------------------- Korruption
+
+export const CORRUPTION = {
+  /** Abzug von allen produzierten Ressourcen bei geringer bzw. voller Kontrolle */
+  min: 0.01,
+  max: 0.12,
+  /** Kontrolle (mittlere Moral aller eigenen Provinzen): hier beginnt die Korruption, hier erreicht sie das Maximum */
+  startControl: 0.10,
+  fullControl: 0.50,
 };
 
 // ---------------------------------------------------------------- Gebäude
@@ -54,6 +66,8 @@ export interface BuildingDef {
   hours(level: number): number;
   /** Produktionsbonus der erreichten Stufe (0.33 = +33 %) */
   prodBonus(level: number): number;
+  /** Bonus auf die Geldproduktion der Provinz (0.08 = +8 %), nur beim Handelsposten */
+  moneyBonus?(level: number): number;
   /** Moralbonus der erreichten Stufe */
   morale(level: number): number;
   upkeep?: Cost;
@@ -99,9 +113,10 @@ export const BUILDINGS: Record<Building, BuildingDef> = {
     cost: () => ({ money: 12000, iron: 500, lumber: 2500 }),
     hours: () => 48,
     prodBonus: (l) => (l >= 1 ? 0.07 : 0),
-    morale: (l) => (l >= 1 ? 0.03 : 0),
+    moneyBonus: (l) => (l >= 1 ? 0.08 : 0),
+    morale: (l) => (l >= 1 ? 0.02 : 0),
     upkeep: { fish: 20 },
-    describe: () => 'Rohstoffproduktion +7 % (nicht Geld), Moral +3 %. Nur in Provinzen ohne Küste. Unterhalt 20 Fisch/Tag.',
+    describe: () => 'Rohstoffproduktion +7 %, Geldproduktion +8 %, Moral +2 %. Nur in Provinzen ohne Küste. Unterhalt 20 Fisch/Tag.',
   },
   workshop: {
     name: 'Werkstatt', maxLevel: 1, lives: 1,
@@ -307,6 +322,8 @@ export const MILITARY = {
   /** Hauptstadt erobert: Moralbonus für den Sieger, Abzug für den Verlierer */
   capitalMoraleBonus: 0.1,
   capitalMoralePenalty: 0.15,
+  /** Hauptstadt erobert: Anteil der gegnerischen Kasse, den der Eroberer plündert */
+  capitalPlunder: 0.2,
   /** Aufständische je Aufstand */
   rebelUnits: [2, 4] as [number, number],
 };

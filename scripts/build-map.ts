@@ -836,12 +836,14 @@ for (const n of config.nations) {
   }
 }
 
-// Rohstoffe: nach Lage, mit Regeln für Gesamtkarte und Nationen (scripts/resources.ts)
+// Rohstoffe: rein nach Lage; harte Nations-Grenzen (Quoten, Öl-Obergrenze) sind aus —
+// die Prüfung unten meldet Abweichungen weiterhin als Warnung.
 assignResources(
   provinces.map((p, i) => ({ province: p, shape: provs[i].shape, lat: p.lonlat[1], desert: config.cellFactor(p.lonlat[0], p.lonlat[1]) >= 3 })),
   hotspots,
   rnd,
   (nation) => config.oilLimit?.[nation] ?? (config.nations.find((n) => n.id === nation)!.major ? 1 : 0),
+  { nationLimits: false },
 );
 // Feste Vorgaben aus der Kartenkonfiguration
 const byName = (name: string) => {

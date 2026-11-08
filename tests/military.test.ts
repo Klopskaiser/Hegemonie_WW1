@@ -3,9 +3,10 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { BUILDINGS, DAY, HOUR, MINUTE, UNITS } from '../src/game/balance.ts';
 import { atWar, setRelation } from '../src/game/diplomacy.ts';
-import { edgeLength, edgeParts, edgePoint, edgeThrough, isSea, nodePos } from '../src/game/graph.ts';
+import { edgeLength, edgeParts, edgePoint, edgePoints, edgeThrough, isSea, nodePos } from '../src/game/graph.ts';
 import type { MapData } from '../src/game/mapdata.ts';
-import { applyDamage, armyHp, armyPosition, findPath, meleeOutput, segmentHours, unitCount, unitHp, canEnter, harborLeg, isRangedOnly, maxRange } from '../src/game/military.ts';
+import { applyDamage, armyHp, armyPosition, findPath, meleeOutput, segmentHours, unitCount, unitHp, canEnter, conquer, harborLeg, isRangedOnly, maxRange } from '../src/game/military.ts';
+import { addProvince, addVertex, exportDraft, insertBend, newDraft, provRef, seaRef, toggleLink } from '../src/game/draft.ts';
 import { MILITARY } from '../src/game/balance.ts';
 import { Simulation } from '../src/game/sim.ts';
 import { createGame } from '../src/game/state.ts';
@@ -127,6 +128,35 @@ describe('See', () => {
     sim.state.provinces[hamburg].owner = 'FR';
     const hostile = land / (UNITS.infantry.speed * 0.5) + (edgeLength(map, hamburg, sea) - land) / MILITARY.transportSpeed;
     expect(segmentHours(sim.state, map, army, sea, hamburg)).toBeCloseTo(hostile + 2);
+  });
+
+  it('Knicke an Land bestimmen beim Einschiffen die Wassergrenze, Knicke im Wasser nicht', () => {
+    // zwei Quadrate 100×100 km (Ost: x 150–250), Seepunkt bei x 300 – wie im Karten-Zeichner
+    const d = newDraft('mh', 'Mini Hafen', 400, 200);
+    const v = [[50, 50], [150, 50], [250, 50], [250, 150], [150, 150], [50, 150]].map((p) => addVertex(d, p as [number, number]));
+    addProvince(d, [v[0], v[1], v[4], v[5]], { name: 'West', nation: 'A' });
+    addProvince(d, [v[1], v[2], v[3], v[4]], { name: 'Ost', nation: 'A' });
+    d.nations = [{ id: 'A', name: 'Alpha', color: '#aa0000', major: true, capital: d.provinces[0].id }];
+    d.seas.push({ id: d.nextId++, name: 'S1', at: [300, 100] });
+    toggleLink(d, provRef(d.provinces[1].id), seaRef(d.seas[0].id));
+    insertBend(d, provRef(d.provinces[1].id), seaRef(d.seas[0].id), [230, 80]);   // an Land
+    const m = exportDraft(d).map!;
+    const P = m.provinces.length;
+    const pts = edgePoints(m, 1, P);
+    expect(pts[1]).toEqual([230, 80]);                       // der Verlauf biegt über den Landknick
+    // erwartetes Landstück: beide Schenkel bis zum Küstenaustritt x = 250
+    const t = (250 - pts[1][0]) / (pts[2][0] - pts[1][0]);
+    const expected = Math.hypot(pts[1][0] - pts[0][0], pts[1][1] - pts[0][1])
+      + t * Math.hypot(pts[2][0] - pts[1][0], pts[2][1] - pts[1][1]);
+    const leg = harborLeg(m, 1, P);
+    expect(leg).toBeCloseTo(expected, 0);                    // Landstück = geknickter Weg bis zur Küste
+    expect(leg).toBeGreaterThan(Math.hypot(pts[1][0] - pts[0][0], pts[1][1] - pts[0][1]) + 5); // deutlich über Stadt→erster Knick
+    expect(leg).toBeLessThan(edgeLength(m, 1, P));           // das Wasserstück bleibt Transporttempo
+    // Tempo: Landanteil im Landtempo bis zur Küste, danach Transporttempo plus Einschiffen
+    const state = createGame(m, { id: 'g', name: 'G', playerNation: 'A', speed: 1, seed: 1, now: 0 });
+    const army: Army = { id: 1, owner: 'A', node: 1, units: { infantry: 4 } };
+    const total = leg / UNITS.infantry.speed + (edgeLength(m, 1, P) - leg) / MILITARY.transportSpeed;
+    expect(segmentHours(state, m, army, 1, P)).toBeCloseTo(total + MILITARY.embarkHours, 5);
   });
 
   it('Artillerie und Eisenbahngeschütze haben auf See keine Reichweite und kämpfen im Nahkampf; Geschütze an Land nur auf Bahn', () => {
@@ -401,5 +431,34 @@ describe('Begegnungen auf Wegen und Tempo', () => {
         else expect(def.hours(l)).toBeGreaterThan(def.hours(l - 1));
       }
     }
+  });
+});
+
+describe('Plünderung bei Hauptstadt-Einnahme', () => {
+  /** Kleinstaat mit mindestens zwei Provinzen, damit er die Einnahme überlebt */
+  const minor = map.nations.find((n) => !n.major && map.provinces.filter((p) => p.nation === n.id).length >= 2)!;
+  const own = (nat: string) => map.provinces.filter((p) => p.nation === nat);
+  const capital = map.nations.find((n) => n.id === minor.id)!.capital;
+  const ctx = (sim: Simulation) => ({ state: sim.state, map, log: () => {}, invalidate: () => {}, random: () => 0.5, newArmyId: () => 99999 });
+
+  it('bringt dem Eroberer 20 % der Kasse des Kleinstaats ein', () => {
+    const sim = newSim();
+    sim.state.nations[minor.id].stock.money = 12345;
+    sim.state.nations.DE.stock.money = 1000;
+    conquer(ctx(sim), capital, 'DE');
+    const loot = Math.floor(12345 * MILITARY.capitalPlunder);
+    expect(sim.state.nations[minor.id].stock.money).toBe(12345 - loot);
+    expect(sim.state.nations.DE.stock.money).toBe(1000 + loot);
+    expect(sim.state.nations[minor.id].alive).toBe(true);
+  });
+
+  it('gewöhnliche Provinzen werden nicht geplündert', () => {
+    const sim = newSim();
+    const other = own(minor.id).find((p) => p.id !== capital)!;
+    sim.state.nations[minor.id].stock.money = 12345;
+    sim.state.nations.DE.stock.money = 1000;
+    conquer(ctx(sim), other.id, 'DE');
+    expect(sim.state.nations[minor.id].stock.money).toBe(12345);
+    expect(sim.state.nations.DE.stock.money).toBe(1000);
   });
 });

@@ -9,6 +9,7 @@
 import { Delaunay } from 'd3-delaunay';
 import polygonClipping, { type MultiPolygon as PcMulti, type Polygon as PcPoly } from 'polygon-clipping';
 import type { MapBorder, MapData, MapProvince, MapSea, Resource } from './mapdata.ts';
+import { snapEdgeOverlaps } from './pathsnap.ts';
 
 export type Pt = [number, number];
 
@@ -24,6 +25,8 @@ export interface DraftProvince {
   bigCity: boolean;
   resource: Resource | null;
   double: boolean;
+  /** keine Hafenprovinz: bekommt keinen Wasserweg, auch nicht ans nächste Seegebiet (z. B. nur an einen See ohne Seepunkt angrenzend) */
+  noHarbor: boolean;
 }
 
 export interface DraftSea {
@@ -65,7 +68,8 @@ export interface Draft {
   verts: Record<number, Pt>;
   provinces: DraftProvince[];
   seas: DraftSea[];
-  links: [NodeRef, NodeRef][];
+  /** Verbindungen; drittes Element = Knickpunkte in km zwischen den Endpunkten */
+  links: [NodeRef, NodeRef, Pt[]?][];
   nations: DraftNation[];
   /** nächste freie ID (gemeinsam für Eckpunkte, Provinzen und Seepunkte) */
   nextId: number;
@@ -351,7 +355,7 @@ export function addProvince(d: Draft, ring: number[], props: Partial<DraftProvin
   const p: DraftProvince = {
     id, name: props.name ?? `Provinz ${d.provinces.length + 1}`, nation: props.nation ?? null,
     polys: [[orientOuter(d, cleanRing(ring))]], city: props.city ?? null, bigCity: props.bigCity ?? false,
-    resource: props.resource ?? null, double: props.double ?? false,
+    resource: props.resource ?? null, double: props.double ?? false, noHarbor: props.noHarbor ?? false,
   };
   d.provinces.push(p);
   return p;
@@ -395,7 +399,7 @@ export function splitProvince(d: Draft, pid: number, path: number[]): DraftProvi
   const holesA = holes.filter((h) => pointInRing(ptsA, ...d.verts[h[0]]));
   const holesB = holes.filter((h) => !holesA.includes(h));
   p.polys[partIdx] = [a, ...holesA];
-  const np = addProvince(d, b, { nation: p.nation, name: `${p.name} (2)` });
+  const np = addProvince(d, b, { nation: p.nation, name: `${p.name} (2)`, noHarbor: p.noHarbor });
   np.polys = [[b, ...holesB]];
   // Stadt bleibt im Teil, in dem sie liegt
   if (p.city && pointInRing(ringPts(d, b), p.city[0], p.city[1])) {
@@ -478,6 +482,7 @@ export function mergeProvinces(d: Draft, aId: number, bId: number): string | nul
   }
   a.polys = partsFromRings(d, ringsFromEdges(keep));
   if (!a.city && b.city) { a.city = b.city; a.bigCity = b.bigCity; }
+  a.noHarbor = a.noHarbor && b.noHarbor; // nur wenn beide Teile keine Häfen durften, bleibt die Sperre
   removeProvince(d, bId, aId);
   return null;
 }
@@ -488,7 +493,7 @@ export function removeProvince(d: Draft, id: number, into?: number): void {
   const r = provRef(id);
   d.links = into === undefined
     ? d.links.filter(([x, y]) => x !== r && y !== r)
-    : dedupeLinks(d.links.map(([x, y]) => [x === r ? provRef(into) : x, y === r ? provRef(into) : y]));
+    : dedupeLinks(d.links.map((l) => [l[0] === r ? provRef(into) : l[0], l[1] === r ? provRef(into) : l[1], l[2]]));
   for (const n of d.nations) if (n.capital === id) n.capital = into ?? null;
   pruneVerts(d);
 }
@@ -499,17 +504,50 @@ export function removeSea(d: Draft, id: number): void {
   d.links = d.links.filter(([x, y]) => x !== r && y !== r);
 }
 
-function dedupeLinks(links: [NodeRef, NodeRef][]): [NodeRef, NodeRef][] {
+function dedupeLinks(links: [NodeRef, NodeRef, Pt[]?][]): [NodeRef, NodeRef, Pt[]?][] {
   const seen = new Set<string>();
-  const out: [NodeRef, NodeRef][] = [];
-  for (const [x, y] of links) {
+  const out: [NodeRef, NodeRef, Pt[]?][] = [];
+  for (const [x, y, bends] of links) {
     if (x === y) continue;
     const k = x < y ? `${x}|${y}` : `${y}|${x}`;
     if (seen.has(k)) continue;
     seen.add(k);
-    out.push([x, y]);
+    out.push(bends?.length ? [x, y, bends] : [x, y]);
   }
   return out;
+}
+
+/** Verbindung mit ihren Knickpunkten als durchgehender Zug von Endpunkt zu Endpunkt */
+export function linkPts(d: Draft, l: [NodeRef, NodeRef, Pt[]?]): Pt[] | null {
+  const a = nodeAt(d, l[0]), b = nodeAt(d, l[1]);
+  if (!a || !b) return null;
+  return [a, ...(l[2] ?? []), b];
+}
+
+const linkPair = (d: Draft, a: NodeRef, b: NodeRef) =>
+  d.links.find(([x, y]) => (x === a && y === b) || (x === b && y === a));
+
+/** Knickpunkt in eine Verbindung einfügen (wird an die Stelle der Linie gesetzt) */
+export function insertBend(d: Draft, a: NodeRef, b: NodeRef, at: Pt): boolean {
+  const l = linkPair(d, a, b);
+  if (!l) return false;
+  (l[2] ??= []).push([round1(at[0]), round1(at[1])]);
+  return true;
+}
+
+export function moveBend(d: Draft, a: NodeRef, b: NodeRef, k: number, at: Pt): boolean {
+  const l = linkPair(d, a, b);
+  if (!l?.[2]?.[k]) return false;
+  l[2][k] = [round1(at[0]), round1(at[1])];
+  return true;
+}
+
+export function deleteBend(d: Draft, a: NodeRef, b: NodeRef, k: number): boolean {
+  const l = linkPair(d, a, b);
+  if (!l?.[2]?.[k]) return false;
+  l[2].splice(k, 1);
+  if (!l[2].length) delete l[2];
+  return true;
 }
 
 export function hasLink(d: Draft, a: NodeRef, b: NodeRef): boolean {
@@ -543,6 +581,7 @@ export function rescaleDraft(d: Draft, width: number, height: number): void {
   }
   for (const p of d.provinces) if (p.city) p.city = [round1(p.city[0] * fx), round1(p.city[1] * fy)];
   for (const z of d.seas) z.at = [round1(z.at[0] * fx), round1(z.at[1] * fy)];
+  for (const l of d.links) if (l[2]) l[2] = l[2].map(([x, y]) => [round1(x * fx), round1(y * fy)] as Pt);
   d.width = width;
   d.height = height;
 }
@@ -565,14 +604,12 @@ export function autoLinks(d: Draft, opt: { land?: boolean; harbors?: boolean; se
   const before = d.links.length;
   const add = (a: NodeRef, b: NodeRef) => { if (a !== b && !hasLink(d, a, b)) d.links.push([a, b]); };
   const owners = edgeOwners(d);
-  const coastal = new Set<number>();
-  for (const e of owners.values()) {
-    if (e.owners.length === 2 && opt.land !== false) add(provRef(e.owners[0]), provRef(e.owners[1]));
-    if (e.owners.length === 1) coastal.add(e.owners[0]);
-  }
+  for (const e of owners.values()) if (e.owners.length === 2 && opt.land !== false) add(provRef(e.owners[0]), provRef(e.owners[1]));
+  const coastal = new Set(coastalProvinceIds(d)); // Küste ja, aber Kartenrand-Segmente zählen nicht
   const cities = new Map(d.provinces.map((p) => [p.id, cityOf(d, p)]));
   if (opt.harbors !== false && d.seas.length) {
     for (const id of coastal) {
+      if (getProvince(d, id)?.noHarbor) continue; //markierte Nicht-Hafenprovinzen bleiben außen vor
       const r = provRef(id);
       if (d.links.some(([x, y]) => (x === r && y[0] === 's') || (y === r && x[0] === 's'))) continue;
       const c = cities.get(id)!;
@@ -610,6 +647,39 @@ export function autoLinks(d: Draft, opt: { land?: boolean; harbors?: boolean; se
     }
   }
   return d.links.length - before;
+}
+
+/**
+ * Provinzen, die tatsächlich am Wasser liegen: Kanten mit nur einem Eigentümer zählen als Küste,
+ * Segmente entlang des Kartenrands nicht – dort bricht die Karte ab (Land geht weiter), das ist
+ * kein Seezugang.
+ */
+export function coastalProvinceIds(d: Draft): number[] {
+  const on = (v: number, edge: number) => Math.abs(v - edge) <= 0.5;
+  const coastal = new Set<number>();
+  for (const e of edgeOwners(d).values()) {
+    if (e.owners.length !== 1) continue;
+    const [ax, ay] = d.verts[e.a], [bx, by] = d.verts[e.b];
+    const alongFrame = (on(ax, 0) && on(bx, 0)) || (on(ax, d.width) && on(bx, d.width))
+      || (on(ay, 0) && on(by, 0)) || (on(ay, d.height) && on(by, d.height));
+    if (!alongFrame) coastal.add(e.owners[0]);
+  }
+  return [...coastal];
+}
+
+/**
+ * Küstenprovinzen ohne Anschluss: grenzen an Wasser, haben aber keine Verbindung zu einem Seepunkt
+ * und sind nicht als „kein Hafen“ markiert. Für die Hervorhebung im Zeichner und die Prüfung.
+ */
+export function coastsWithoutHarbor(d: Draft): number[] {
+  const coastal = new Set(coastalProvinceIds(d));
+  const harbor = new Set<number>();
+  for (const [x, y] of d.links) {
+    const a = parseRef(x), b = parseRef(y);
+    if (a.kind === 'p' && b.kind === 's') harbor.add(a.id);
+    else if (a.kind === 's' && b.kind === 'p') harbor.add(b.id);
+  }
+  return d.provinces.filter((p) => coastal.has(p.id) && !harbor.has(p.id) && !p.noHarbor).map((p) => p.id);
 }
 
 // ---------------------------------------------------------------- Export ins Spielformat
@@ -676,6 +746,7 @@ export function exportDraft(d: Draft): ExportResult {
   const seaLinks = provs.map(() => new Set<number>());
   const seaSeas = d.seas.map(() => new Set<number>());
   const seaCoasts = d.seas.map(() => new Set<number>());
+  const noHbIgnore = new Set<number>(); // markierte Nicht-Hafenprovinzen mit vorhandenem Wasserweg
   for (const [x, y] of d.links) {
     const a = parseRef(x), b = parseRef(y);
     const ia = a.kind === 'p' ? idx.get(a.id) : seaIdx.get(a.id);
@@ -685,15 +756,17 @@ export function exportDraft(d: Draft): ExportResult {
     else if (a.kind === 's' && b.kind === 's') { seaSeas[ia].add(ib); seaSeas[ib].add(ia); }
     else {
       const p = a.kind === 'p' ? ia : ib, z = a.kind === 'p' ? ib : ia;
+      if (provs[p].noHarbor) { noHbIgnore.add(p); continue; } // als Nicht-Hafen markiert: Wasserweg bleibt weg
       seaLinks[p].add(z);
       seaCoasts[z].add(p);
     }
   }
-  const coastEdge = new Set(borders.filter((b) => b.b < 0).map((b) => b.a));
+  if (noHbIgnore.size) warnings.push(`${noHbIgnore.size} als „kein Hafen“ markierte Provinzen: vorhandene Wasserwege werden ignoriert (${provs.filter((_, i) => noHbIgnore.has(i)).slice(0, 3).map((p) => p.name).join(', ')}${noHbIgnore.size > 3 ? ' …' : ''}).`);
+  const coastReal = new Set(coastalProvinceIds(d)); // Kartenrand zählt nicht als Küste
   const isolated = provs.filter((_, i) => !links[i].size && !seaLinks[i].size);
   if (isolated.length) warnings.push(`${isolated.length} Provinzen ohne Verbindung (z. B. ${isolated.slice(0, 3).map((p) => p.name).join(', ')}).`);
-  const noHarbor = provs.filter((_, i) => coastEdge.has(i) && !seaLinks[i].size && d.seas.length);
-  if (noHarbor.length > 0) warnings.push(`${noHarbor.length} Provinzen am Wasser ohne Hafen-Verbindung zu einem Seepunkt.`);
+  const waterNoHarbor = provs.filter((p) => coastReal.has(p.id) && !seaLinks[idx.get(p.id)!].size && d.seas.length && !p.noHarbor);
+  if (waterNoHarbor.length > 0) warnings.push(`${waterNoHarbor.length} Provinzen am Wasser ohne Hafen-Verbindung zu einem Seepunkt.`);
   const lonelySeas = d.seas.filter((_, i) => !seaSeas[i].size && !seaCoasts[i].size);
   if (lonelySeas.length) warnings.push(`${lonelySeas.length} Seepunkte ohne Verbindung.`);
 
@@ -760,6 +833,123 @@ export function exportDraft(d: Draft): ExportResult {
   });
   if (onLand) warnings.push(`${onLand} Seepunkte liegen auf Land.`);
 
+  // Wege mit Knicken: die Knickpunkte werden Weggeometrie für das Spiel
+  // (pts von a nach b, split = Anteil der Länge bis zur Wassergrenze bzw. bis zu Provinz b – wie im Kartenbau).
+  // Endet die Verbindung im Wasser, zählt nur der Landanteil: Knicke an Land wirken (Einschiffpunkt
+  // ist der Austritt aus der Provinz), Knicke im eigentlichen Wasser werden verworfen – Seewege bleiben gerade.
+  const roads: { a: number; b: number; pts: number[]; split: number }[] = [];
+  let seaBends = 0;
+  for (const [x, y, bends] of d.links) {
+    const A = parseRef(x), B = parseRef(y);
+    const ia = A.kind === 'p' ? idx.get(A.id) : seaIdx.get(A.id);
+    const ib = B.kind === 'p' ? idx.get(B.id) : seaIdx.get(B.id);
+    if (ia === undefined || ib === undefined) continue;
+    const bothLand = A.kind === 'p' && B.kind === 'p';
+    if (!bends?.length) {
+      // Gerader Landweg: als explizite Straße schreiben, damit das Spiel keinen eigenen
+      // Grenzknick einfügt – die gezogene Linie Stadt → Stadt ist der Weg.
+      if (bothLand) {
+        const ca = cityOf(d, provs[ia!]!), cb = cityOf(d, provs[ib!]!);
+        const L = Math.hypot(cb[0] - ca[0], cb[1] - ca[1]);
+        let split = 1;
+        const n = Math.max(1, Math.ceil(L / 2));
+        for (let s = 1; s <= n; s++) {
+          if (provinceContains(d, provs[ib!]!, ca[0] + ((cb[0] - ca[0]) * s) / n, ca[1] + ((cb[1] - ca[1]) * s) / n)) {
+            // Eintritt in Provinz b per Bisektion eingrenzen
+            let lo = (s - 1) / n, hi = s / n;
+            for (let it = 0; it < 10; it++) {
+              const mid = (lo + hi) / 2;
+              if (provinceContains(d, provs[ib!]!, ca[0] + (cb[0] - ca[0]) * mid, ca[1] + (cb[1] - ca[1]) * mid)) hi = mid; else lo = mid;
+            }
+            split = hi;
+            break;
+          }
+        }
+        roads.push({ a: ia!, b: ib!, pts: [r1(ca[0]), r1(ca[1]), r1(cb[0]), r1(cb[1])], split: Math.round(split * 1000) / 1000 });
+        continue;
+      }
+      if (A.kind === B.kind) continue; // gerader See↔See-Weg bleibt implizit gerade
+      const landFirst = A.kind === 'p';
+      const prov = provs[landFirst ? ia! : ib!]!, z = d.seas.find((q) => q.id === (landFirst ? B.id : A.id))!;
+      const c = cityOf(d, prov), L = Math.hypot(z.at[0] - c[0], z.at[1] - c[1]);
+      let split = 1;
+      const n = Math.max(1, Math.ceil(L / 2));
+      for (let s = 1; s <= n; s++) {
+        if (!provinceContains(d, prov, c[0] + ((z.at[0] - c[0]) * s) / n, c[1] + ((z.at[1] - c[1]) * s) / n)) {
+          // Austritt zwischen den beiden letzten Abtastpunkten per Bisektion eingrenzen
+          let lo = (s - 1) / n, hi = s / n;
+          for (let it = 0; it < 10; it++) {
+            const mid = (lo + hi) / 2;
+            if (provinceContains(d, prov, c[0] + (z.at[0] - c[0]) * mid, c[1] + (z.at[1] - c[1]) * mid)) lo = mid; else hi = mid;
+          }
+          split = hi;
+          break;
+        }
+      }
+      roads.push({ a: landFirst ? ia! : ib!, b: P + (landFirst ? ib! : ia!), pts: [r1(c[0]), r1(c[1]), r1(z.at[0]), r1(z.at[1])], split: Math.round(split * 1000) / 1000 });
+      continue;
+    }
+    if (!bothLand && A.kind !== 'p' && B.kind !== 'p') { seaBends++; continue; } // See–See: Knick wirkungslos
+    const na = A.kind === 'p' ? ia! : P + ia!; // Seepunkte sind Knoten P + Index
+    const nb = B.kind === 'p' ? ib! : P + ib!;
+    const line = [bothLand || A.kind === 'p' ? cityOf(d, provs[ia!]!) : d.seas.find((z) => z.id === A.id)!.at,
+      ...bends,
+      bothLand || B.kind === 'p' ? cityOf(d, provs[ib!]!) : d.seas.find((z) => z.id === B.id)!.at];
+    // Gesamtlänge zuerst, dann den Grenzübergang suchen (Nenner darf nicht mitschrumpfen)
+    let total = 0, split = -1, cum = 0;
+    const segL: number[] = [];
+    for (let k = 0; k + 1 < line.length; k++) {
+      const L = Math.hypot(line[k + 1][0] - line[k][0], line[k + 1][1] - line[k][1]);
+      segL.push(L);
+      total += L;
+    }
+    let keep: Pt[] | null = null;
+    if (bothLand) {
+      // Landweg:pts komplett behalten, split = Eintritt in Provinz b
+      keep = line.slice(1, -1);
+      let done = false;
+      for (let k = 0; k + 1 < line.length && !done; k++) {
+        const [x0, y0] = line[k], [x1, y1] = line[k + 1];
+        const n = Math.max(1, Math.ceil(segL[k] / 2));
+        for (let s = 1; s <= n; s++) {
+          if (provinceContains(d, provs[ib]!, x0 + ((x1 - x0) * s) / n, y0 + ((y1 - y0) * s) / n)) { split = total > 0 ? (cum + (segL[k] * s) / n) / total : 0.5; done = true; break; }
+        }
+        cum += segL[k];
+      }
+    } else {
+      // Hafenweg: Landseite ist die Provinz; pts nur bis zum Wasseraustritt, split dort
+      const prov = A.kind === 'p' ? provs[ia!]! : provs[ib!]!;
+      const rev = A.kind !== 'p'; // Seepunkt steht im Entwurf vorn → gegen die Leserichtung scannen
+      const fromLand = rev ? [...line].reverse() : line;
+      const segF = rev ? [...segL].reverse() : segL; // Segmentlängen in Scanreihenfolge
+      let done = false;
+      for (let k = 0; k + 1 < fromLand.length && !done; k++) {
+        const [x0, y0] = fromLand[k], [x1, y1] = fromLand[k + 1];
+        const n = Math.max(1, Math.ceil(segF[k] / 2));
+        for (let s = 1; s <= n; s++) {
+          if (!provinceContains(d, prov, x0 + ((x1 - x0) * s) / n, y0 + ((y1 - y0) * s) / n)) {
+            split = total > 0 ? (cum + (segF[k] * s) / n) / total : 0.5;
+            // alle Knicke vor dem Austrittssegment liegen an Land; liegt der Austritt erst am
+            // letzten Abtastpunkt, darf der Knick des Austrittsendes (knapp auf der Küste) mit –
+            // er ist der Einschiffpunkt. Knicke dahinter gehören ins Wasser und entfallen.
+            const endBend = s === n && k + 1 <= fromLand.length - 3;
+            const landBends = fromLand.slice(1, endBend ? k + 2 : k + 1);
+            keep = rev ? [...landBends].reverse() : landBends;
+            done = true;
+            break;
+          }
+        }
+        cum += segF[k];
+      }
+      if (!done) { split = 1; keep = A.kind === 'p' ? line.slice(1, -1) : [...line].reverse().slice(1, -1); } // Kuriosum: der Verlauf endet an Land, obwohl er im Wasser endet
+      if (rev && split >= 0) split = 1 - split; // split gilt ab road.a – hier liegt der Seepunkt vorn
+    }
+    if (!keep?.length) { seaBends++; continue; } // kein einziger Knick an Land → nichts zu biegen
+    const ptsLine = [line[0], ...keep, line[line.length - 1]];
+    roads.push({ a: na, b: nb, pts: ptsLine.flatMap(([qx, qy]) => [r1(qx), r1(qy)]), split: split >= 0 ? Math.round(split * 1000) / 1000 : 0.5 });
+  }
+  if (seaBends) warnings.push(`${seaBends} Verbindungen mit Knicken enden im Wasser: nur Knicke an Land wirken, Knicke im Wasser werden ignoriert.`);
+
   const map: MapData = {
     id: d.id,
     name: d.name,
@@ -769,13 +959,13 @@ export function exportDraft(d: Draft): ExportResult {
     borders,
     seas,
     seaBorders: [],
-    roads: [],
+    roads,
     seaNodes: true,
     shortcuts: [],
     junctions: [],
   };
   if (P && !d.seas.length) warnings.push('Keine Seepunkte – Schiffe haben keine Wege.');
-  return { map, errors, warnings };
+  return { map: snapEdgeOverlaps(map), errors, warnings };
 }
 
 function provinceAtList(d: Draft, provs: DraftProvince[], at: Pt): boolean {

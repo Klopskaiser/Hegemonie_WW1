@@ -46,7 +46,7 @@ export function forgetMap(id: string): void {
 export function loadMap(id: string): Promise<MapData> {
   let p = cache.get(id);
   if (!p) {
-    p = fetch(`/maps/${id}.json`).then((r) => {
+    p = fetch(`/maps/${id}.json`, { cache: 'no-store' }).then((r) => {
       if (!r.ok) throw new Error(`Karte ${id} nicht gefunden`);
       return r.json() as Promise<MapData>;
     });

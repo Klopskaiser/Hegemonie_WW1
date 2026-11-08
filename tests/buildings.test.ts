@@ -139,9 +139,9 @@ describe('Bauamt und Manufaktur', () => {
     ps.buildings.tradepost = 1;
     const after = provinceOutput(map, ps, inland);
     expect(after.amount / before.amount).toBeCloseTo(1.07, 6);
-    expect(after.money).toBe(before.money);
+    expect(after.money / before.money).toBeCloseTo(1.08, 6);
     expect(allRates(sim.state, map).DE.cons.fish - fish).toBe(20);
-    expect(BUILDINGS.tradepost.morale(1)).toBeCloseTo(0.03, 9);
+    expect(BUILDINGS.tradepost.morale(1)).toBeCloseTo(0.02, 9);
   });
 
   it('auch geplante Fabriken schließen die Manufaktur aus', () => {
