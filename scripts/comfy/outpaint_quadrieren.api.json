@@ -1,0 +1,16 @@
+{
+  "_comment": "Outpaint auf 1024x1024 Quadrat, nur Hintergrund, Original per Latent-Maske gesperrt. API-Format; Aufruf wie in Session 2026-11-08 (Upload -> /prompt). Platzhalter: image, width/height (Node 2), left/top/right/bottom (Node 3, Sockel heisst feathering NICHT feather), Prompt-Hintergrund in Node 5.",
+  "1": {"class_type": "LoadImage", "inputs": {"image": "<hochgeladene Datei>"}},
+  "2": {"class_type": "ImageScale", "inputs": {"image": ["1", 0], "width": 1024, "height": 720, "upscale_method": "lanczos", "crop": "disabled"}},
+  "3": {"class_type": "ImagePadForOutpaint", "inputs": {"image": ["2", 0], "width": 1024, "height": 1024, "left": 0, "top": 152, "right": 0, "bottom": 152, "feathering": 48}},
+  "U": {"class_type": "UNETLoader", "inputs": {"unet_name": "qwen_image_2.1_int8_convrot.safetensors", "weight_dtype": "default"}},
+  "C": {"class_type": "CLIPLoader", "inputs": {"clip_name": "qwen3vl_8b_int8_convrot.safetensors", "type": "qwen_image", "device": "default"}},
+  "V": {"class_type": "VAELoader", "inputs": {"vae_name": "qwen_image_2.1_vae_bf16.safetensors"}},
+  "5": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["C", 0], "text": "Vintage black and white World War One era photograph, real archival photo look, film grain, gentle vignette. Extend the existing photo seamlessly into a square frame by continuing ONLY its plain background: <himmel/feld/meer>. Keep the existing photo exactly unchanged in the center. No new objects, no extra soldiers, no extra vehicles, no structures, no text."}},
+  "6": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["C", 0], "text": "new objects, extra people, extra soldiers, extra vehicles, buildings, text, watermark, color, modern items, border, frame"}},
+  "7": {"class_type": "VAEEncode", "inputs": {"pixels": ["3", 0], "vae": ["V", 0]}},
+  "8": {"class_type": "SetLatentNoiseMask", "inputs": {"samples": ["7", 0], "mask": ["3", 1]}},
+  "9": {"class_type": "KSampler", "inputs": {"model": ["U", 0], "positive": ["5", 0], "negative": ["6", 0], "latent_image": ["8", 0], "seed": 191400, "steps": 28, "cfg": 4.0, "sampler_name": "euler", "scheduler": "normal", "denoise": 1.0}},
+  "10": {"class_type": "VAEDecode", "inputs": {"samples": ["9", 0], "vae": ["V", 0]}},
+  "11": {"class_type": "SaveImage", "inputs": {"images": ["10", 0], "filename_prefix": "extend/out"}}
+}

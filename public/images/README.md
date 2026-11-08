@@ -9,7 +9,7 @@ einen Platzhalter mit Beschriftung. Neue Bilder einfach unter dem passenden Name
 
 ## Gebäude – `buildings/<gebäude>.png`
 
-`railroad`, `harbor`, `factory`, `manufactory`, `barracks`, `recruitment`, `office`, `fortress`
+`railroad`, `harbor`, `tradepost`, `workshop`, `factory`, `manufactory`, `barracks`, `recruitment`, `office`, `fortress`
 
 ## Zeitung – `news/<art>-<1|2|3>.png`
 

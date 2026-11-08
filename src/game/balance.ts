@@ -88,7 +88,7 @@ export interface BuildingDef {
   requires?: Partial<Record<Building, number>>;
   /** schließt sich mit diesen Gebäuden in derselben Provinz aus */
   excludes?: Building[];
-  describe(level: number): string;
+  points(level: number): string[];
 }
 
 const FACTORY_BONUS = [0, 0.08, 0.16, 0.25, 0.33];
@@ -105,7 +105,7 @@ export const BUILDINGS: Record<Building, BuildingDef> = {
     switchable: true,
     fromDay: 3,
     lives: 3,
-    describe: () => 'Rohstoffproduktion +33 %, Moral +7 %. Truppen auf eigenen Schienen ×2,5 schneller. Unterhalt: 500 Kohle je Tag.',
+    points: () => ['Rohstoffproduktion +33 %', 'Moral +7 %', 'Truppen auf eigenen Schienen ×2,5 schneller', 'Unterhalt: 500 Kohle je Tag'],
   },
   harbor: {
     name: 'Hafen', maxLevel: 1, coastal: true, fromDay: 3, lives: 3,
@@ -113,7 +113,7 @@ export const BUILDINGS: Record<Building, BuildingDef> = {
     hours: () => 60,
     prodBonus: (l) => (l >= 1 ? 0.25 : 0),
     morale: (l) => (l >= 1 ? 0.07 : 0),
-    describe: () => 'Rohstoffproduktion +25 %, Moral +7 %. Ermöglicht Schiffe; Einschiffnung nur am gewählten Hafenpunkt. Nur in Küstenprovinzen.',
+    points: () => ['Rohstoffproduktion +25 %', 'Moral +7 %', 'Ermöglicht Schiffe – Einschiffnung nur am gewählten Hafenpunkt', 'Nur in Küstenprovinzen'],
   },
   tradepost: {
     name: 'Handelsposten', maxLevel: 1, inland: true, lives: 1,
@@ -123,7 +123,7 @@ export const BUILDINGS: Record<Building, BuildingDef> = {
     moneyBonus: (l) => (l >= 1 ? 0.08 : 0),
     morale: (l) => (l >= 1 ? 0.02 : 0),
     upkeep: { fish: 20 },
-    describe: () => 'Rohstoffproduktion +8 %, Geldproduktion +8 %, Moral +2 %. Nur in Provinzen ohne Küste. Unterhalt: 20 Fisch je Tag.',
+    points: () => ['Rohstoffproduktion +8 %', 'Geldproduktion +8 %', 'Moral +2 %', 'Nur in Provinzen ohne Küste', 'Unterhalt: 20 Fisch je Tag'],
   },
   workshop: {
     name: 'Werkstatt', maxLevel: 2, lives: 1,
@@ -131,7 +131,9 @@ export const BUILDINGS: Record<Building, BuildingDef> = {
     hours: () => 8,
     prodBonus: () => 0,
     morale: (l) => 0.01 * l,
-    describe: (l) => `Moral +${l} %. Verdoppelt die Reperaturrate mechanischer Einheiten in der Provinz${l >= 2 ? ` und fertigt mechanische Einheiten ${Math.round(WORKSHOP_SPEEDUP * 100)} % schneller` : ''}. Voraussetzung für die Fabrik.`,
+    points: (l) => [`Moral +${l} %`, 'Verdoppelt die Reperaturrate mechanischer Einheiten in der Provinz',
+      ...(l >= 2 ? [`Mechanische Einheiten ${Math.round(WORKSHOP_SPEEDUP * 100)} % schneller gefertigt`] : []),
+      'Voraussetzung für die Fabrik'],
   },
   factory: {
     name: 'Fabrik', maxLevel: 4, fromDay: 3,
@@ -141,7 +143,10 @@ export const BUILDINGS: Record<Building, BuildingDef> = {
     prodBonus: (l) => FACTORY_BONUS[l],
     morale: (l) => 0.025 * l,
     excludes: ['manufactory'],
-    describe: (l) => `Rohstoffproduktion +${Math.round(FACTORY_BONUS[l] * 100)} %, Moral +${(2.5 * l).toLocaleString('de-DE')} %. Fertigt ${['', 'Artillerie und Panzerwagen', 'Panzer', 'Eisenbahngeschütze und Schlachtschiffe', 'alle Einheiten zu kürzesten Bauzeiten'][l]}${l < 4 ? '; jede weitere Stufe verkürzt die Bauzeiten in der Provinz' : ''}. Benötigt eine Werkstatt; nicht zusammen mit einer Manufaktur.`,
+    points: (l) => [`Rohstoffproduktion +${Math.round(FACTORY_BONUS[l] * 100)} %`, `Moral +${(2.5 * l).toLocaleString('de-DE')} %`,
+      `Fertigt ${['', 'Artillerie und Panzerwagen', 'Panzer', 'Eisenbahngeschütze und Schlachtschiffe', 'alle Einheiten zu kürzesten Bauzeiten'][l]}`,
+      ...(l < 4 ? ['Jede weitere Stufe verkürzt die Bauzeiten in der Provinz'] : []),
+      'Benötigt eine Werkstatt', 'Nicht zusammen mit einer Manufaktur'],
   },
   manufactory: {
     name: 'Manufaktur', maxLevel: 4, fromDay: 4,
@@ -150,7 +155,7 @@ export const BUILDINGS: Record<Building, BuildingDef> = {
     prodBonus: (l) => 0.11 * l,
     morale: (l) => 0.025 * l,
     excludes: ['factory'],
-    describe: (l) => `Rohstoffproduktion +${11 * l} %, Moral +${(2.5 * l).toLocaleString('de-DE')} %. Fertigt keine Einheiten; nicht zusammen mit einer Fabrik.`,
+    points: (l) => [`Rohstoffproduktion +${11 * l} %`, `Moral +${(2.5 * l).toLocaleString('de-DE')} %`, 'Erst ab Tag 4 baubar', 'Fertigt keine Einheiten', 'Nicht zusammen mit einer Fabrik'],
   },
   barracks: {
     name: 'Kaserne', maxLevel: 2,
@@ -161,7 +166,7 @@ export const BUILDINGS: Record<Building, BuildingDef> = {
     requires: { recruitment: 1 },
     upkeep: { grain: 1000, money: 1000 },
     switchable: true,
-    describe: (l) => `Stellt Infanterie auf: bei 100 % Moral alle ${RECRUIT_HOURS[l]} h (Wehramt nötig; ohne halb so schnell, Doppelprovinz doppelt so schnell). Unterhalt: 1000 Getreide und 1000 Geld je Stufe und Tag.`,
+    points: (l) => [`Stellt Infanterie auf: bei 100 % Moral alle ${RECRUIT_HOURS[l]} h`, 'Wehramt nötig – ohne halb so schnell', 'Doppelprovinz doppelt so schnell', 'Unterhalt: 1000 Getreide und 1000 Geld je Stufe und Tag'],
   },
   recruitment: {
     name: 'Wehramt', maxLevel: 1, switchable: true, lives: 1,
@@ -170,7 +175,7 @@ export const BUILDINGS: Record<Building, BuildingDef> = {
     prodBonus: () => 0,
     morale: () => 0,
     upkeep: { money: 500 },
-    describe: () => `Stellt kostenlos Infanterie auf: bei 100 % Moral alle ${RECRUIT_HOURS[0]} h (Doppelprovinz doppelt so schnell). Ohne Wehramt und Kaserne keine Infanterie. Unterhalt: 500 Geld je Tag.`,
+    points: () => [`Stellt kostenlos Infanterie auf: bei 100 % Moral alle ${RECRUIT_HOURS[0]} h`, 'Doppelprovinz doppelt so schnell', 'Ohne Wehramt und Kaserne keine Infanterie', 'Unterhalt: 500 Geld je Tag'],
   },
   office: {
     name: 'Bauamt', maxLevel: 1, switchable: true, lives: 1,
@@ -179,7 +184,7 @@ export const BUILDINGS: Record<Building, BuildingDef> = {
     prodBonus: () => 0,
     morale: (l) => (l >= 1 ? 0.02 : 0),
     upkeep: { money: 2000 },
-    describe: () => `Bauzeiten von Gebäuden in dieser Provinz −${Math.round(OFFICE_SPEEDUP * 100)} %, Moral +2 %. Unterhalt: 2000 Geld je Tag.`,
+    points: () => [`Bauzeiten von Gebäuden in dieser Provinz −${Math.round(OFFICE_SPEEDUP * 100)} %`, 'Moral +2 %', 'Unterhalt: 2000 Geld je Tag'],
   },
   fortress: {
     name: 'Festung', maxLevel: 5, lives: 1,
@@ -187,7 +192,8 @@ export const BUILDINGS: Record<Building, BuildingDef> = {
     hours: (l) => 8 * l,
     prodBonus: () => 0,
     morale: (l) => 0.05 * l,
-    describe: (l) => `Schadensminderung ${Math.round(FORTRESS_REDUCTION[l] * 100)} %, Moral +${5 * l} %${l >= 2 ? '; eigene Truppen für den Gegner verborgen' : ''}.`,
+    points: (l) => [`Schadensminderung ${Math.round(FORTRESS_REDUCTION[l] * 100)} %`, `Moral +${5 * l} %`,
+      ...(l >= 2 ? ['Eigene Truppen für den Gegner verborgen'] : [])],
   },
 };
 

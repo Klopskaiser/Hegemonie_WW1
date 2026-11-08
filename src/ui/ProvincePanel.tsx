@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { checkBuild, checkCapitalMove, checkProduce, harborCandidates, missing, plannedBuildings, requirementsMet, type Action, type ActionResult, checkRepair } from '../game/actions.ts';
 import {
-  BUILDING_ORDER, BUILDINGS, CAPITAL_MOVE, DEFECTION, HOUR, MILITARY, REPAIR_HOURS, RES_NAMES, UNIT_ORDER, UNITS, type UnitType, buildingLives, siteAllows } from '../game/balance.ts';
+  BUILDING_ORDER, BUILDINGS, CAPITAL_MOVE, DEFECTION, HOUR, REPAIR_HOURS, RES_NAMES, UNIT_ORDER, UNITS, type UnitType, buildingLives, siteAllows } from '../game/balance.ts';
 import { activeCapital, corruptionOf, moraleTarget, provinceOutput, provincePoints, recruitHours } from '../game/economy.ts';
 import type { MapData } from '../game/mapdata.ts';
 import { defectionChance, garrisonStrength } from '../game/military.ts';
@@ -82,10 +82,6 @@ export function ProvincePanel({ map, state, id, armies: visibleArmies, act, onSe
           </li>
         ))}
       </ul>
-      <div className="muted small">
-        Einmalig: eroberte Provinzen beginnen bei {Math.round(MILITARY.conquestMorale * 100)} % (Rückeroberung am selben Tag {Math.round(DEFECTION.morale * 100)} %); fällt eine Hauptstadt,
-        bekommt der Eroberer +{Math.round(MILITARY.capitalMoraleBonus * 100)} %, der Verlierer −{Math.round(MILITARY.capitalMoralePenalty * 100)} % in allen Provinzen.
-      </div>
       {ps.morale < DEFECTION.threshold && (
         <div className="error small">
           ✊ Unruhen: Die Provinz kann zum Tageswechsel zu einer anderen Macht überlaufen
@@ -142,7 +138,9 @@ export function ProvincePanel({ map, state, id, armies: visibleArmies, act, onSe
               const excluded = (def.excludes ?? []).some((x) => planned[x] > 0);
               return (
                 <div key={b} className={'build-item' + (excluded ? ' excluded' : '')}>
-                  <Picture src={buildingImage(b)} label={def.name} size={40} className="build-pic" />
+                  <div className="build-top">
+                    <Picture src={buildingImage(b)} label={def.name} size={110} className="build-pic" />
+                    <div className="build-main">
                   <div className="build-name">
                     <b>{def.name}</b>
                     <span className="muted">
@@ -160,7 +158,9 @@ export function ProvincePanel({ map, state, id, armies: visibleArmies, act, onSe
                       </button>
                     )}
                   </div>
-                  <div className="muted small">{def.describe(Math.min(def.maxLevel, Math.max(1, plannedLevel < def.maxLevel ? plannedLevel + 1 : plannedLevel)))}</div>
+                  <ul className="build-points">
+                    {def.points(Math.min(def.maxLevel, Math.max(1, plannedLevel < def.maxLevel ? plannedLevel + 1 : plannedLevel))).map((p) => <li key={p}>{p}</li>)}
+                  </ul>
                   {ps.damage?.[b] ? (() => {
                     const until = ps.repairing?.[b];
                     if (until) return (
@@ -199,8 +199,10 @@ export function ProvincePanel({ map, state, id, armies: visibleArmies, act, onSe
                       </div>
                     );
                   })()}
+                  </div>
+                  </div>
                   {plannedLevel < def.maxLevel && !excluded && (
-                    <div className="progress-row">
+                    <div className="build-foot" title="Kosten · Bauzeit im aktuellen Tempo">
                       <CostList cost={chk.cost} stock={stock} />
                       <span className="small muted">{fmtDuration((chk.hours * 3600_000) / state.speed)}</span>
                       <button className="btn small" disabled={!chk.ok} title={chk.error ?? (chk.queued ? 'In die Bauschleife stellen – bezahlt wird beim Baubeginn' : '')}
@@ -246,6 +248,8 @@ export function ProvincePanel({ map, state, id, armies: visibleArmies, act, onSe
           )}
           <div className="muted small">Wehramt und Kaserne stellen Infanterie kostenlos auf; je höher die Moral, desto schneller.</div>
 
+          {ps.buildings.factory > 0 && (
+            <>
           <h4>Fertigung</h4>
           <div className="unit-grid">
             {UNIT_ORDER.filter((u) => !UNITS[u].auto).map((u) => {
@@ -253,7 +257,7 @@ export function ProvincePanel({ map, state, id, armies: visibleArmies, act, onSe
               return (
                 <button key={u} className="unit-btn" disabled={!chk.ok} title={chk.error ?? `${UNITS[u].name} in Auftrag geben`}
                   onClick={() => run({ type: 'enqueue', province: id, unit: u })}>
-                  <Picture src={unitImage(u)} label={UNITS[u].name} size={44} />
+                  <Picture src={unitImage(u)} label={UNITS[u].name} size={96} />
                   <b>{UNITS[u].name}</b>
                   <CostList cost={UNITS[u].cost} stock={stock} />
                   <span className="small muted">{fmtDuration((chk.hours * 3600_000) / state.speed)}</span>
@@ -282,6 +286,8 @@ export function ProvincePanel({ map, state, id, armies: visibleArmies, act, onSe
                 </li>
               ))}
             </ol>
+          )}
+            </>
           )}
           {msg && <div className="error">{msg}</div>}
         </>

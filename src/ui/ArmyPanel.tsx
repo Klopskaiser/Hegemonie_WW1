@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { Action, ActionResult } from '../game/actions.ts';
-import { MILITARY, HOUR, UNIT_ORDER, UNITS, type UnitType } from '../game/balance.ts';
+import { MILITARY, HOUR, TROOP_MORALE, UNIT_ORDER, UNITS, type UnitType } from '../game/balance.ts';
 import { atWar } from '../game/diplomacy.ts';
 import { isSea, nodeName } from '../game/graph.ts';
 import type { MapData } from '../game/mapdata.ts';
@@ -132,6 +132,10 @@ export function ArmyPanel({ map, state, army: a, armies, act, onSelectArmy, onSp
         </form>
       )}
       <p className="army-status">{status}</p>
+      {(() => {
+        const main = UNIT_ORDER.filter((u) => a.units[u]).sort((x, y) => a.units[y]! - a.units[x]!)[0];
+        return main ? <div className="army-hero"><Picture src={unitImage(main)} label={UNITS[main].name} size={360} /></div> : null;
+      })()}
       <div className="small strength-row" title={'Schaden je Kampfrunde (stündlich), den jede gegnerische Armee im Umkreis von 1 km voll abbekommt – ohne Zufallsstreuung und Festung. '
         + 'Infanterie nach aktueller Moral; im Nahkampf zählen die vordersten 20 Einheiten voll, bis Platz 60 abnehmend; Artillerie und Eisenbahngeschütze kämpfen dort nur halb. '
         + 'Verteidigung gilt in eigenen Provinzen (Infanterie +10 %, Maschinen gleich), sonst Angriff; auf See und beim Ein-/Ausschiffen haben Landtruppen halbe Kampfkraft und halbe Lebenspunkte (Schlachtschiffe voll).'}>
@@ -144,56 +148,12 @@ export function ArmyPanel({ map, state, army: a, armies, act, onSelectArmy, onSp
         <p className="small">Im Verband (ziehen nach dem Kampf weiter): {a.parts.map((p) => `${partName(p)} → ${partDest(p)}`).join(', ')}</p>
       )}
 
-      <h4>Einheiten</h4>
-      <table className="table">
-        <thead><tr><th></th><th>Typ</th><th>Anzahl</th><th>Zustand</th></tr></thead>
-        <tbody>
-          {UNIT_ORDER.filter((u) => a.units[u]).map((u) => {
-            const n = a.units[u]!;
-            const health = Math.max(0, 1 - (a.wounds?.[u] ?? 0) / (n * unitHp(a, u, map)));
-            const machine = u !== 'infantry';
-            return (
-              <tr key={u}>
-                <td><Picture src={unitImage(u)} label={UNITS[u].short} size={28} /></td>
-                <td>{UNITS[u].name}</td>
-                <td>{n}</td>
-                <td>{machine
-                  ? <span title="Zustand – Maschinen kämpfen trotzdem mit voller Kraft"><Bar value={health} color={health < 0.5 ? '#a33' : '#5d8a3a'} /></span>
-                  : <span className="muted small">–</span>}</td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-      {(a.units.infantry ?? 0) > 0 && (
-        <>
-          <div className="morale-row" title="Kampfkraft und Lebenspunkte der Infanterie: 1,2 × Moral, also 0,12-fach bei 10 % bis 1,2-fach bei 100 % (normal 1,0 bei 83 %). Sinkt im Kampf, unter Beschuss, bei Getreidemangel und in Provinzen mit niedriger Moral; steigt bei Siegen und in Provinzen mit hoher Moral.">
-            <span className="small">Moral der Infanterie</span>
-            <Bar value={troopMorale(a)} marker={tt.target} color={troopMorale(a) < 0.33 ? '#a33' : troopMorale(a) < 0.5 ? '#c9952f' : '#5d8a3a'} />
-            <span className="small">{Math.round(troopMorale(a) * 100)} % · Stärke ×{infantryStrength(a).toFixed(2)}</span>
-          </div>
-          <div className="muted small">Ziel {Math.round(tt.target * 100)} % – zum Tageswechsel {tt.hungry ? 'höchstens +5 % bzw. −13 % (Getreidemangel)' : 'höchstens +10 % bzw. −8 %'}.</div>
-          <ul className="morale-parts small">
-            {tt.parts.map((p) => (
-              <li key={p.label}>
-                <span>{p.label}</span>
-                <span className={p.value < 0 ? 'neg' : ''}>{p.value < 0 ? '−' : ''}{Math.round(Math.abs(p.value) * 100)} %</span>
-              </li>
-            ))}
-          </ul>
-        </>
-      )}
-      <div className="muted small">
-        Tempo {Math.round(armySpeed(a, state) * (a.forcedMarch ? MILITARY.forcedMarchSpeed : 1))} km/h{a.forcedMarch ? ' (Gewaltmarsch)' : ''}{state.nations[a.owner]?.resShort?.oil ? ' (Ölmangel, halbes Tempo)' : ''}{range > 0 ? ` · Reichweite ${range} km` : ''}
-      </div>
-
       {own && (
         <>
           <h4>Befehle</h4>
           <p className="muted small">
-            Rechtsklick auf die Karte setzt ein Marschziel – auch mitten auf einem Weg. Rechtsklick auf eine feindliche
-            Armee greift sie an: die Armee verfolgt sie, mit Fernkampfeinheiten nur bis in Reichweite. Linksklick ins Leere
-            oder Esc hebt die Auswahl auf. Verlässt die letzte Armee eine eigene Stadt, bleibt eine Einheit als Besatzung zurück.
+            Rechtsklick auf die Karte setzt ein Marschziel. Rechtsklick auf eine feindliche Armee greift sie an.
+            Linksklick ins Leere oder Esc hebt die Auswahl auf.
           </p>
           <div className="btn-row">
             <button className={'btn small' + (!a.aggressive ? ' active' : '')} title="Normaler Marsch: kein Anhalten für Gegner in Reichweite (im Stand wird weiter selbständig gefeuert)"
@@ -251,6 +211,54 @@ export function ArmyPanel({ map, state, army: a, armies, act, onSelectArmy, onSp
               ))}
             </div>
           )}
+        </>
+      )}
+
+      <h4>Einheiten</h4>
+      <table className="table">
+        <thead><tr><th></th><th>Typ</th><th>Anzahl</th><th>Zustand</th></tr></thead>
+        <tbody>
+          {UNIT_ORDER.filter((u) => a.units[u]).map((u) => {
+            const n = a.units[u]!;
+            const health = Math.max(0, 1 - (a.wounds?.[u] ?? 0) / (n * unitHp(a, u, map)));
+            const machine = u !== 'infantry';
+            return (
+              <tr key={u}>
+                <td><Picture src={unitImage(u)} label={UNITS[u].short} size={28} /></td>
+                <td>{UNITS[u].name}</td>
+                <td>{n}</td>
+                <td>{machine
+                  ? <span title="Zustand – Maschinen kämpfen trotzdem mit voller Kraft"><Bar value={health} color={health < 0.5 ? '#a33' : '#5d8a3a'} /></span>
+                  : <span className="muted small">–</span>}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      {(a.units.infantry ?? 0) > 0 && (
+        <>
+          <div className="morale-row" title="Kampfkraft und Lebenspunkte der Infanterie: 1,2 × Moral, also 0,12-fach bei 10 % bis 1,2-fach bei 100 % (normal 1,0 bei 83 %). Sinkt im Kampf, unter Beschuss, bei Getreidemangel und in Provinzen mit niedriger Moral; steigt bei Siegen und in Provinzen mit hoher Moral.">
+            <span className="small">Moral der Infanterie</span>
+            <Bar value={troopMorale(a)} marker={tt.target} color={troopMorale(a) < 0.33 ? '#a33' : troopMorale(a) < 0.5 ? '#c9952f' : '#5d8a3a'} />
+            <span className="small">{Math.round(troopMorale(a) * 100)} % · Stärke ×{infantryStrength(a).toFixed(2)}</span>
+          </div>
+          <div className="muted small">Ziel {Math.round(tt.target * 100)} % – zum Tageswechsel höchstens +{Math.round((TROOP_MORALE.rise.max - (tt.hungry ? TROOP_MORALE.hunger : 0)) * 100)} % bzw. −{Math.round((TROOP_MORALE.fall.max + (tt.hungry ? TROOP_MORALE.hunger : 0)) * 100)} %{tt.hungry ? ' (Getreidemangel)' : ''}.</div>
+          <ul className="morale-parts small">
+            {tt.parts.map((p) => (
+              <li key={p.label}>
+                <span>{p.label}</span>
+                <span className={p.value < 0 ? 'neg' : ''}>{p.value < 0 ? '−' : ''}{Math.round(Math.abs(p.value) * 100)} %</span>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+      <div className="muted small">
+        Tempo {Math.round(armySpeed(a, state) * (a.forcedMarch ? MILITARY.forcedMarchSpeed : 1))} km/h{a.forcedMarch ? ' (Gewaltmarsch)' : ''}{state.nations[a.owner]?.resShort?.oil ? ' (Ölmangel, halbes Tempo)' : ''}{range > 0 ? ` · Reichweite ${range} km` : ''}
+      </div>
+
+      {own && (
+        <>
           <h4>Angriff</h4>
           {targets.length === 0 ? <div className="muted small">Kein Feind in der Nähe.</div> : targets.map(({ b, d }) => (
             <div key={b.id} className="army-row">

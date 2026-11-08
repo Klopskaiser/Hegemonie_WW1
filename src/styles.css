@@ -355,7 +355,7 @@ select, input {
 }
 
 .side-panel { position: absolute; left: 70px; top: 8px; bottom: 8px; width: min(440px, calc(100% - 86px)); z-index: 3; }
-.province-panel { position: absolute; right: 8px; top: 8px; bottom: 8px; width: min(400px, calc(100% - 86px)); z-index: 3; }
+.province-panel { position: absolute; right: 8px; top: 8px; bottom: 8px; width: min(470px, calc(100% - 86px)); z-index: 3; }
 
 .prov-head { display: flex; align-items: center; gap: 10px; }
 .prov-head .swatch { width: 26px; height: 18px; }
@@ -415,7 +415,7 @@ select, input {
   border-radius: 4px;
   cursor: pointer;
 }
-.army-status { margin: 8px 0 4px; font-style: italic; }
+.army-status { margin: 2px 0 4px; font-style: italic; }
 .btn-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
 .btn-cell { white-space: nowrap; display: flex; gap: 4px; justify-content: flex-end; }
 .army-row.link { cursor: pointer; }
@@ -519,9 +519,18 @@ svg.flag { vertical-align: -2px; border-radius: 1px; box-shadow: 0 1px 1px rgba(
 .np-lead-row .np-lead { text-align: left; margin: 0; }
 .np-item .np-pic { float: left; margin: 2px 6px 2px 0; filter: sepia(0.5); }
 .np-lead-row .np-pic { filter: sepia(0.5); }
-.build-item .build-pic { float: left; margin: 0 8px 4px 0; }
-.build-item::after { content: ""; display: block; clear: both; }
+/* Bild links, Stichpunkte rechts daneben; darunter eine Fußzeile über die ganze Breite */
+.build-top { display: flex; gap: 12px; align-items: flex-start; }
+.build-main { flex: 1; min-width: 0; }
+.build-item .build-pic { margin: 0; }
+.build-points { margin: 3px 0 0; padding-left: 18px; font-size: 12px; opacity: 0.85; }
+.build-points li { margin: 1.5px 0; }
+.build-foot { display: flex; align-items: center; gap: 10px; margin-top: 7px; padding-top: 6px; border-top: 1px dashed rgba(140, 106, 67, 0.4); flex-wrap: wrap; }
+.build-foot .btn { margin-left: auto; }
 .unit-btn .picture { margin: 0 auto 2px; }
+/* großes quadratisches Einheitenbild im Armeefenster: unverändert groß, mittig über der Kampfkraft */
+.army-hero { display: flex; justify-content: center; margin: 4px 0 6px; }
+.army-hero .picture { width: 73% !important; height: auto !important; aspect-ratio: 1 / 1; object-fit: cover; }
 .trade-log td { white-space: nowrap; font-size: 12px; }
 
 /* Teilen */
