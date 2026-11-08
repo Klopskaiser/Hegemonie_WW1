@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { COMBAT_MORALE_V2, DAY, DEFAULT_COMBAT_MORALE, HOUR, MILITARY, MINUTE, MORALE, SUPERIORITY, UNITS } from '../src/game/balance.ts';
-import { applyCombatMorale, armyHp, armyPosition, combatRound, forcedMarchWear, killPoints2, meleeOutput, meleePower, planRoute, rangedPower, repairMachines, roadLimit, segmentHours, unitCount } from '../src/game/military.ts';
+import { applyCombatMorale, armyHp, armyPosition, canEnter, combatRound, forcedMarchWear, killPoints2, meleeOutput, meleePower, planRoute, rangedPower, repairMachines, roadLimit, segmentHours, unitCount } from '../src/game/military.ts';
 import { allRates, netRate, upkeepUse } from '../src/game/economy.ts';
 import { edgeParts } from '../src/game/graph.ts';
 import type { MapData } from '../src/game/mapdata.ts';
@@ -532,8 +532,8 @@ describe('Marsch zu einem Wegpunkt vor einer Grenze', () => {
   });
 });
 
-describe('Eisenbahngeschütze auf feindlichen Schienen', () => {
-  it('fremde Schienen: im Krieg und im Frieden (mit Kriegserklärung) halb so schnell, mit Durchmarschrecht voll; ohne Schienen nicht', () => {
+describe('Eisenbahngeschütze: Tempo und Sperren', () => {
+  it('eigene Schienen ×2,5, fremde ohne Abschlag, nie unter Grundtempo (auch bei Ölmangel), Wasser nie; ohne Schienen fest', () => {
     const state = createGame(map, { id: 't', name: 'T', playerNation: 'DE', speed: 1, seed: 7, now: 0, scenario: 'test' });
     for (const n of Object.values(state.nations)) n.controller = 'human';
     const sim = new Simulation(state, map);
@@ -545,14 +545,24 @@ describe('Eisenbahngeschütze auf feindlichen Schienen', () => {
     // Frieden: nur mit Kriegserklärung beim Eintreffen
     expect(planRoute(sim.state, map, gun, sim.state.time, { node: n })).toBeNull();
     expect(planRoute(sim.state, map, { ...gun, warOn: ['FR'] }, sim.state.time, { node: n })?.path).toEqual([s, n]);
-    // Durchmarschrecht: volles Tempo
+    // Durchmarschrecht: eigene Schienen bis zur Grenze ×2,5, fremde danach mit Grundtempo
     sim.apply('DE', { type: 'propose', nation: 'FR', kind: 'rightOfWay' });
     sim.apply('FR', { type: 'answer', nation: 'DE', accept: true });
     expect(planRoute(sim.state, map, gun, sim.state.time, { node: n })?.path).toEqual([s, n]);
-    expect(segmentHours(sim.state, map, gun, s, n)).toBeCloseTo(len / v, 6);
+    expect(segmentHours(sim.state, map, gun, s, n)).toBeCloseTo(l1 / (v * MILITARY.railFactor) + (len - l1) / v, 6);
     sim.apply('DE', { type: 'declareWar', nation: 'FR' });
-    expect(planRoute(sim.state, map, gun, sim.state.time, { node: n })?.path).toEqual([s, n]);
-    expect(segmentHours(sim.state, map, gun, s, n)).toBeCloseTo(l1 / v + (len - l1) / (v * MILITARY.enemyRailFactor), 6);
+    // Kriegsgegner: kein Halbieren mehr – die Grundgeschwindigkeit ist die Untergrenze
+    expect(segmentHours(sim.state, map, gun, s, n)).toBeCloseTo(l1 / (v * MILITARY.railFactor) + (len - l1) / v, 6);
+    // Ölmangel: eigener Bahn-Abschnitt halbiert auf 1,25-faches, fremder bleibt beim Grundtempo (Untergrenze)
+    sim.state.nations.DE.resShort = { oil: true };
+    expect(segmentHours(sim.state, map, gun, s, n)).toBeCloseTo(l1 / (v * 1.25) + (len - l1) / v, 6);
+    sim.state.nations.DE.resShort = undefined;
+    // eigene Schienen: Bahn-Faktor 2,5 (beide Provinzen eigene mit intakter Bahn)
+    const own2 = map.provinces[s].neighbors.find((x) => sim.state.provinces[x].owner === 'DE' && sim.state.provinces[x].buildings.railroad > 0);
+    if (own2 !== undefined) expect(segmentHours(sim.state, map, gun, s, own2)).toBeCloseTo(edgeParts(map, s, own2)[1] / (v * MILITARY.railFactor), 6);
+    // Wasser: EBG fahren wie alle Landtruppen auf Transportern; Ausschiffnen nur auf intakte Schienen
+    expect(canEnter(sim.state, map, gun, map.provinces.length)).toBe(true);
+    // ohne intakte Schienen im Ziel: kein Weg
     sim.state.provinces[n].buildings.railroad = 0;
     expect(planRoute(sim.state, map, gun, sim.state.time, { node: n })).toBeNull();
   });

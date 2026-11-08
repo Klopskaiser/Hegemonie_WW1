@@ -1,6 +1,6 @@
 // Militär: Wegfindung, Marsch, Nah- und Fernkampf, Eroberung, Aufständische.
 
-import { DEFAULT_COMBAT_MORALE, SUPERIORITY, COMBAT_MORALE_V2, BUILDING_DAMAGE_CHANCE, BUILDINGS, buildingLives, DAY, DEFECTION, FORTRESS_REDUCTION, HOUR, MILITARY, MINUTE, MORALE, TROOP_MORALE, UNITS,
+import { DEFAULT_COMBAT_MORALE, SUPERIORITY, COMBAT_MORALE_V2, BUILDING_DAMAGE_CHANCE, BUILDINGS, buildingLives, DAY, DEFECTION, FORTRESS_REDUCTION, HOUR, MILITARY, MINUTE, MORALE, TROOP_MORALE, UNITS, WORKSHOP_REPAIR,
   type Building, type UnitType,
 } from './balance.ts';
 import { atWar, hasRightOfWay, setRelation, noteWarDeclaration } from './diplomacy.ts';
@@ -159,7 +159,7 @@ export function canTraverse(state: GameState, map: MapData, a: Army, u: number, 
 }
 
 export function canEnter(state: GameState, map: MapData, a: Army, node: number): boolean {
-  if (isSea(map, node)) return true;
+  if (isSea(map, node)) return true; // auch Eisenbahngeschütze fahren auf Transportern mit – nur der Weg zum Einschiffpunkt muss auf Schienen führen
   // Schiffe (auch mit Truppen an Bord) gehen nie an Land
   if (isNaval(a)) return false;
   const owner = state.provinces[node].owner;
@@ -215,8 +215,12 @@ function landSpeed(state: GameState, a: Army, province: number): number {
   const ps = state.provinces[province];
   const base = armySpeed(a, state);
   const own = ps.owner === a.owner;
-  // Eisenbahngeschütze: auf eigenen Schienen und mit Durchmarschrecht voll, auf fremden sonst halb so schnell
-  if (isRailOnly(a)) return own || hasRightOfWay(state, a.owner, ps.owner) ? base : base * MILITARY.enemyRailFactor;
+  // Eisenbahngeschütze: Grundtempo, auf eigenen Schienen mit dem Bahn-Faktor;
+  // nie unter der Grundgeschwindigkeit – weder durch Ölmangel noch durch gegnerisches Gebiet
+  if (isRailOnly(a)) {
+    const rail = own && activeLevel(ps, 'railroad') > 0 ? MILITARY.railFactor : 1;
+    return Math.max(UNITS.railgun.speed, base * rail);
+  }
   // halbes Tempo auf feindlichem Land und überall ohne Durchmarschrecht oder Bündnis
   const terr = own ? MILITARY.territory.own : hasRightOfWay(state, a.owner, ps.owner) ? MILITARY.territory.foreign : MILITARY.territory.enemy;
   return base * terr * (own && activeLevel(ps, 'railroad') > 0 ? MILITARY.railFactor : 1) * marchFactor(a);
@@ -1279,10 +1283,13 @@ export function unitHp(a: Army, u: UnitType, map?: MapData): number {
 export function repairMachines(state: GameState, map: MapData): void {
   for (const a of state.armies) {
     if (!a.wounds || inMelee(state, map, a) || (a.forcedMarch && a.move) || state.nations[a.owner]?.resShort?.oil) continue;
+    // Werkstatt ab Stufe 1 in der Provinz: doppelte Reperaturrate
+    const prov = currentProvince(map, a, state.time);
+    const boost = prov >= 0 && activeLevel(state.provinces[prov], 'workshop') >= 1 ? WORKSHOP_REPAIR : 1;
     for (const u of Object.keys(a.wounds) as UnitType[]) {
       if (u === 'infantry' || !a.wounds[u]) continue;
       const w = a.wounds[u]!;
-      const heal = Math.max(w * MILITARY.repairShare, UNITS[u].hp * MILITARY.repairMin);
+      const heal = Math.max(w * MILITARY.repairShare, UNITS[u].hp * MILITARY.repairMin) * boost;
       if (heal >= w - 1e-6) delete a.wounds[u];
       else a.wounds[u] = w - heal;
     }

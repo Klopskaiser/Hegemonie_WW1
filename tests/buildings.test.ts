@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { checkBuild, unitHours } from '../src/game/actions.ts';
 import { BUILDINGS, buildingLives, DAY, HOUR } from '../src/game/balance.ts';
 import { allRates, provinceOutput } from '../src/game/economy.ts';
+import { repairMachines } from '../src/game/military.ts';
 import type { MapData } from '../src/game/mapdata.ts';
 import { Simulation } from '../src/game/sim.ts';
 import { createGame } from '../src/game/state.ts';
@@ -102,10 +103,11 @@ describe('Bauamt und Manufaktur', () => {
     expect(checkBuild(sim.state, map, 'DE', berlin, 'manufactory').ok).toBe(false);
   });
 
-  it('Werkstatt: Voraussetzung für die Fabrik, Fertigung 10 % schneller, Moral +1 %; Bauamt abschaltbar', () => {
+  it('Werkstatt: zwei Stufen – Stufe 1 Fabrik-Voraussetzung und doppelte Reperatur, Stufe 2 +10 % Fertigung', () => {
     const sim = newSim();
     const ps = sim.state.provinces[berlin];
-    expect(BUILDINGS.workshop.cost(1)).toEqual({ money: 5000, iron: 1000, lumber: 500 });
+    expect(BUILDINGS.workshop.cost(1)).toEqual({ money: 3000, iron: 500, lumber: 500, oil: 500 });
+    expect(buildingLives('workshop')).toBe(1);
     expect(checkBuild(sim.state, map, 'DE', berlin, 'factory').error).toBe('Benötigt Werkstatt');
     expect(sim.apply('DE', { type: 'build', province: berlin, building: 'workshop' }).ok).toBe(true);
     // geplante Werkstatt reicht für die Bauschleife
@@ -115,18 +117,38 @@ describe('Bauamt und Manufaktur', () => {
     ps.buildings.factory = 1;
     const slow = unitHours(sim.state, berlin, 'artillery');
     ps.buildings.workshop = 1;
-    expect(unitHours(sim.state, berlin, 'artillery')).toBeCloseTo(slow / 1.1, 6);
+    // Stufe 1 fertigt noch normal schnell, verdoppelt aber die Reperatur mechanischer Einheiten
+    expect(unitHours(sim.state, berlin, 'artillery')).toBe(slow);
+    const gun = { id: sim.state.nextArmyId++, owner: 'DE', node: berlin, units: { tank: 1 }, wounds: { tank: 10 } };
+    sim.state.armies.push(gun);
+    repairMachines(sim.state, map);
+    const boosted = 10 - (gun.wounds.tank ?? 0);
+    gun.wounds.tank = 10;
+    ps.buildings.workshop = 0;
+    repairMachines(sim.state, map);
+    expect(boosted).toBeCloseTo(2 * (10 - (gun.wounds.tank ?? 0)), 9);
     expect(BUILDINGS.workshop.morale(1)).toBeCloseTo(0.01, 9);
+    expect(BUILDINGS.workshop.morale(2)).toBeCloseTo(0.02, 9);
+    // Stufe 2: Fertigung 10 % schneller
+    ps.buildings.workshop = 2;
+    expect(unitHours(sim.state, berlin, 'artillery')).toBeCloseTo(slow / 1.1, 6);
     ps.buildings.office = 1;
     const on = allRates(sim.state, map).DE.cons.money;
     expect(sim.apply('DE', { type: 'switchBuilding', province: berlin, building: 'office', on: false }).ok).toBe(true);
     // abgeschaltet: kein Unterhalt, keine Verkürzung
     expect(on - allRates(sim.state, map).DE.cons.money).toBe(2000);
     expect(checkBuild(sim.state, map, 'DE', berlin, 'railroad').hours).toBe(60);
-    expect(BUILDINGS.workshop.hours(1)).toBe(12);
+    expect(BUILDINGS.workshop.hours(1)).toBe(8);
   });
 
-  it('Handelsposten: nur ohne Küste, Rohstoffe +7 %, Moral +3 %, Unterhalt 20 Fisch', () => {
+  it('Manufaktur erst ab Tag 4 baubar', () => {
+    const sim = newSim();
+    expect(checkBuild(sim.state, map, 'DE', berlin, 'manufactory').error).toBe('Erst ab Tag 4 baubar');
+    sim.advance(DAY);
+    expect(checkBuild(sim.state, map, 'DE', berlin, 'manufactory').ok).toBe(true);
+  });
+
+  it('Handelsposten: nur ohne Küste, Rohstoffe +8 %, Moral +2 %, Unterhalt 20 Fisch', () => {
     const sim = newSim();
     const inland = map.provinces.find((p) => p.nation === 'DE' && !p.coastal)!.id;
     const coast = map.provinces.find((p) => p.nation === 'DE' && p.coastal)!.id;
@@ -138,7 +160,7 @@ describe('Bauamt und Manufaktur', () => {
     const fish = allRates(sim.state, map).DE.cons.fish;
     ps.buildings.tradepost = 1;
     const after = provinceOutput(map, ps, inland);
-    expect(after.amount / before.amount).toBeCloseTo(1.07, 6);
+    expect(after.amount / before.amount).toBeCloseTo(1.08, 6);
     expect(after.money / before.money).toBeCloseTo(1.08, 6);
     expect(allRates(sim.state, map).DE.cons.fish - fish).toBe(20);
     expect(BUILDINGS.tradepost.morale(1)).toBeCloseTo(0.02, 9);

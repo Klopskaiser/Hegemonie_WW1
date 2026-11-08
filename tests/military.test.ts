@@ -170,7 +170,7 @@ describe('See', () => {
     const berlin = prov('Berlin');
     const rg: Army = { id: 996, owner: 'DE', node: berlin, units: { railgun: 1 } };
     expect(maxRange(rg, map)).toBe(UNITS.railgun.range);
-    expect(canEnter(sim.state, map, rg, sea)).toBe(true);
+    expect(canEnter(sim.state, map, rg, sea)).toBe(true); // auf Transportern fahren EBG wie alle Landtruppen
     const n = map.provinces[berlin].neighbors.find((x) => map.provinces[x].nation === 'DE')!;
     expect(canEnter(sim.state, map, rg, n)).toBe(false);
     sim.state.provinces[n].buildings.railroad = 1;

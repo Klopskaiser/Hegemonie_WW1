@@ -44,7 +44,7 @@ describe('Geld und Unterhalt', () => {
     expect(provinceOutput(fakeMap, ps, p.id).money).toBeCloseTo((700 + 100 * 18) * 1.08 * 1.055, 6);
   });
 
-  it('Provinzunterhalt 750 je Kategorie, Eisenbahn 500 Kohle', () => {
+  it('Provinzunterhalt 777 je Kategorie, Eisenbahn 500 Kohle', () => {
     const sim = newSim();
     const own = sim.state.provinces.filter((p) => p.owner === 'DE').length;
     const r = allRates(sim.state, map).DE;
@@ -52,7 +52,7 @@ describe('Geld und Unterhalt', () => {
     expect(BUILDINGS.railroad.upkeep?.coal).toBe(500);
     // Infanterie verbraucht fest Getreide und Öl
     const infantry = sim.state.armies.filter((a) => a.owner === 'DE').reduce((t, a) => t + (a.units.infantry ?? 0), 0);
-    expect(r.cons.grain).toBe(infantry * 15);
+    expect(r.cons.grain).toBe(infantry * 18);
     expect(r.cons.oil).toBe(infantry * 5);
   });
 });

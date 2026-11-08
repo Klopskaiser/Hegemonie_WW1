@@ -122,7 +122,7 @@ export class BasicAI implements Controller {
     // Nahrungslage: Getreide ernährt die Infanterie, Fisch den Provinzunterhalt
     const grainNet = netRate(view.rates, 'grain'), fishNet = netRate(view.rates, 'fish');
     const foodShort = grainNet < 0 || fishNet < 0 || stock.grain < 3000;
-    // Kasernen (1000 Getreide je Stufe und Tag) und Wehrämter (jede neue Infanterie isst 15 Getreide und 5 Öl am Tag):
+    // Kasernen (1000 Getreide je Stufe und Tag) und Wehrämter (jede neue Infanterie isst 18 Getreide und 5 Öl am Tag):
     // bei Getreidemangel abschalten, bei Überschuss wieder an. Großmächte lassen ihre Wehrämter immer an –
     // statt die Truppen auszudünnen, greifen sie an und erobern neues Land (siehe military/diplomacy).
     const starving = grainNet < 0 && stock.grain < -grainNet * 5, plenty = grainNet > 1500 && stock.grain > 10000;
@@ -157,7 +157,7 @@ export class BasicAI implements Controller {
           case 'railroad': score = base * 0.33 * (net('coal') < BUILDINGS.railroad.upkeep!.coal! && mp.resource !== 'coal' ? 0.3 : 1); break;
           case 'harbor': score = base * 0.25; break;
           // Handelsposten: kleiner Produktionsbonus, kostet Fisch – nur wenn genug Fisch übrig ist
-          case 'tradepost': score = base * 0.07 * (net('fish') < 3 * BUILDINGS.tradepost.upkeep!.fish! ? 0.2 : 1); break;
+          case 'tradepost': score = base * 0.08 * (net('fish') < 3 * BUILDINGS.tradepost.upkeep!.fish! ? 0.2 : 1); break;
           // Werkstatt: Voraussetzung für die Fabrik (bevorzugt in Städten), beschleunigt vorhandene Fabriken
           case 'workshop': {
             const wantFactory = factories < (major ? 3 : 1) && ps.buildings.manufactory === 0;

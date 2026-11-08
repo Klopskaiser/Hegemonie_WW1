@@ -176,7 +176,7 @@
   nicht ein – Engpass, Moral sinkt; so lässt sich ein Rohstoff gezielt aufstapeln. Rohstoffe auf 0 % werden nur durch festen Unterhalt
   (Einheiten, Gebäude) verbraucht. Startwerte anteilig zur eigenen Produktion; die KI verteilt
   nach Vorrat plus fünf Tagen Bilanz und schont Öl. Eisenbahn-Unterhalt 500 Kohle/Tag.
-  Infanterie verbraucht ihre Getreideration (jetzt 18 je Tag) fest (nicht mehr als frei verteilbare Nahrung).
+  Infanterie verbraucht ihre Ration (jetzt 18 Getreide und 5 Öl je Tag) fest (nicht mehr als frei verteilbare Nahrung).
 - Karte: Eisenbahnen als Schienen von der Stadt zum nächstgelegenen Punkt jeder Nachbargrenze,
   Hafen als Anker am Küstenpunkt zum vorgelagerten Seegebiet, Festung als Turm mit Stufe neben der
   Stadt; Gebäude nur in einsehbaren Provinzen.
@@ -187,12 +187,12 @@
   in seiner Provinz −25 % (bestätigt: nur Gebäude, nur eigene Provinz; Einheiten unverändert).
   Abschaltbar wie Kaserne, Wehramt und Eisenbahn (aus: kein Unterhalt, keine Wirkung).
 - Handelsposten (Vorgabe): 1 Stufe, nur in Provinzen ohne Küste (kein Hafen möglich), 12000 Geld, 500 Eisen,
-  2500 Holz, Bauzeit 36 h, Rohstoffproduktion +7 % (nicht Geld), Moral +3 %, Unterhalt 20 Fisch/Tag.
-- Werkstatt (Vorgabe): 1 Stufe, 12 h, 5000 Geld, 1000 Eisen, 500 Holz, Moral +1 %, mechanische
-  Einheiten (alles außer Infanterie) in der Provinz +10 % Bautempo (Fertigungszeit ÷ 1,1),
-  Voraussetzung für die Fabrik (geplante Werkstatt zählt mit). Alte Spielstände: Werkstatt 0,
-  bestehende Fabriken bleiben.
-- Manufaktur (Vorgabe): 4 Stufen, Rohstoffproduktion +11 % je Stufe (nicht Geld), Moral +2,5 % je Stufe wie die Fabrik, schließt sich
+  2500 Holz, Bauzeit 36 h, Rohstoff- und Geldproduktion +8 %, Moral +2 %, Unterhalt 20 Fisch/Tag.
+- Werkstatt (Vorgabe): 2 Stufen, je 8 h, 3000 Geld, je 500 Eisen/Holz/Öl, Moral +1 % je Stufe, je Stufe 1 Leben.
+  Stufe 1: Voraussetzung für die Fabrik und verdoppelt die Reperaturrate mechanischer Einheiten in der Provinz.
+  Stufe 2 zusätzlich: mechanische Einheiten (alles außer Infanterie) +10 % Bautempo (Fertigungszeit ÷ 1,1).
+  Alte Spielstände: Werkstatt 0, bestehende Fabriken bleiben.
+- Manufaktur (Vorgabe): 4 Stufen, erst ab Tag 4 baubar, Rohstoffproduktion +11 % je Stufe, Moral +2,5 % je Stufe wie die Fabrik, schließt sich
   mit der Fabrik aus, keine Einheiten.
 - Gebäudekosten (Vorgabe, je Stufe gleich; nur die Festung dauert je Stufe länger): Fabrik 10000 Geld,
   2500 Eisen/Holz/Öl, 40 h; Manufaktur 15000 Geld, 2000 Eisen/Holz, 3000 Gas, 40 h; Wehramt 1000 Geld, 2 h;
@@ -386,8 +386,10 @@
   Gebiet und der Abzug von dort sind frei; Begegnungen mit ihren Armeen an Land lösen weiterhin Kampf aus.
   Ein Marsch zu einem Wegpunkt hinter der letzten eigenen Stadt läuft bis dorthin durch (früher blieb die Armee
   in dieser Stadt stehen). Eisenbahngeschütze fahren nur auf intakten Schienen, sonst nach denselben Regeln wie alle
-  Truppen (Vorgabe): eigene und mit Durchmarschrecht mit vollem Tempo, beim Kriegsgegner und im Frieden (dort mit
-  Kriegserklärung beim Eintreffen) halb so schnell (`enemyRailFactor`); ein Wegpunkt jenseits des befahrbaren
+  Truppen (Vorgabe): Grundgeschwindigkeit 12,5, auf eigenen Schienen mit dem Bahn-Faktor (`railFactor`); gegnerisches
+  Gebiet und Ölmangel unterschreiten die Grundgeschwindigkeit nie. Auf See fahren sie wie alle Landtruppen auf
+  Transportern; der Weg zum Einschiffpunkt führt über intakte Schienen und ausgeschifft wird nur, wo wieder intakte
+  Schienen liegen (`canEnter`); ein Wegpunkt jenseits des befahrbaren
   Bahnnetzes wird bis knapp vor die Grenze angefahren (`roadLimit`).
   Beschädigte Schienen (Reparatur nötig) sind nicht befahrbar und werden nicht gezeichnet; ein Eisenbahngeschütz
   in einer Provinz mit beschädigter Eisenbahn (auch mitten auf der Strecke) steht fest, bis sie repariert ist.
@@ -445,7 +447,8 @@
   mehreren Erklärungen; jede neue Erklärung verlängert die 2 Tage).
 - Rohstoff-Engpässe (Vorgabe): Getreidemangel senkt nur die Moral der Infanterie (Ziel und Tempo der
   Moraländerung), nicht die Provinzmoral; Nahrungsmangel wirkt nicht mehr auf Provinzmoral.
-  Ölmangel halbiert das Bewegungstempo aller Einheiten (`oilShortFactor`, Land, See und Transport) und
+  Ölmangel halbiert das Bewegungstempo aller Einheiten (`oilShortFactor`, Land, See und Transport; Eisenbahngeschütze
+  bleiben mindestens bei ihrer Grundgeschwindigkeit) und
   Maschinen reparieren sich zum Tageswechsel nicht. Beide Engpässe werden je Rohstoff gemessen
   (`resShort`: Vorrat leer, während Nachfrage besteht) und am Tageswechsel zurückgesetzt; Kohle-/Gas-
   bzw. Material-/Fischmangel bleiben wie bisher Kategorien-Engpässe mit Moralwirkung auf Provinzen.
@@ -470,7 +473,7 @@
   abgeschaltet grau, beschädigt rot), Schalter für Wehramt/Kaserne/Eisenbahn, Bauen und Technik in Auftrag geben;
   unten „Überall Wehrämter bauen“ sowie alle Kasernen aktivieren/deaktivieren (`ProvinceOverview.tsx`).
 - Wirtschaft (Vorgabe, neu): Rohstoffertrag je Provinz 3150 pro Tag bei 100 % Moral (Doppelprovinz 6300),
-  Grundbedarf je Provinz 800 pro Kategorie (Nahrung, Baustoffe, Energie) und Tag. Geld je Provinz 1600
+  Grundbedarf je Provinz 777 pro Kategorie (Nahrung, Baustoffe, Energie) und Tag. Geld je Provinz 1600
   (Doppelprovinz 3200).
 - Moral (Vorgabe, neu): Grundwert 85 %, Entfernung zur Hauptstadt −10 % je Marschtag (Infanteriemarsch
   über das Wegenetz; Bahn und Hafen verkürzen, Ausschiffung und Seezeit zählen mit; höchstens −30 %),

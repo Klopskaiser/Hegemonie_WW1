@@ -228,8 +228,8 @@ export function unitHours(state: GameState, province: number, unit: UnitType): n
   const ps = state.provinces[province];
   const level = ps ? activeLevel(ps, 'factory') : min;
   const extra = Math.max(0, level - min);
-  // Werkstatt: Bautempo +10 % (gilt für alle gefertigten, also mechanischen Einheiten)
-  const workshop = ps && activeLevel(ps, 'workshop') > 0 ? 1 + WORKSHOP_SPEEDUP : 1;
+  // Werkstatt ab Stufe 2: Bautempo +10 % (gilt für alle gefertigten, also mechanischen Einheiten)
+  const workshop = ps && activeLevel(ps, 'workshop') >= 2 ? 1 + WORKSHOP_SPEEDUP : 1;
   return (UNITS[unit].hours * Math.max(FACTORY_SPEEDUP, 1 - FACTORY_SPEEDUP * extra)) / workshop;
 }
 
