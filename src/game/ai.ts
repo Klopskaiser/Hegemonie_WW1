@@ -3,18 +3,20 @@
 // Artilleriebatterien hinter der Front, Landungen, Flotten, Eisenbahngeschütze).
 // Persönlichkeit je Nation (state.aiProfiles) und Schwierigkeitsgrad (state.difficulty).
 
-import { checkBuild, checkProduce, canAfford, pay, plannedBuildings, type Action, checkRepair } from './actions.ts';
+import { capitalMoveCost, checkBuild, checkProduce, canAfford, pay, plannedBuildings, type Action, checkRepair } from './actions.ts';
 import {
-  BUILDINGS, CATEGORIES, CATEGORY_RES, DAY, DIFFICULTY, HOUR, MARKET, PROVINCE, UNITS, CAPITAL_MOVE, FORTRESS_REDUCTION, START_INFANTRY,
+  BUILDINGS, CATEGORIES, CATEGORY_RES, DAY, DIFFICULTY, HOUR, MARKET, MILITARY, PROVINCE, UNITS, FORTRESS_REDUCTION, START_INFANTRY,
   type Building, type Cost, type Res, type UnitType,
 } from './balance.ts';
 import type { Controller, NationView } from './controller.ts';
 import { atWar, enemiesOf, relation, relationRank, warKey } from './diplomacy.ts';
-import { netRate, provinceOutput, toShares, activeCapital, capitalOf, provincePoints } from './economy.ts';
+import { netRate, provinceOutput, activeCapital, capitalOf, provincePoints } from './economy.ts';
 import { distanceKm, RESOURCES, type MapData, type Resource } from './mapdata.ts';
 import { priceBounds, priceOf, tradeableOffers } from './market.ts';
 import { isSea, nodeDist } from './graph.ts';
-import { armyPower, fracBefore, isNaval, isRailOnly, pathsFrom, pathTo, unitCount, type PathTree } from './military.ts';
+import {
+  armyPosition, armyPower, canEnter, fracBefore, inMelee, isNaval, isRailOnly, maxRange, pathsFrom, pathTo, unitCount, type PathTree,
+} from './military.ts';
 import type { AIProfile, Army, GameState, Relation } from './types.ts';
 import { armyVisible, visibleNodes, type Sight } from './visibility.ts';
 
@@ -69,9 +71,18 @@ interface Situation {
   wanted: Partial<Record<Resource, number>>;
   /** Baustoffe (Holz, Eisen) knapp: Bilanz negativ */
   materialsShort: boolean;
+  /** in dieser Runde schon verplant (Bauaufträge, Fertigung): fehlt nach der Ausführung im Vorrat */
+  spent: Partial<Record<Res, number>>;
+  /** feindliche Fernkampftruppen (zwischengespeichert, siehe BasicAI.guns) */
+  guns?: { army: Army; pos: [number, number]; range: number; visible: boolean }[];
 }
 
 const isMajorNation = (map: MapData, id: string) => !!map.nations.find((n) => n.id === id)?.major;
+
+/** verplante Kosten dieser Runde vermerken (Situation.spent) */
+const spend = (sit: Situation, cost: Cost) => {
+  for (const r of Object.keys(cost) as Res[]) sit.spent[r] = (sit.spent[r] ?? 0) + (cost[r] ?? 0);
+};
 
 /**
  * Börsenpreis für die Planung, gedämpft (Wurzel des Abstands zum Richtpreis): knappe Rohstoffe zählen spürbar mehr,
@@ -104,7 +115,7 @@ export class BasicAI implements Controller {
     this.diplomacy(view, sit, actions);
     this.alliances(view, sit, actions);
     this.trade(view, sit, actions);
-    this.consumption(view, actions);
+    this.consumption(view, sit, actions);
     const busy = new Set<number>();
     this.military(view, sit, actions, busy);
     this.batteries(view, sit, actions, busy);
@@ -172,7 +183,7 @@ export class BasicAI implements Controller {
       diff: DIFFICULTY[state.difficulty ?? 'normal'],
       day: state.time / DAY,
       own, enemies, hostile, incoming, front, friendly, vis, power, landNeighbors, net, foodShort, leader, borders,
-      wanted: {}, materialsShort: net('lumber') < 0 || net('iron') < 0,
+      wanted: {}, materialsShort: net('lumber') < 0 || net('iron') < 0, spent: {},
     };
   }
 
@@ -301,7 +312,8 @@ export class BasicAI implements Controller {
       }
     }
     // Hauptstadt verloren: in die wertvollste sichere eigene Provinz verlegen
-    if (capitalOf(state, map, nation) === null && !state.nations[nation].capitalMove && canAfford(real, CAPITAL_MOVE.cost)) {
+    // (kostenlos: Notverlegung nach Verlust der Hauptstadt, siehe capitalMoveCost)
+    if (capitalOf(state, map, nation) === null && !state.nations[nation].capitalMove && canAfford(real, capitalMoveCost(state, map, nation))) {
       const safe = own.filter((i) => !front.get(i) && !state.provinces[i].revolt);
       const pick = (safe.length ? safe : own).reduce<number | null>((b, i) => (b === null || provincePoints(map, state.provinces[i], i) > provincePoints(map, state.provinces[b], b) ? i : b), null);
       if (pick !== null) actions.push({ type: 'moveCapital', province: pick });
@@ -361,6 +373,7 @@ export class BasicAI implements Controller {
       }
       actions.push({ type: 'build', province: c.province, building: c.building });
       pay(stock, c.cost);
+      spend(sit, c.cost);
       used.add(c.province);
       slots--;
     }
@@ -396,6 +409,7 @@ export class BasicAI implements Controller {
       if (site === undefined) return false;
       actions.push({ type: 'enqueue', province: site, unit });
       pay(stock, cost);
+      spend(sit, cost);
       free.delete(site);
       count[unit] = (count[unit] ?? 0) + 1;
       return true;
@@ -503,11 +517,36 @@ export class BasicAI implements Controller {
     const hungry = sit.net('grain') < 0 || stock.grain < 3000;
     // Reichweite: Marschstunden einer Infanterie ab der Hauptstadt (auch mit Einschiffen)
     const capital = activeCapital(state, map, nation);
-    const reach = pathsFrom(state, map, { id: -1, owner: nation, node: capital, units: { infantry: 1 } }, capital, undefined, REACH_HOURS * 1.5);
+    // (mit angekündigter Kriegserklärung an alle: im Frieden dürfte die Probe sonst keine fremde Provinz betreten,
+    // und über See wäre nie etwas erreichbar)
+    const probe: Army = { id: -1, owner: nation, node: capital, units: { infantry: 1 }, warOn: map.nations.map((x) => x.id) };
+    const reach = pathsFrom(state, map, probe, capital, undefined, REACH_HOURS * 1.5);
+    // erreichbar heißt: ohne Umweg durch das Land unbeteiligter Dritter (nur eigenes, Durchmarschgebiet und See)
+    const peaceProbe: Army = { ...probe, warOn: null };
+    // clean[k]: der Weg bis k führt nur über See und Gebiet, das wir auch im Frieden betreten dürfen
+    const clean = new Map<number, boolean>();
+    const isClean = (k: number): boolean => {
+      let c = clean.get(k);
+      if (c !== undefined) return c;
+      const prev = reach.prev[k];
+      c = (prev < 0 || isClean(prev)) && (isSea(map, k) || canEnter(state, map, peaceProbe, k));
+      clean.set(k, c);
+      return c;
+    };
+    const reachable = (i: number) => {
+      if (!isFinite(reach.hours[i])) return false;
+      // vom Ziel rückwärts durch das Land des Zielbesitzers, dann muss der Rest des Weges sauber sein
+      const o = state.provinces[i].owner;
+      let k = i;
+      while (k >= 0 && !isSea(map, k) && state.provinces[k].owner === o) k = reach.prev[k];
+      return k < 0 || isClean(k);
+    };
     const candidates = new Set(sit.landNeighbors);
+    // ohne Großmacht an der eigenen Landgrenze (Inseln, Nationen hinter dem Meer): Großmächte über See als Ziel
+    const overseas = ![...sit.landNeighbors].some((n) => isMajorNation(map, n) && state.nations[n]?.alive);
     for (let i = 0; i < map.provinces.length; i++) {
       const o = state.provinces[i].owner;
-      if (o !== nation && !isMajorNation(map, o) && isFinite(reach.hours[i])) candidates.add(o);
+      if (o !== nation && (overseas || !isMajorNation(map, o)) && reachable(i)) candidates.add(o);
     }
     const ownSet = new Set(sit.own);
     const loot = (k: number) => {
@@ -542,7 +581,7 @@ export class BasicAI implements Controller {
         if (ps.owner !== n) return;
         const adjacent = map.provinces[k].neighbors.some((x) => ownSet.has(x));
         if (adjacent) gain += loot(k);
-        else if (!isMajor && isFinite(reach.hours[k])) gain += loot(k) * 0.7;
+        else if ((!isMajor || overseas) && reachable(k)) gain += loot(k) * (isMajor ? 0.5 : 0.7);
       });
       if (gain <= 0) continue;
       const score = gain * (n === sit.leader ? 1.5 : 1) * Math.min(3, ratioWith / threshold);
@@ -696,26 +735,78 @@ export class BasicAI implements Controller {
   // ------------------------------------------------ Verbrauchsregler
 
   /**
-   * Provinzunterhalt auf die Rohstoffe verteilen, die reichlich vorhanden sind: Gewicht je Rohstoff
-   * = Vorrat plus fünf Tage Bilanz ohne Provinzunterhalt; Öl wird für Einheiten geschont.
+   * Verbrauchsregler: Der Provinzunterhalt (je Kategorie und Tag) wird stur nach Regler bezahlt – steht ein Regler
+   * auf einem leeren Rohstoff, sinkt die Moral, auch wenn der andere genug hätte. Deshalb je Kategorie:
+   * - Ein Rohstoff wird geschont: Getreide (Infanterie), Öl (Einheiten, Tempo), bei Baustoffen der gerade gebrauchte
+   *   (Einkaufsliste der Bauplanung; sonst im Krieg Eisen für Festungen und Fahrzeuge, im Frieden Holz für Gebäude).
+   * - Hat der geschonte sehr viel (Vorrat über der Reserve), zahlt dieser Überfluss zuerst.
+   * - Dann zahlen die übrigen, je höchstens ihren laufenden Überschuss plus einen Teil ihres Vorrats.
+   * - Der geschonte springt ein, wenn die Kategorie insgesamt
+   *   im Plus ist (dann geht er selbst nicht ins Minus) – so entsteht kein Engpass, obwohl Vorräte da sind.
+   * - Ist die Bilanz der Kategorie negativ, gleich wie die Regler stehen, wird gehortet: die übrigen tragen alles
+   *   (auch um den Preis eines Engpasses), der geschonte Rohstoff sammelt sich an.
+   * Prozente werden abgerundet; den Rest trägt der Zahler mit dem größten Vorrat (nie ein leerer).
    */
-  private consumption(view: NationView, actions: Action[]): void {
+  private consumption(view: NationView, sit: Situation, actions: Action[]): void {
     const state = view.state as GameState;
     const { nation, rates } = view;
     const n = state.nations[nation];
+    const U = rates.upkeep;
+    if (U <= 0) return;
+    /** Tage, über die ein Vorrat zum Bezahlen herangezogen werden darf */
+    const H = 5;
     for (const cat of CATEGORIES) {
-      const weights: Partial<Record<Resource, number>> = {};
-      for (const r of CATEGORY_RES[cat]) {
-        const free = rates.prod[r] - rates.cons[r];
-        // Öl wird für Einheiten geschont, Getreide für die Infanterie (die nur Getreide isst)
-        weights[r] = Math.max(0, n.stock[r] + 5 * free) * (r === 'oil' ? 0.3 : r === 'grain' ? 0.4 : 1);
+      const list = CATEGORY_RES[cat];
+      // Vorrat nach den in dieser Runde verplanten Bau- und Fertigungskosten
+      const stock = (r: Resource) => Math.max(0, n.stock[r] - (sit.spent[r] ?? 0));
+      const free = (r: Resource) => rates.prod[r] - rates.cons[r];
+      const keep: Resource = cat === 'food' ? 'grain' : cat === 'energy' ? 'oil' : this.materialToKeep(sit);
+      // Reserve des geschonten Rohstoffs: 15 Tage fester Verbrauch, mindestens 30 000 (Baustoffe: was die
+      // Bauplanung braucht, mindestens 10 000)
+      const reserve = cat === 'materials'
+        ? Math.max(10000, sit.wanted[keep] ?? 0)
+        : Math.max(30000, 15 * rates.cons[keep]);
+      const balance = list.reduce((t, r) => t + free(r), 0) - U;
+      // was ein Rohstoff täglich tragen kann: laufender Überschuss plus ein Fünftel des Vorrats (ein eigenes Minus,
+      // etwa durch den Unterhalt der Einheiten, zehrt am Vorrat und wird abgezogen)
+      const cap = (r: Resource) => Math.max(0, free(r) + stock(r) / H);
+      const payers = list.filter((r) => r !== keep).sort((a, b) => cap(b) - cap(a) || list.indexOf(a) - list.indexOf(b));
+      const amount: Partial<Record<Resource, number>> = {};
+      let need = U;
+      const give = (r: Resource, v: number) => {
+        const t = Math.max(0, Math.min(need, v));
+        amount[r] = (amount[r] ?? 0) + t;
+        need -= t;
+      };
+      // sehr viel vom geschonten Rohstoff (Vorrat über der Reserve, laufende Bilanz nicht negativ): dieser Überfluss
+      // zahlt zuerst, langsam angezapft (über 20 Tage), damit Einheiten und Fertigung immer genug behalten
+      const spare = stock(keep) > reserve && free(keep) >= 0 ? (stock(keep) - reserve) / 20 : 0;
+      give(keep, spare);
+      for (const r of payers) give(r, cap(r));
+      // Kategorie im Plus: der geschonte springt mit seinem Überschuss ein (Notfall, sonst Engpass trotz Vorrat)
+      if (balance >= 0) give(keep, cap(keep));
+      // Rest (Bilanz negativ: horten): trägt der Zahler mit dem größten Vorrat bzw. der größten Förderung
+      if (need > 1e-9) {
+        const sink = [...payers].sort((a, b) => stock(b) - stock(a) || free(b) - free(a))[0];
+        give(sink, need);
       }
-      // Nahrung: reicht beides nicht, deckt Fisch den Provinzunterhalt allein
-      if (cat === 'food' && !(weights.grain! > 0) && !(weights.fish! > 0)) weights.fish = 1;
-      const shares = toShares(cat, weights);
-      const change = CATEGORY_RES[cat].some((r) => Math.abs((shares[r] ?? 0) - (n.consumption[r] ?? 0)) >= 10);
+      // ganze Prozent, abgerundet; den Rundungsrest trägt der Beteiligte mit dem größten Vorrat
+      const shares: Partial<Record<Resource, number>> = {};
+      for (const r of list) shares[r] = Math.floor(((amount[r] ?? 0) / U) * 100 + 1e-9);
+      const used = list.filter((r) => (amount[r] ?? 0) > 0);
+      const sink = (used.length ? used : payers).sort((a, b) => stock(b) - stock(a) || (amount[b] ?? 0) - (amount[a] ?? 0))[0];
+      shares[sink] = 100 - list.filter((r) => r !== sink).reduce((t, r) => t + shares[r]!, 0);
+      const cur = (r: Resource) => n.consumption[r] ?? 0;
+      const change = list.some((r) => Math.abs(shares[r]! - cur(r)) >= 3 || ((shares[r]! === 0) !== (cur(r) === 0)));
       if (change) actions.push({ type: 'setConsumption', category: cat, shares });
     }
+  }
+
+  /** Welcher Baustoff gesammelt wird: der von der Bauplanung meistgebrauchte; sonst im Krieg Eisen, im Frieden Holz */
+  private materialToKeep(sit: Situation): Resource {
+    const iron = sit.wanted.iron ?? 0, lumber = sit.wanted.lumber ?? 0;
+    if (iron !== lumber) return iron > lumber ? 'iron' : 'lumber';
+    return sit.enemies.length ? 'iron' : 'lumber';
   }
 
   // ------------------------------------------------ Börse
@@ -818,7 +909,15 @@ export class BasicAI implements Controller {
       const t = (hostile.get(i) ?? 0) + (incoming.get(i) ?? 0);
       if (t > 0) threatened.set(i, t);
     }
-    if (!sit.enemies.length && !threatened.size) return;
+    if (!sit.enemies.length && !threatened.size) {
+      // Frieden: Armeen, die nach dem letzten Krieg auf einem Weg, auf See oder in einer fremden Stadt (Verbündeter,
+      // Durchmarschgebiet, inzwischen übergelaufene Provinz) stehen geblieben sind, heimholen
+      for (const a of mine) {
+        const away = a.pos || isSea(map, a.node) || state.provinces[a.node].owner !== nation;
+        if (away && !isRailOnly(a) && a.chase == null && !busy.has(a.id)) this.rehome(sit, a, actions, busy);
+      }
+      return;
+    }
 
     const capital = activeCapital(state, map, nation);
     const superiority = diff.attack * profile.caution / Math.sqrt(profile.aggression);
@@ -833,12 +932,23 @@ export class BasicAI implements Controller {
       return d / Math.max(0.25, 1 - FORTRESS_REDUCTION[ps.buildings.fortress]);
     };
     const hungry = sit.foodShort;
+    // Planungsgruppen: stehende Armeen am Knoten gemeinsam; Armeen, die auf einem Weg stehen geblieben sind (nach
+    // einem Gefecht, einer Verfolgung), ohne Befehl auf See treiben oder in einer fremden, nicht feindlichen Stadt
+    // stehen (Verbündeter, Durchmarschgebiet, übergelaufene Provinz), einzeln ("lose") – sie brauchen einen neuen
+    // Befehl, sonst blieben sie für immer stehen
+    const groups: { node: number; list: Army[]; loose: boolean }[] = [];
     for (const [node, group] of byNode) {
-      if (isSea(map, node)) continue; // Truppen auf See führen ihren Befehl aus
-      const land = group.filter((x) => !x.target && !isRailOnly(x) && !isBattery(x) && !x.pos);
+      const owner = isSea(map, node) ? null : state.provinces[node].owner;
+      const away = owner === null || (owner !== nation && !atWar(state, nation, owner));
+      const here = group.filter((x) => !x.pos && !away);
+      if (here.length) groups.push({ node, list: here, loose: false });
+      for (const x of group) if (x.pos || away) groups.push({ node, list: [x], loose: true });
+    }
+    for (const { node, list: group, loose } of groups) {
+      const land = group.filter((x) => !x.target && x.chase == null && !isRailOnly(x) && !isBattery(x) && !busy.has(x.id));
       if (!land.length) continue;
       const a = land.reduce((x, y) => (armyPower(y) > armyPower(x) ? y : x));
-      if ((hostile.get(node) ?? 0) > 0) continue; // Kampf am Ort: bleiben
+      if (land.some((x) => inMelee(state, map, x))) continue; // Nahkampf am Ort: bleiben
       const units: Partial<Record<UnitType, number>> = {};
       for (const g of land) for (const u of Object.keys(g.units) as UnitType[]) units[u] = (units[u] ?? 0) + g.units[u]!;
       // Artillerie gehört nicht in den Nahkampf: als eigene Batterie abteilen (zieht der Armee hinterher)
@@ -848,17 +958,27 @@ export class BasicAI implements Controller {
         actions.push({ type: 'split', army: a.id, units: { artillery: Math.min(guns, a.units.artillery ?? 0) }, apart: true });
         delete units.artillery;
       }
+      // unter Beschuss: die Geschütze angreifen, wenn ihre Deckung schwach genug ist, sonst aus der Reichweite gehen
+      if (this.underFire(sit, a, land, superiority, actions, busy)) continue;
       const total = Object.entries(units).filter(([u]) => u !== 'artillery').reduce((t, [, n]) => t + (n ?? 0), 0);
-      const border = map.provinces[node].neighbors.some((n) => state.provinces[n].owner !== nation);
-      const near = map.provinces[node].neighbors.reduce((t, n) => t + (hostile.get(n) ?? 0), 0) + (incoming.get(node) ?? 0);
+      const sea = isSea(map, node);
+      const border = !sea && map.provinces[node].neighbors.some((n) => state.provinces[n].owner !== nation);
+      const near = (sea ? 0 : map.provinces[node].neighbors.reduce((t, n) => t + (hostile.get(n) ?? 0), 0))
+        + (incoming.get(node) ?? 0) + (hostile.get(node) ?? 0);
       // Besatzung: Großmächte knapp (der Rest greift an), Kleinstaaten ebenfalls knapp, damit Verstärkung frei wird
       const base = major
         ? node === capital ? 6 : front.has(node) ? 4 : border ? 3 : 1
         : node === capital ? 6 : front.has(node) ? 4 : border ? 2 : 1;
       // Kleinstaaten halten nur die Grundbesatzung und ziehen den Rest zusammen (sonst bliebe bei einem Feind
       // nebenan jede Provinz für sich und keine bekäme Verstärkung)
-      const keepCount = Math.ceil((major ? Math.max(base, (near * 1.2) / 1.25) : base) * profile.caution);
-      if (total - keepCount < 2) continue;
+      // Hinterland (keine fremde Nachbarprovinz, keine Front, kein Feind in der Nähe, nicht die Hauptstadt): genau
+      // eine Einheit Besatzung, alles Weitere wird für Angriff und Verteidigung frei – auch einzelne Einheiten
+      const hinterland = !loose && !border && !front.has(node) && node !== capital && near <= 0;
+      // lose Armeen (auf einem Weg, auf See, in fremder Stadt) stehen nicht in einer eigenen Stadt: alles zieht weiter
+      const keepCount = loose ? 0
+        : hinterland ? 1
+        : Math.ceil((major ? Math.max(base, (near * 1.2) / 1.25) : base) * profile.caution);
+      if (!loose && total - keepCount < (hinterland ? 1 : 2)) continue;
       const keep: Partial<Record<UnitType, number>> = {};
       let left = keepCount;
       for (const u of ['infantry', 'armoredCar', 'tank'] as UnitType[]) {
@@ -888,7 +1008,7 @@ export class BasicAI implements Controller {
         if (!best || score > best.score) best = { node: n, score };
       }
       // 2. Angriff: feindliche Provinzen (Kleinstaaten holen nur eigenes Land zurück)
-      let wish: { node: number; score: number; need: number } | null = null;
+      let wish: { node: number; score: number; need: number; sea: boolean } | null = null;
       for (let n = 0; n < map.provinces.length; n++) {
         const ps = state.provinces[n];
         if (!atWar(state, nation, ps.owner)) continue;
@@ -908,13 +1028,20 @@ export class BasicAI implements Controller {
         const score = value / (4 + hours + (sea ? 12 : 0));
         if (power >= need) {
           if (!best || score > best.score) best = { node: n, score };
-        } else if (major && !sea && (!wish || score > wish.score)) wish = { node: n, score, need };
+        } else if (major && (!wish || score > wish.score)) wish = { node: n, score, need, sea };
       }
       // 3. Sammeln: lohnendes Ziel, für das es allein nicht reicht – an der angrenzenden eigenen Provinz mit den
       // meisten eigenen Kräften zusammenziehen (statt einzeln anzurennen oder untätig zu bleiben)
       if (!best && wish) {
         let stage: { node: number; score: number } | null = null;
-        for (const k of map.provinces[wish.node].neighbors) {
+        // über Land: an einer angrenzenden eigenen Provinz; über See (Inseln, Nationen ohne Landgrenze zum Ziel):
+        // im eigenen Küstenhafen, der dem Ziel am nächsten liegt – dort sammelt sich der Landungsverband
+        const target = wish.node;
+        const stages = wish.sea
+          ? sit.own.filter((k) => map.provinces[k].coastal && !(hostile.get(k) ?? 0))
+            .sort((x, y) => distanceKm(map, x, target) - distanceKm(map, y, target)).slice(0, 1)
+          : map.provinces[target].neighbors;
+        for (const k of stages) {
           if (state.provinces[k].owner !== nation || (hostile.get(k) ?? 0) > 0) continue;
           const hours = k === node ? 0 : tree.hours[k];
           if (!isFinite(hours) || hours > REACH_HOURS) continue;
@@ -922,7 +1049,8 @@ export class BasicAI implements Controller {
           if (!stage || score > stage.score) stage = { node: k, score };
         }
         if (stage && stage.node !== node) best = { node: stage.node, score: 0 };
-        else if (stage) continue; // hier sammeln: warten, bis genug beisammen ist
+        else if (stage && !loose) continue; // hier sammeln: warten, bis genug beisammen ist
+        else if (stage) best = { node, score: 0 }; // vom Weg in die Stadt, dort sammeln
       }
       // 4. Reserve: an die bedrohteste Front, an der die eigenen Kräfte nicht reichen
       if (!best && !front.has(node)) {
@@ -935,19 +1063,139 @@ export class BasicAI implements Controller {
           if (!best || score > best.score) best = { node: f, score };
         }
       }
+      // 5. Hinterland ohne Aufgabe: Überschuss an die Front verlegen (bevorzugt die bedrohteste, nahe) – dort greift er
+      // mit an oder verteidigt, statt im Hinterland zu warten
+      if (!best && hinterland) {
+        for (const [f, threat] of front) {
+          const hours = tree.hours[f];
+          if (!isFinite(hours) || hours > REACH_HOURS || viaSea(f)) continue;
+          const score = threat / (6 + hours);
+          if (!best || score > best.score) best = { node: f, score };
+        }
+      }
+      // lose Armeen ohne Aufgabe: in die Stadt, vor der sie stehen (eigene oder feindliche), sonst in die
+      // nächstgelegene eigene Provinz – nie auf dem Weg oder auf See liegen bleiben
+      if (!best && loose) {
+        const ps = sea ? null : state.provinces[node];
+        if (ps && (ps.owner === nation || atWar(state, nation, ps.owner))) best = { node, score: 0 };
+        else {
+          for (const k of sit.own) {
+            const hours = tree.hours[k];
+            if (isFinite(hours) && (!best || -hours > best.score)) best = { node: k, score: -hours };
+          }
+          // keine eigene Provinz in Reichweite (weit weg bei einem Verbündeten): ohne Grenze heimholen
+          if (!best) {
+            this.rehome(sit, a, actions, busy);
+            continue;
+          }
+        }
+      }
       if (!best) continue;
       const path = pathTo(tree, best.node);
-      if (!path || path.length < 2) continue;
+      const direct = loose && best.node === node;
+      if (!direct && (!path || path.length < 2)) continue;
       friendly.set(best.node, (friendly.get(best.node) ?? 0) + power);
       if (Object.keys(keep).length) actions.push({ type: 'split', army: a.id, units: keep });
       actions.push({ type: 'move', army: a.id, to: best.node });
       busy.add(a.id);
       // Batterien am Ort folgen einem Angriff bis kurz vor das Ziel (in Schussweite, nicht in den Nahkampf)
-      if (atWar(state, nation, state.provinces[best.node].owner)) {
+      if (!direct && path && atWar(state, nation, state.provinces[best.node].owner)) {
         const prev = path[path.length - 2];
         for (const b of group) if (isBattery(b) && !b.target) this.sendBattery(sit, b, prev, best.node, actions, busy);
       }
     }
+  }
+
+  /**
+   * Reaktion auf Beschuss: Feindliche Fernkampfeinheiten (sichtbar oder gerade auf uns feuernd), in deren Reichweite
+   * die Armee steht, werden angegriffen, wenn die eigene Kraft für sie samt Deckung reicht (Artillerie ist im
+   * Nahkampf schwach). Sonst zieht die Armee aus der Reichweite in die nächste sichere eigene Provinz, statt sich
+   * zusammenschießen zu lassen. Schiffe auf See lassen sich von Land aus nicht angreifen – dann nur Rückzug.
+   * true: Befehl erteilt.
+   */
+  private underFire(sit: Situation, a: Army, land: Army[], superiority: number, actions: Action[], busy: Set<number>): boolean {
+    const { state, map, nation } = sit;
+    const at = armyPosition(map, a, state.time);
+    const shooters: { b: Army; d: number }[] = [];
+    for (const g of this.guns(sit)) {
+      const b = g.army;
+      // wer auf uns feuert, verrät seine Stellung
+      if (!g.visible && !land.some((x) => x.id === b.target)) continue;
+      const d = Math.hypot(g.pos[0] - at[0], g.pos[1] - at[1]);
+      if (d <= g.range) shooters.push({ b, d });
+    }
+    if (!shooters.length) return false;
+    shooters.sort((x, y) => x.d - y.d);
+    const power = land.reduce((t, x) => t + armyPower(x), 0);
+    for (const { b } of shooters) {
+      if (isSea(map, b.node) && !b.pos) continue; // Schiffe auf See (oder eingeschiffte Truppen): von Land unerreichbar
+      if (isRailOnly(b)) continue; // Eisenbahngeschütz auf der Bahn hinter der Front: nicht gezielt jagen
+      // Deckung: alle Feinde im Umkreis der Geschütze; steht die Batterie in ihrer Stadt, zählt die Festung mit
+      const bp = armyPosition(map, b, state.time);
+      let guard = 0;
+      for (const e of state.armies) {
+        if (e.owner === nation || unitCount(e) === 0 || !atWar(state, nation, e.owner)) continue;
+        const ep = armyPosition(map, e, state.time);
+        if (Math.hypot(ep[0] - bp[0], ep[1] - bp[1]) <= MILITARY.meleeKm * 3) guard += armyPower(e);
+      }
+      if (!b.pos && !isSea(map, b.node)) guard /= Math.max(0.25, 1 - FORTRESS_REDUCTION[state.provinces[b.node].buildings.fortress]);
+      if (power >= guard * superiority) {
+        actions.push({ type: 'attack', army: a.id, target: b.id });
+        for (const x of land) busy.add(x.id);
+        return true;
+      }
+    }
+    // zu stark gedeckt: außer Reichweite aller Geschütze in die nächste eigene Provinz ohne Feind
+    const tree = pathsFrom(state, map, a, a.node, undefined, REACH_HOURS);
+    let best: { node: number; hours: number } | null = null;
+    for (const k of sit.own) {
+      const hours = tree.hours[k];
+      if (!isFinite(hours) || (sit.hostile.get(k) ?? 0) > 0 || (sit.incoming.get(k) ?? 0) > 0) continue;
+      const c = map.provinces[k].center;
+      const safe = shooters.every(({ b }) => {
+        const p = armyPosition(map, b, state.time);
+        return Math.hypot(p[0] - c[0], p[1] - c[1]) > maxRange(b, map) + 5;
+      });
+      if (safe && (!best || hours < best.hours)) best = { node: k, hours };
+    }
+    if (!best) return false;
+    for (const x of land) {
+      actions.push({ type: 'move', army: x.id, to: best.node });
+      busy.add(x.id);
+    }
+    return true;
+  }
+
+  /**
+   * Lose Armee (auf einem Weg stehen geblieben oder ohne Befehl auf See) in eine Stadt bringen: in die eigene, vor
+   * der sie steht, sonst in die nächstgelegene eigene Provinz.
+   */
+  private rehome(sit: Situation, a: Army, actions: Action[], busy: Set<number>): void {
+    const { state, map, nation } = sit;
+    let to = -1;
+    if (!isSea(map, a.node) && state.provinces[a.node].owner === nation) to = a.node;
+    else {
+      const tree = pathsFrom(state, map, a, a.node);
+      let bh = Infinity;
+      for (const k of sit.own) if (tree.hours[k] < bh) { bh = tree.hours[k]; to = k; }
+    }
+    if (to < 0) return;
+    actions.push({ type: 'move', army: a.id, to });
+    busy.add(a.id);
+  }
+
+  /** feindliche Fernkampftruppen dieser Runde (einmal je Lagebild ermittelt): Stellung, Reichweite, sichtbar? */
+  private guns(sit: Situation): { army: Army; pos: [number, number]; range: number; visible: boolean }[] {
+    if (sit.guns) return sit.guns;
+    const { state, map, nation } = sit;
+    sit.guns = [];
+    for (const b of state.armies) {
+      if (b.owner === nation || unitCount(b) === 0 || !atWar(state, nation, b.owner)) continue;
+      const range = maxRange(b, map);
+      if (range <= 0) continue;
+      sit.guns.push({ army: b, pos: armyPosition(map, b, state.time), range, visible: armyVisible(state, map, nation, b, sit.vis) });
+    }
+    return sit.guns;
   }
 
   /** Batterie an den Punkt vor dem Ziel schicken, von dem aus sie es gerade noch beschießt */
@@ -1001,7 +1249,7 @@ export class BasicAI implements Controller {
       if (f && f.node !== b.node && (b.pos || !front.has(b.node))) {
         actions.push({ type: 'move', army: b.id, to: f.node });
         busy.add(b.id);
-      }
+      } else if (b.pos) this.rehome(sit, b, actions, busy); // ohne Aufgabe nicht auf dem Weg stehen bleiben
     }
   }
 

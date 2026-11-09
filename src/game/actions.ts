@@ -5,7 +5,7 @@ import {
 CAPITAL_MOVE, DAY, buildingLives,   ALL_RES, BUILD_QUEUE_LIMIT, BUILD_REFUND, BUILDINGS, BUILDING_ORDER, CATEGORY_RES, FACTORY_SPEEDUP, HOUR, OFFICE_SPEEDUP, QUEUE_LIMIT, REPAIR_HOURS, RES_NAMES, UNITS, WORKSHOP_SPEEDUP,
   type Building, type Category, type Cost, type Res, type UnitType,
 } from './balance.ts';
-import { validShares, activeCapital, activeLevel } from './economy.ts';
+import { validShares, activeCapital, activeLevel, capitalOf } from './economy.ts';
 import { atWar, hasRightOfWay, relation, relationRank, RELATION_NAMES, setRelation, noteWarDeclaration } from './diplomacy.ts';
 import { harborSea, isSea, nodeNeighbors } from './graph.ts';
 import type { MapData, Resource } from './mapdata.ts';
@@ -208,6 +208,14 @@ export function checkRepair(state: GameState, nation: string, province: number, 
   return { ok: true, cost };
 }
 
+/**
+ * Kosten einer Hauptstadtverlegung: kostenlos, wenn die Nation ihre Hauptstadt verloren hat (Notverlegung),
+ * sonst CAPITAL_MOVE.cost
+ */
+export function capitalMoveCost(state: GameState, map: MapData, nation: string): Cost {
+  return capitalOf(state, map, nation) === null ? {} : CAPITAL_MOVE.cost;
+}
+
 /** Kann die Hauptstadt in diese Provinz verlegt werden? */
 export function checkCapitalMove(state: GameState, map: MapData, nation: string, province: number): { ok: boolean; error?: string } {
   const ps = state.provinces[province];
@@ -216,7 +224,8 @@ export function checkCapitalMove(state: GameState, map: MapData, nation: string,
   if (activeCapital(state, map, nation) === province) return { ok: false, error: 'Hier ist schon die Hauptstadt' };
   if (n.capitalMove) return { ok: false, error: 'Es wird schon eine Hauptstadt verlegt' };
   if (ps.revolt) return { ok: false, error: 'Aufständische halten die Provinz' };
-  if (!canAfford(n.stock, CAPITAL_MOVE.cost)) return { ok: false, error: `Zu wenig ${missing(n.stock, CAPITAL_MOVE.cost)}` };
+  const cost = capitalMoveCost(state, map, nation);
+  if (!canAfford(n.stock, cost)) return { ok: false, error: `Zu wenig ${missing(n.stock, cost)}` };
   return { ok: true };
 }
 
@@ -328,7 +337,8 @@ export function applyAction(ctx: ActionContext, nation: string, action: Action):
   if (action.type === 'cancelCapitalMove') {
     const n = ctx.state.nations[nation];
     if (!n?.capitalMove) return { ok: false, error: 'Keine Verlegung der Hauptstadt im Gange' };
-    refund(n.stock, CAPITAL_MOVE.cost);
+    // erstattet wird, was gezahlt wurde (Notverlegung kostenlos; ältere Spielstände ohne Angabe: volle Kosten)
+    refund(n.stock, n.capitalMove.cost ?? CAPITAL_MOVE.cost);
     n.capitalMove = null;
     return { ok: true };
   }
@@ -399,8 +409,9 @@ export function applyAction(ctx: ActionContext, nation: string, action: Action):
     case 'moveCapital': {
       const chk = checkCapitalMove(state, map, nation, action.province);
       if (!chk.ok) return { ok: false, error: chk.error! };
-      pay(stock, CAPITAL_MOVE.cost);
-      state.nations[nation].capitalMove = { province: action.province, start: state.time, end: state.time + Math.round(CAPITAL_MOVE.hours * HOUR) };
+      const cost = capitalMoveCost(state, map, nation);
+      pay(stock, cost);
+      state.nations[nation].capitalMove = { province: action.province, start: state.time, end: state.time + Math.round(CAPITAL_MOVE.hours * HOUR), cost };
       return { ok: true };
     }
     case 'repair': {
@@ -633,9 +644,12 @@ function applyDiplomacy(ctx: ActionContext, nation: string, action: DiplomacyAct
       if (action.to === 'war') return { ok: false, error: 'Krieg bitte ausdrücklich erklären' };
       if (relationRank(action.to) >= relationRank(current)) return { ok: false, error: 'Nur eine schlechtere Beziehung lässt sich einseitig setzen' };
       setRelation(state, nation, action.nation, action.to);
-      ctx.log(action.to === 'embargo'
+      // nicht öffentlich (die Zeitung meldet nur Krieg und Frieden): nur die beiden Beteiligten erfahren davon
+      const msg = action.to === 'embargo'
         ? `${name(nation)} verhängt ein Handelsembargo gegen ${name(action.nation)}.`
-        : `${name(nation)} stuft die Beziehung zu ${name(action.nation)} auf ${RELATION_NAMES[action.to]} herab.`);
+        : `${name(nation)} stuft die Beziehung zu ${name(action.nation)} auf ${RELATION_NAMES[action.to]} herab.`;
+      ctx.log(msg, nation);
+      ctx.log(msg, action.nation);
       ctx.invalidate();
       return { ok: true };
     }
@@ -678,7 +692,9 @@ function applyDiplomacy(ctx: ActionContext, nation: string, action: DiplomacyAct
         for (const r of Object.keys(p.tribute) as Res[]) stock[r] += p.tribute[r]!;
       }
       setRelation(state, nation, action.nation, p.kind);
-      if (p.tribute) ctx.log(`${name(action.nation)} zahlt ${name(nation)} Tribut: ${tributeText(p.tribute)}.`);
+      // Tribut und Abkommen außer Frieden bleiben unter den Beteiligten (öffentlich nur Krieg und Frieden)
+      const both = (msg: string) => { ctx.log(msg, nation); ctx.log(msg, action.nation); };
+      if (p.tribute) both(`${name(action.nation)} zahlt ${name(nation)} Tribut: ${tributeText(p.tribute)}.`);
       if (current === 'war') {
         // Märsche in das Gebiet des bisherigen Feindes enden (dort, wo die Armee gerade ist; Märsche durch
         // andere Länder, z. B. mit Durchmarschrecht, laufen weiter)
@@ -691,7 +707,7 @@ function applyDiplomacy(ctx: ActionContext, nation: string, action: DiplomacyAct
         }
         ctx.log(`Frieden zwischen ${name(nation)} und ${name(action.nation)}.`);
       } else {
-        ctx.log(`${name(nation)} und ${name(action.nation)} vereinbaren: ${RELATION_NAMES[p.kind]}.`);
+        both(`${name(nation)} und ${name(action.nation)} vereinbaren: ${RELATION_NAMES[p.kind]}.`);
       }
       ctx.invalidate();
       return { ok: true };

@@ -1598,10 +1598,13 @@ function splashTargets(state: GameState, map: MapData, owner: string, pos: [numb
  * Steht die Armee in einer Stadt ihrer Seite (eigene oder nicht verfeindete) und hat ihre Seite (sie und alle,
  * mit denen sie nicht im Krieg ist) dort sonst keine Einheiten? Dann lässt Beschuss ihre letzte Einheit
  * stehen – Städte fallen nur im Nahkampf.
+ * Es zählen nur stehende Armeen: wer marschiert, ist keine Besatzung – weder die beschossene Armee selbst noch
+ * eine, die gerade durch die Stadt zieht (ihr Ankerknoten ist dann die Stadt, sie zieht aber weiter und ließe
+ * die Stadt sonst leer zurück).
  */
 function lastInCity(state: GameState, map: MapData, b: Army): boolean {
-  if (b.pos || isSea(map, b.node) || atWar(state, b.owner, state.provinces[b.node].owner)) return false;
-  return !state.armies.some((x) => x !== b && x.node === b.node && !x.pos && unitCount(x) > 0 && !atWar(state, b.owner, x.owner));
+  if (b.move || b.pos || isSea(map, b.node) || atWar(state, b.owner, state.provinces[b.node].owner)) return false;
+  return !state.armies.some((x) => x !== b && !x.move && x.node === b.node && !x.pos && unitCount(x) > 0 && !atWar(state, b.owner, x.owner));
 }
 
 /** Vernichtete Armeen an allen getroffenen Orten entfernen (Meldung, Eroberung) */
@@ -1646,6 +1649,7 @@ export function combatRound(ctx: MilitaryContext, tally?: CombatTally): void {
     const before = new Map([...damage.keys()].map((b) => [b, unitCount(b)]));
     const names = new Map([...dealt.keys(), ...damage.keys()].map((x) => [x, armyName(x)]));
     for (const [b, dmg] of damage) applyDamage(b, dmg * fortressShield(state, map, b), ctx.random, 0, map);
+    for (const [b, n] of before) noteLosses(state, map, b, n - unitCount(b));
     // vernichtete Gegner stärken die Moral (angewendet mit dem Fernkampf derselben Stunde)
     for (const [a, mine] of dealt) {
       let kills = 0;
@@ -1781,6 +1785,7 @@ export function rangedRound(ctx: MilitaryContext, tally?: CombatTally): void {
       const prov = b.pos ? roadProvince(map, b.pos) : isSea(map, b.node) ? -1 : b.node;
       if (prov >= 0) markFight(state, prov);
     }
+    for (const b of victims) noteLosses(state, map, b, before.get(b)! - unitCount(b));
     const kills = victims.reduce((k, b) => k + before.get(b)! - unitCount(b), 0);
     if (kills > 0) a.kills = (a.kills ?? 0) + kills;
     tallyOf(t, a).kills += kills;
@@ -1838,6 +1843,18 @@ export function currentProvince(map: MapData, a: Army, time: number): number {
   const loc = armyLocation(a, time);
   if ('road' in loc) return roadProvince(map, loc.road);
   return isSea(map, loc.node) ? -1 : loc.node;
+}
+
+/**
+ * Verluste für die Zeitung vermerken: verlorene Einheiten je Schlachtort (Provinz bzw. Seegebiet, in dem die
+ * getroffene Armee steht) und Nation, bis zur nächsten Ausgabe.
+ */
+function noteLosses(state: GameState, map: MapData, b: Army, lost: number): void {
+  if (lost <= 0) return;
+  const prov = b.pos ? roadProvince(map, b.pos) : b.node;
+  const place = prov >= 0 ? nodeName(map, prov) : nodeName(map, b.node);
+  const at = ((state.battleLosses ??= {})[place] ??= {});
+  at[b.owner] = (at[b.owner] ?? 0) + lost;
 }
 
 /** Provinz, in deren Gebiet ein Wegpunkt liegt (vor oder hinter der Grenze); -1 auf dem Wasser */
@@ -2317,6 +2334,8 @@ export function armyHp(a: Army, map?: MapData): number {
  * Besatzungsregel: Steht eine Armee in einer eigenen Stadt (im Umkreis von 1 km um den Provinzknoten) und
  * ist sie die letzte dort, bleibt beim Abmarsch eine Einheit zurück – bevorzugt Infanterie, sonst die
  * schwächste. Besteht sie nur aus einer Einheit, darf sie nicht abziehen ('last').
+ * Bleiben andere Armeen in der Stadt, aber ohne Infanterie (etwa nur Artillerie nach dem Aufteilen), nimmt
+ * die letzte Infanterie die Besatzung mit: dann bleibt ein Infanterist zurück.
  */
 export function garrisonKeep(state: GameState, map: MapData, a: Army): { unit: UnitType; node: number } | 'last' | null {
   if (isNaval(a)) return null;
@@ -2330,9 +2349,11 @@ export function garrisonKeep(state: GameState, map: MapData, a: Army): { unit: U
   const cands = a.move ? [a.move.path[a.move.seg], a.move.path[a.move.seg + 1]] : a.pos ? [a.pos.a, a.pos.b] : [a.node];
   const city = cands.find((n) => !isSea(map, n) && state.provinces[n].owner === a.owner && near(at, n));
   if (city === undefined) return null;
-  const others = state.armies.some((b) => b !== a && b.owner === a.owner && !b.move && !isNaval(b) && unitCount(b) > 0
+  const others = state.armies.filter((b) => b !== a && b.owner === a.owner && !b.move && !isNaval(b) && unitCount(b) > 0
     && near(armyPosition(map, b, state.time), city));
-  if (others) return null;
+  if (others.some((b) => (b.units.infantry ?? 0) > 0)) return null;
+  // andere bleiben, aber ohne Infanterie: nur die Infanterie dieser Armee muss einen Mann dalassen
+  if (others.length && !(a.units.infantry ?? 0)) return null;
   // eine einzelne Einheit bleibt stehen; nur auf dem Durchmarsch darf sie weiter
   if (unitCount(a) <= 1) return a.move ? null : 'last';
   if ((a.units.infantry ?? 0) > 0) return { unit: 'infantry', node: city };

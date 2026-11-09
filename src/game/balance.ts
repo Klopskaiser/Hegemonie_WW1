@@ -274,7 +274,7 @@ export const UNITS: Record<UnitType, UnitDef> = {
     requires: { factory: 1 }, speed: 25, attack: 1.5, defense: 1.5, hp: 15, range: 60, upkeep: { grain: 10, oil: 10 },
   },
   armoredCar: {
-    name: 'Panzerwagen', short: 'PzW', cost: { money: 7000, iron: 2000, oil: 1500 }, hours: 16,
+    name: 'Panzerwagen', short: 'PzW', cost: { money: 7000, iron: 1000, oil: 1000 }, hours: 32,
     requires: { factory: 1 }, speed: 72, attack: 2, defense: 2, hp: 25, range: 0, upkeep: { grain: 5, oil: 10 },
   },
   tank: {

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { checkBuild, checkCapitalMove, checkProduce, harborCandidates, missing, plannedBuildings, requirementsMet, type Action, type ActionResult, checkRepair } from '../game/actions.ts';
+import { capitalMoveCost, checkBuild, checkCapitalMove, checkProduce, harborCandidates, missing, plannedBuildings, requirementsMet, type Action, type ActionResult, checkRepair } from '../game/actions.ts';
 import {
   BUILDING_ORDER, BUILDINGS, CAPITAL_MOVE, DEFECTION, HOUR, REPAIR_HOURS, RES_NAMES, UNIT_ORDER, UNITS, type UnitType, buildingLives, siteAllows } from '../game/balance.ts';
 import { activeCapital, corruptionOf, moraleTarget, provinceOutput, provincePoints, recruitHours } from '../game/economy.ts';
@@ -104,7 +104,9 @@ export function ProvincePanel({ map, state, id, armies: visibleArmies, act, onSe
             </div>
           ) : (
             <div className="progress-row">
-              <CostList cost={CAPITAL_MOVE.cost} stock={stock} />
+              {Object.keys(capitalMoveCost(state, map, state.playerNation)).length
+                ? <CostList cost={capitalMoveCost(state, map, state.playerNation)} stock={stock} />
+                : <span className="small" title="Die Hauptstadt ist verloren: die Verlegung kostet nichts">kostenlos</span>}
               <span className="small muted">{fmtDuration((CAPITAL_MOVE.hours * 3600_000) / state.speed)}</span>
               <button className="btn small" disabled={!capChk.ok} title={capChk.error ?? 'Die bisherige Hauptstadt verliert ihren Status, sobald die Verlegung fertig ist'}
                 onClick={() => run({ type: 'moveCapital', province: id })}>Hauptstadt hierher</button>

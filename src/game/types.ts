@@ -230,7 +230,8 @@ export interface NationState {
   /** verlegte Hauptstadt (Provinz); fehlt das Feld, gilt die Hauptstadt der Karte */
   capital?: number;
   /** laufende Verlegung der Hauptstadt */
-  capitalMove?: { province: number; start: number; end: number } | null;
+  /** laufende Hauptstadtverlegung; cost = gezahlte Kosten (für die Erstattung beim Abbruch) */
+  capitalMove?: { province: number; start: number; end: number; cost?: Partial<Record<Res, number>> } | null;
   /** Kriegserklärungen: Ende des Moralabzugs je Erklärung (Spielzeit) */
   warPenalty?: number[];
 }
@@ -295,6 +296,8 @@ export interface GameState {
   winner: string | null;
   /** öffentliche Meldungen seit der letzten Zeitungsausgabe */
   newsFeed: NewsEvent[];
+  /** Verluste (verlorene Einheiten) je Schlachtort und Nation seit der letzten Zeitungsausgabe */
+  battleLosses?: Record<string, Record<string, number>>;
   /** ohne Nebel des Krieges für den Spieler (Testszenario) */
   revealed?: boolean;
   /** Stärke der eingebauten KI */

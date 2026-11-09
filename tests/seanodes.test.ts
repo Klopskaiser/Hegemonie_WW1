@@ -102,5 +102,5 @@ describe('Fahrten über Seeknoten', () => {
     setRelation(sim.state, 'GB', 'DE', 'war');
     for (let h = 0; h < 10 * 24; h++) sim.advance(HOUR);
     expect(sim.state.armies.length).toBeGreaterThan(0);
-  });
+  }, 40000); // ganze KI-Partie über zehn Tage: im parallelen Gesamtlauf knapp am Standardlimit (20 s)
 });

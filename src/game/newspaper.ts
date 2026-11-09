@@ -4,7 +4,7 @@
 import { DAY } from './balance.ts';
 import type { MapData } from './mapdata.ts';
 import { nextRandom } from './rng.ts';
-import type { GameState, Newspaper, NewsItem, NewsKind } from './types.ts';
+import { REBELS, type GameState, type Newspaper, type NewsItem, type NewsKind } from './types.ts';
 import { provinceCounts } from './economy.ts';
 
 const KEEP = 14;
@@ -15,10 +15,12 @@ export function publishNewspaper(state: GameState, map: MapData): Newspaper {
   const feed = state.newsFeed ?? [];
   state.newsFeed = [];
 
-  // einfache Meldungen (Krieg, Frieden, Hauptstädte, Revolutionen …)
+  // einfache Meldungen (Krieg, Frieden, Hauptstädte, Revolutionen …); Abkommen außer dem Frieden (Durchmarsch,
+  // Bündnis, Embargo, Herabstufung, Tribut) sind nicht öffentlich
   for (const e of feed) {
     if (e.kind || /Spiel beginnt/.test(e.text)) continue;
     const [title, kind] = headline(e.text);
+    if (kind === 'embargo' || kind === 'agreement' || kind === 'downgrade' || /Tribut/.test(e.text)) continue;
     items.push({ title, text: e.text, kind });
   }
 
@@ -39,14 +41,29 @@ export function publishNewspaper(state: GameState, map: MapData): Newspaper {
     });
   }
 
-  // Schlachten: vernichtete Armeen (Namen verraten die ungefähre Größe)
+  // Schlachten: Verluste je Schlachtort (jede verlorene Einheit, Infanterie wie Maschine, zählt 1000 Mann),
+  // dazu vernichtete Armeen (Namen verraten die ungefähre Größe)
+  const losses = Object.entries(state.battleLosses ?? {})
+    .map(([place, by]) => ({ place, by: Object.entries(by).filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1]) }))
+    .filter((x) => x.by.length)
+    .map((x) => ({ ...x, total: x.by.reduce((t, [, n]) => t + n, 0) }))
+    .sort((a, b) => b.total - a.total || a.place.localeCompare(b.place));
+  state.battleLosses = {};
   const battles = feed.filter((e) => e.kind === 'battle');
-  if (battles.length) {
-    const lines = battles.slice(0, 8).map((e) => e.text);
+  if (losses.length || battles.length) {
+    const lines = losses.slice(0, 6).map((x) =>
+      `Bei ${x.place}: ${x.by.map(([n, k]) => `${n === REBELS ? 'Aufständische' : name(n)} ${men(k)} Mann`).join(', ')} Verluste.`);
+    if (losses.length > 6) {
+      const rest = losses.slice(6).reduce((t, x) => t + x.total, 0);
+      lines.push(`Weitere ${men(rest)} Mann fielen an ${losses.length - 6} anderen Orten.`);
+    }
+    lines.push(...battles.slice(0, 8).map((e) => e.text));
     if (battles.length > 8) lines.push(`Dazu ${battles.length - 8} weitere vernichtete Verbände.`);
+    const places = new Set([...losses.map((x) => x.place), ...battles.map((e) => e.place)]);
+    const only = places.size === 1 ? [...places][0] : null;
     items.push({
       kind: 'battle',
-      title: battles.length === 1 ? `Schlacht bei ${battles[0].place}` : 'Von den Schlachtfeldern',
+      title: only ? `Schlacht bei ${only}` : 'Von den Schlachtfeldern',
       text: lines.join(' '),
     });
   }
@@ -79,6 +96,11 @@ export function publishNewspaper(state: GameState, map: MapData): Newspaper {
   state.newspapers.push(paper);
   if (state.newspapers.length > KEEP) state.newspapers.splice(0, state.newspapers.length - KEEP);
   return paper;
+}
+
+/** verlorene Einheiten als Gefallene: je Einheit 1000 Mann, mit Tausenderpunkt (unabhängig von der Spracheinstellung) */
+function men(units: number): string {
+  return String(Math.round(units) * 1000).replace(/\B(?=(\d{3})+(?!\d))/g, '.');
 }
 
 /** Kurze Schlagzeile und Meldungsart aus einer Ereignismeldung */

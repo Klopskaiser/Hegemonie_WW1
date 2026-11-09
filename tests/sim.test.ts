@@ -97,13 +97,13 @@ describe('Simulation', () => {
   it('Fertigungsschleife wiederholt Aufträge', () => {
     const sim = newSim();
     for (const k of Object.keys(sim.state.nations.DE.stock) as (keyof typeof sim.state.nations.DE.stock)[]) sim.state.nations.DE.stock[k] = 1e6;
-    sim.state.provinces[capitalDE].buildings.factory = 4; // Panzerwagen: 4 h je Stück
+    sim.state.provinces[capitalDE].buildings.factory = 4; // Panzerwagen: 8 h je Stück
     const r = sim.apply('DE', { type: 'enqueue', province: capitalDE, unit: 'armoredCar' });
     expect(r.ok).toBe(true);
     sim.apply('DE', { type: 'setRepeat', province: capitalDE, repeat: true });
     const count = () => sim.state.armies.filter((a) => a.owner === 'DE' && a.node === capitalDE)
       .reduce((s, a) => s + (a.units.armoredCar ?? 0), 0);
-    sim.advance(4 * HOUR * 3 + 20 * MINUTE);
+    sim.advance(8 * HOUR * 3 + 20 * MINUTE);
     expect(count()).toBeGreaterThanOrEqual(3);
     expect(sim.state.provinces[capitalDE].queue.length).toBe(1);
   });
