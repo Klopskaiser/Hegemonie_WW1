@@ -28,6 +28,9 @@ npm run headless -- stdio --agents DE   # JSON-Zeilen-Schnittstelle für Modelle
 npm run model:example   # Beispielmodell als WebSocket-Server auf ws://127.0.0.1:8765
 ```
 
+Referenzkarte für KI-Partien und Messungen ist `big_europe` (im Menü „Europa_1914“); `europe` ist ein
+Debug-Überbleibsel (die Tests laden sie noch). Baustoffe (Holz, Eisen) sind bewusst knapp – Expansion ist Pflicht.
+
 Rohdaten (Natural Earth, Public Domain) liegen in `data/raw/` (admin1, places); nur für den
 Kartenbau nötig, nicht zur Laufzeit.
 
@@ -41,8 +44,13 @@ Kartenbau nötig, nicht zur Laufzeit.
   - `actions.ts` einzige Schreibschnittstelle (Bauen, Fertigung, Fertigungsschleife …).
   - `controller.ts` Schnittstelle für Entscheider (Mensch/KI/extern), `QueuedController` und
     `observe()` für externe Entscheidungsmodelle.
-  - `ai.ts` eingebaute KI: Wirtschaft, Rekrutierung, Krieg/Frieden, Börse, Fronten/Reserven,
-    Landungen, Flotten, Eisenbahngeschütze; Profile (`state.aiProfiles`) und Stärke (`DIFFICULTY`).
+  - `ai.ts` eingebaute KI: Gebäude nach Rendite (Ertrag/Kosten, Baumaterial zuerst, Fabriken nur an
+    drei Standorten, Einkaufsliste für fehlende Baustoffe), Technik-Fertigung inkl. Eisenbahngeschütze und
+    Schlachtschiffe, Diplomatie (Kriegsziele: erst Kleinstaaten in Reichweite, dann Großmächte; nach Stärke inkl.
+    Verbündeter, Beute, Baustoffen bei Mangel und Nahrung; Bündnisse gegen
+    gemeinsame Gegner/den Spitzenreiter, Bündnisfall, Verrat; Kleinstaaten suchen Schutz), Truppen (Verteidigung
+    mit Verstärkung, Sammeln vor zu starken Zielen, Artillerie als Batterie hinter der Front), Börse (Gebote
+    nach Zahlungsbereitschaft je Dringlichkeit, Kurse frei bis MARKET.maxPrice), Flotten; Profile (`state.aiProfiles`) und Stärke (`DIFFICULTY`). Tests: `tests/ai.test.ts`.
   - `bridgeProtocol.ts` Nachrichten für externe Modelle (WebSocket); Doku `docs/EXTERNAL_MODELS.md`.
   - `military.ts` Wegfindung (`planRoute`, Ziele auch auf Wegen), Marsch, Nah-/Fernkampf, Truppenmoral,
     Eroberung, Überlaufen von Provinzen. `names.ts` Armeenamen und -nummern.

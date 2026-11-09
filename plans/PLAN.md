@@ -90,7 +90,7 @@
   gleich; verschlechtern einseitig, verbessern per Angebot. Durchmarsch: Betreten erlaubt, Häfen
   befreundet. Geteilte Karte: gemeinsame Sicht. Börse: Angebote je Rohstoff mit Rücklage, gültig bis
   erfüllt, zurückgezogen oder die Nation untergeht (die KI zieht eigene nach 3 Tagen zurück und stellt
-  neu ein), Preis ab 20 % des Richtpreises bis höchstens 1000 je Einheit, kein Handel bei Krieg/Embargo; KI kauft bei Engpässen
+  neu ein), Preis ab 20 % des Richtpreises bis höchstens 100 je Einheit, kein Handel bei Krieg/Embargo; KI kauft bei Engpässen
   und bietet Überschüsse an. Zeitung täglich (Ereignisse, Eroberungsbilanz, Rangliste, Tageskarte,
   14 Ausgaben). Sieg (Vorgabe): wer 70 % aller Provinzen hält; Rangfolge (Rangliste, Zeitung,
   Spielende) nach Zahl der Provinzen; Spielende hält das Spiel an. Siegpunkte werden weiter berechnet (externe Modelle).
@@ -432,7 +432,7 @@
   Reparaturen ab. Die KI repariert selbst. In der Provinzübersicht reiht der Knopf „Repaturen einreihen“
   alle beschädigten Gebäude im Reich ein: je Provinz eine Reparatur auf einmal, der Reihe nach, solange
   die Ressourcen reichen (Aktion `repairAll`).
-- Grundmoral der Provinzen 80 %. Börse: Höchstpreis 1000 je Einheit.
+- Grundmoral der Provinzen 80 %. Börse: Höchstpreis 100 je Einheit (vorher 1000).
 - Kampfanzeige (Karte, Armeefenster) nach dem tatsächlichen Ort, nicht dem nächsten Knoten.
 - KI-Angriffe: Feindliche Provinzen greift die KI erst ab einer Stärke von etwa 10 Infanteristen an
   (`MIN_STRIKE` in `ai.ts`). Ist die Zielprovinz nicht einsehbar oder verbirgt eine Festung die Truppen,

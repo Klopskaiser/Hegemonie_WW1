@@ -213,7 +213,19 @@ export function shoreFrac(map: MapData, u: number, v: number): number | null {
   return isSea(map, u) ? 1 - land / len : land / len;
 }
 
+/** harborLeg je Karte und Weg (die Flächenprüfung ist teuer und ändert sich für eine geladene Karte nie) */
+const harborLegCache = new WeakMap<MapData, Map<number, number>>();
+
 export function harborLeg(map: MapData, u: number, v: number): number {
+  let cache = harborLegCache.get(map);
+  if (!cache) harborLegCache.set(map, (cache = new Map()));
+  const key = Math.min(u, v) * nodeCount(map) + Math.max(u, v);
+  let land = cache.get(key);
+  if (land === undefined) cache.set(key, (land = measureHarborLeg(map, u, v)));
+  return land;
+}
+
+function measureHarborLeg(map: MapData, u: number, v: number): number {
   const pts = edgePoints(map, u, v);
   const prov = isSea(map, u) ? v : u;
   const line = isSea(map, u) ? [...pts].reverse() : pts;
@@ -953,7 +965,7 @@ export function processArrivals(ctx: MilitaryContext): void {
 }
 
 /** Anteil auf dem Weg u→v, ab dem v höchstens `km` entfernt ist (rückwärts von v gesucht) */
-function fracBefore(map: MapData, u: number, v: number, km: number): number {
+export function fracBefore(map: MapData, u: number, v: number, km: number): number {
   const c = nodePos(map, v);
   for (let f = 1; f > 0; f -= 0.002) {
     const p = edgePoint(map, u, v, f);

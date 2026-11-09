@@ -603,9 +603,9 @@ describe('Gebäudeleben und Reparatur', () => {
     expect(sim.apply('DE', { type: 'repairAll' }).ok).toBe(false);
   });
 
-  it('Börse: Höchstpreis 1000 je Einheit', () => {
-    expect(priceBounds('grain')[1]).toBe(1000);
-    expect(priceBounds('oil')[1]).toBe(1000);
+  it('Börse: Höchstpreis 100 je Einheit', () => {
+    expect(priceBounds('grain')[1]).toBe(100);
+    expect(priceBounds('oil')[1]).toBe(100);
   });
 });
 

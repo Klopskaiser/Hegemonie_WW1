@@ -58,7 +58,11 @@ export type ArmyAction =
    * Einheiten in eine neue Armee am selben Ort abspalten. Bleibt sie ohne Befehl am selben Ort,
    * wird sie wieder eingegliedert – außer mit `rejoin: false` (z. B. Schiffe abtrennen).
    */
-  | { type: 'split'; army: number; units: Partial<Record<UnitType, number>>; rejoin?: boolean }
+  | {
+    type: 'split'; army: number; units: Partial<Record<UnitType, number>>; rejoin?: boolean;
+    /** die neue Armee nie automatisch mit anderen zusammenfassen (z. B. Artilleriebatterie hinter der Front) */
+    apart?: boolean;
+  }
   | { type: 'merge'; army: number; into: number }
   /** abgetrennte Armee ohne Befehl sofort wieder eingliedern (sofern noch am selben Ort) */
   | { type: 'rejoin'; army: number }
@@ -577,6 +581,7 @@ function applyArmyAction(ctx: ActionContext, nation: string, action: ArmyAction)
       state.armies.push({
         id, owner: nation, node: a.node, pos: a.pos ?? null, units, morale: a.morale, apartFrom: a.id,
         split: action.rejoin === false ? null : { from: a.id, at: state.time },
+        ...(action.apart ? { keepApart: true } : {}),
       });
       a.parts = null;
       a.partBase = null;

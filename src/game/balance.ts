@@ -487,7 +487,7 @@ export const MARKET = {
   /** Preisgrenzen relativ zum Richtpreis */
   minFactor: 0.2,
   /** Höchstpreis je Einheit (Geld), für alle Rohstoffe */
-  maxPrice: 1000,
+  maxPrice: 100,
   /** Mindestmenge eines Angebots */
   minAmount: 100,
   maxOffersPerNation: 8,

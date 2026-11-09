@@ -1,5 +1,5 @@
 import { RESOURCES } from './mapdata.ts';
-import { DEFAULT_COMBAT_MORALE, START_BONUS, START_INFANTRY, START_MORALE, START_STOCK, type Building } from './balance.ts';
+import { DEFAULT_COMBAT_MORALE, START_BONUS, START_INFANTRY, START_MORALE, START_STOCK, MARKET, type Building } from './balance.ts';
 import { makeRng } from './rng.ts';
 import { defaultConsumption, provincePoints } from './economy.ts';
 import type { MapData } from './mapdata.ts';
@@ -129,6 +129,10 @@ export function migrate(state: GameState): GameState {
   state.truceUntil ??= {};
   state.market ??= { offers: [], nextId: 1, lastPrice: {}, trades: [] };
   state.market.trades ??= [];
+  // Kurse älterer Spielstände über dem Höchstpreis auf ihn begrenzen (Angebote bleiben, wie sie eingestellt wurden)
+  for (const r of Object.keys(state.market.lastPrice) as (keyof typeof state.market.lastPrice)[]) {
+    state.market.lastPrice[r] = Math.min(state.market.lastPrice[r]!, MARKET.maxPrice);
+  }
   state.newspapers ??= [];
   state.winner ??= null;
   state.newsFeed ??= [];
