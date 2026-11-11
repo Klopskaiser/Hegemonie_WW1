@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { ALL_RES, RES_NAMES, type Cost } from '../game/balance.ts';
 import type { Stock } from '../game/types.ts';
-import { fmtNum } from './format.ts';
+import { fmtRes } from './format.ts';
 import { ResIcon } from './icons.tsx';
 
 export function Window(props: { title: ReactNode; onClose?: () => void; className?: string; children: ReactNode }) {
@@ -26,7 +26,7 @@ export function CostList({ cost, stock }: { cost: Cost; stock?: Stock }) {
       {ALL_RES.filter((r) => (cost[r] ?? 0) > 0).map((r) => (
         <span key={r} className={'cost-item' + (stock && stock[r] < cost[r]! ? ' lacking' : '')} title={RES_NAMES[r]}>
           <ResIcon res={r} size={14} />
-          {fmtNum(cost[r]!)}
+          {fmtRes(r, cost[r]!)}
         </span>
       ))}
     </span>

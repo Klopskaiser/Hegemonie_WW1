@@ -1,6 +1,6 @@
 import { Fragment, useState } from 'react';
 import { tributeText, type Action, type ActionResult } from '../game/actions.ts';
-import { ALL_RES, RES_NAMES, type Res } from '../game/balance.ts';
+import { ALL_RES, RES_NAMES, RES_UNIT, type Res } from '../game/balance.ts';
 import { relation, RELATION_NAMES, relationLabel, warKey } from '../game/diplomacy.ts';
 import type { MapData } from '../game/mapdata.ts';
 import type { GameState, Relation } from '../game/types.ts';
@@ -131,6 +131,7 @@ export function DiplomacyPanel({ map, state, act, onClose }: {
                           {RES_NAMES[r]}
                           <input type="number" className="num" min={0} step={1000} value={tribute!.amounts[r] ?? ''}
                             onChange={(e) => setTribute({ nation: n.id, amounts: { ...tribute!.amounts, [r]: Math.max(0, Number(e.target.value) || 0) } })} />
+                          {' '}{RES_UNIT[r]}
                         </label>
                       ))}
                     </div>
@@ -146,7 +147,7 @@ export function DiplomacyPanel({ map, state, act, onClose }: {
       <p className="muted small">
         Krieg: Kampf und Eroberung, kein Handel. Embargo: kein Handel. Frieden: Handel, aber kein Betreten fremden Gebiets.
         Durchmarschrecht: Truppen dürfen durchziehen, Häfen gelten als befreundet. Geteilte Karte: zusätzlich gemeinsame Sicht.
-        Verschlechtern geht sofort, Verbessern nur, wenn die andere Seite annimmt – ein Tribut (Geld, Rohstoffe) macht Angebote
+        Verschlechtern geht sofort, Verbessern nur, wenn die andere Seite annimmt – ein Tribut (Pfund, Rohstoffe) macht Angebote
         attraktiver und wird erst bei Annahme gezahlt. Jeder Krieg senkt die Moral um 5 % (höchstens 25 %); wer den Krieg erklärt,
         verliert zusätzlich 2 Tage lang 5 % Moral (auch bei mehreren Erklärungen nur einmal).
       </p>

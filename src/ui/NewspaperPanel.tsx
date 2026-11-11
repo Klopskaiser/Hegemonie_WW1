@@ -3,7 +3,6 @@ import type { MapData } from '../game/mapdata.ts';
 import type { GameState } from '../game/types.ts';
 import type { NewsItem } from '../game/types.ts';
 import { Window } from './common.tsx';
-import { Flag } from './Flag.tsx';
 import { MapCanvas } from './MapCanvas.tsx';
 import { newsImage, Picture } from './Picture.tsx';
 
@@ -17,7 +16,6 @@ export function NewspaperPanel({ map, state, onClose }: { map: MapData; state: G
   const [index, setIndex] = useState(papers.length - 1);
   const i = Math.min(index, papers.length - 1);
   const paper = papers[i];
-  const name = (id: string) => map.nations.find((n) => n.id === id)?.name ?? id;
   return (
     <Window title="Zeitung" onClose={onClose} className="side-panel newspaper-panel">
       {!paper ? (
@@ -47,11 +45,6 @@ export function NewspaperPanel({ map, state, onClose }: { map: MapData; state: G
                 <NewsPicture item={it} size={52} />
                 <p>{it.text}</p>
               </section>
-            ))}
-          </div>
-          <div className="np-ranking">
-            {paper.ranking.slice(0, 6).map((r, k) => (
-              <span key={r.nation}><Flag nation={r.nation} height={11} /> {k + 1}. {name(r.nation)} {r.provinces}</span>
             ))}
           </div>
         </article>

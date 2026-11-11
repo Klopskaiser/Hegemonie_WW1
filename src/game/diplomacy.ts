@@ -63,9 +63,12 @@ export function setRelation(state: GameState, a: string, b: string, r: Relation)
   const before = relation(state, a, b);
   (state.relations[a] ??= {})[b] = r;
   (state.relations[b] ??= {})[a] = r;
-  if (r === 'war') state.warSince[warKey(a, b)] = state.time;
-  else if (before === 'war') {
+  if (r === 'war') {
+    if (before !== 'war') delete state.warLosses?.[warKey(a, b)]; // neuer Krieg: Verlustzähler beginnt bei null
+    state.warSince[warKey(a, b)] = state.time;
+  } else if (before === 'war') {
     delete state.warSince[warKey(a, b)];
+    delete state.warLosses?.[warKey(a, b)];
     state.truceUntil[warKey(a, b)] = state.time + TRUCE;
   }
   // offene Angebote zwischen beiden sind damit erledigt

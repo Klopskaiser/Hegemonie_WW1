@@ -66,6 +66,12 @@ export interface Movement {
   prof?: number[];
   /** abweichende Dauer (Stunden) des Ein-/Ausschiffens im ersten Abschnitt (Umkehr oder Fortsetzung) */
   wait?: number;
+  /**
+   * Teilstücke: Abschnitt k → [von, bis] (Anteile von path[k] aus), wo der Marsch nicht den ganzen Weg fährt –
+   * Wechsel an einer Gabelung: der Abschnitt endet am Gabelpunkt bzw. beginnt dort (path[k + 1] wird nicht betreten).
+   * Hat Vorrang vor startFrac/endFrac.
+   */
+  cut?: Record<number, [number, number]>;
 }
 
 /** Punkt auf dem Weg zwischen zwei benachbarten Knoten: Anteil f (0..1) von a nach b */
@@ -186,7 +192,9 @@ export interface MarketState {
 /** Meldungsart der Zeitung (bestimmt das Bild: public/images/news/<kind>-<1..3>.png) */
 export type NewsKind =
   | 'war' | 'peace' | 'capital' | 'eliminated' | 'embargo' | 'agreement' | 'downgrade' | 'victory'
-  | 'conquest' | 'battle' | 'ranking' | 'quiet' | 'revolution' | 'other';
+  | 'conquest' | 'battle' | 'economy' | 'market' | 'quiet' | 'revolution' | 'other'
+  /** veraltet: Rangliste nach Provinzen (ältere Ausgaben) */
+  | 'ranking';
 
 export interface NewsItem {
   title: string;
@@ -296,8 +304,14 @@ export interface GameState {
   winner: string | null;
   /** öffentliche Meldungen seit der letzten Zeitungsausgabe */
   newsFeed: NewsEvent[];
-  /** Verluste (verlorene Einheiten) je Schlachtort und Nation seit der letzten Zeitungsausgabe */
+  /** veraltet (Verluste je Schlachtort), wird nicht mehr gefüllt */
   battleLosses?: Record<string, Record<string, number>>;
+  /**
+   * Verluste (verlorene Einheiten) je Krieg seit Kriegsbeginn: Schlüssel "A|B" wie warSince, je Nation die eigenen
+   * Verluste; `at` = Spielzeit der letzten Verluste, `reported` = Summe bei der letzten Zeitungsausgabe.
+   * Endet der Krieg, beginnt der Zähler beim nächsten neu.
+   */
+  warLosses?: Record<string, { losses: Record<string, number>; at: number; reported?: number }>;
   /** ohne Nebel des Krieges für den Spieler (Testszenario) */
   revealed?: boolean;
   /** Stärke der eingebauten KI */

@@ -5,7 +5,7 @@ import type { MapData } from '../game/mapdata.ts';
 import type { GameState } from '../game/types.ts';
 import { Window } from './common.tsx';
 import { ConsumptionControl } from './ConsumptionControl.tsx';
-import { fmtGameTime, fmtNum, fmtPercent, fmtSigned } from './format.ts';
+import { fmtGameTime, fmtNum, fmtPercent, fmtRes, fmtResSigned } from './format.ts';
 import { ResIcon } from './icons.tsx';
 import { Flag } from './Flag.tsx';
 
@@ -40,10 +40,10 @@ export function EconomyPanel({ map, state, rates, act, onClose }: Props & { act(
             return (
               <tr key={r}>
                 <td><ResIcon res={r} size={16} /> {RES_NAMES[r]}</td>
-                <td>{fmtNum(n.stock[r])}</td>
-                <td>{fmtNum(rates.prod[r])}</td>
-                <td>{fmtNum(cons)}</td>
-                <td className={net < 0 ? 'neg' : 'pos'}>{fmtSigned(net)}</td>
+                <td>{fmtRes(r, n.stock[r])}</td>
+                <td>{fmtRes(r, rates.prod[r])}</td>
+                <td>{fmtRes(r, cons)}</td>
+                <td className={net < 0 ? 'neg' : 'pos'}>{fmtResSigned(r, net)}</td>
               </tr>
             );
           })}
@@ -57,11 +57,11 @@ export function EconomyPanel({ map, state, rates, act, onClose }: Props & { act(
       <div className="use-sources">
         {ALL_RES.filter((r) => sources[r].length).map((r) => (
           <details key={r}>
-            <summary><ResIcon res={r} size={14} /> {RES_NAMES[r]}: {fmtNum(totalUse(rates, r))}</summary>
+            <summary><ResIcon res={r} size={14} /> {RES_NAMES[r]}: {fmtRes(r, totalUse(rates, r))}</summary>
             <table className="table small">
               <tbody>
                 {sources[r].map((s) => (
-                  <tr key={s.label}><td>{s.label}</td><td className="num">{fmtNum(s.amount)}</td></tr>
+                  <tr key={s.label}><td>{s.label}</td><td className="num">{fmtRes(r, s.amount)}</td></tr>
                 ))}
               </tbody>
             </table>
@@ -71,7 +71,7 @@ export function EconomyPanel({ map, state, rates, act, onClose }: Props & { act(
       <p className="muted small">Kaserne, Wehramt, Bauamt und Eisenbahn lassen sich in der Provinzansicht abschalten: kein Unterhalt, aber auch keine Wirkung (ohne Wehramt und Kaserne keine neue Infanterie).</p>
       <h4>Verbrauchsregler</h4>
       <p className="muted small">
-        Provinzunterhalt: {provinces} Provinzen × {PROVINCE.upkeep} = {fmtNum(rates.upkeep)} je Kategorie und Tag.
+        Provinzunterhalt: {provinces} Provinzen × {PROVINCE.upkeep} t = {fmtNum(rates.upkeep)} t je Kategorie und Tag.
         Der Regler legt stur fest, aus welchen Rohstoffen er gedeckt wird: Fehlt ein eingestellter Rohstoff, springen
         die anderen nicht ein – es entsteht ein Engpass. So lässt sich ein Rohstoff gezielt aufstapeln (auf 0 % stellen).
         Rohstoffe auf 0 % verbrauchen nur Einheiten und Gebäude (fester Unterhalt).

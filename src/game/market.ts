@@ -54,7 +54,7 @@ export function postOffer(
     stock[res] -= amount;
   } else {
     const total = amount * price;
-    if (stock.money < total) return { ok: false, error: 'Zu wenig Geld' };
+    if (stock.money < total) return { ok: false, error: 'Zu wenig Pfund' };
     stock.money -= total;
   }
   state.market.offers.push({ id: state.market.nextId++, nation, side, res, amount, price, time: state.time });
@@ -92,20 +92,20 @@ export function acceptOffer(ctx: MarketContext, nation: string, id: number, amou
   const total = take * o.price;
   if (o.side === 'sell') {
     // ich kaufe: Geld von mir, Ware aus der Rücklage
-    if (me.money < total) return { ok: false, error: 'Zu wenig Geld' };
+    if (me.money < total) return { ok: false, error: 'Zu wenig Pfund' };
     me.money -= total;
     me[o.res] += take;
     other.money += total;
-    ctx.log(`Börse: ${take.toLocaleString('de-DE')} ${RES_NAMES[o.res]} von ${nameOf(map, o.nation)} gekauft (${o.price} je Einheit).`, nation);
-    ctx.log(`Börse: ${nameOf(map, nation)} kauft ${take.toLocaleString('de-DE')} ${RES_NAMES[o.res]} (${o.price} je Einheit).`, o.nation);
+    ctx.log(`Börse: ${take.toLocaleString('de-DE')} t ${RES_NAMES[o.res]} von ${nameOf(map, o.nation)} gekauft (${o.price} £ je t).`, nation);
+    ctx.log(`Börse: ${nameOf(map, nation)} kauft ${take.toLocaleString('de-DE')} t ${RES_NAMES[o.res]} (${o.price} £ je t).`, o.nation);
   } else {
     // ich verkaufe: Ware von mir, Geld aus der Rücklage
     if (me[o.res] < take) return { ok: false, error: `Zu wenig ${RES_NAMES[o.res]}` };
     me[o.res] -= take;
     me.money += total;
     other[o.res] += take;
-    ctx.log(`Börse: ${take.toLocaleString('de-DE')} ${RES_NAMES[o.res]} an ${nameOf(map, o.nation)} verkauft (${o.price} je Einheit).`, nation);
-    ctx.log(`Börse: ${nameOf(map, nation)} liefert ${take.toLocaleString('de-DE')} ${RES_NAMES[o.res]} (${o.price} je Einheit).`, o.nation);
+    ctx.log(`Börse: ${take.toLocaleString('de-DE')} t ${RES_NAMES[o.res]} an ${nameOf(map, o.nation)} verkauft (${o.price} £ je t).`, nation);
+    ctx.log(`Börse: ${nameOf(map, nation)} liefert ${take.toLocaleString('de-DE')} t ${RES_NAMES[o.res]} (${o.price} £ je t).`, o.nation);
   }
   o.amount -= take;
   if (o.amount <= 0) state.market.offers = state.market.offers.filter((x) => x !== o);

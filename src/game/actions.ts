@@ -2,7 +2,7 @@
 // ausschließlich über diese Aktionen.
 
 import {
-CAPITAL_MOVE, DAY, buildingLives,   ALL_RES, BUILD_QUEUE_LIMIT, BUILD_REFUND, BUILDINGS, BUILDING_ORDER, CATEGORY_RES, FACTORY_SPEEDUP, HOUR, OFFICE_SPEEDUP, QUEUE_LIMIT, REPAIR_HOURS, RES_NAMES, UNITS, WORKSHOP_SPEEDUP,
+CAPITAL_MOVE, DAY, buildingLives,   ALL_RES, BUILD_QUEUE_LIMIT, BUILD_REFUND, BUILDINGS, BUILDING_ORDER, CATEGORY_RES, FACTORY_SPEEDUP, HOUR, OFFICE_SPEEDUP, QUEUE_LIMIT, REPAIR_HOURS, RES_NAMES, UNITS, WORKSHOP_SPEEDUP, amountText,
   type Building, type Category, type Cost, type Res, type UnitType,
 } from './balance.ts';
 import { validShares, activeCapital, activeLevel, capitalOf } from './economy.ts';
@@ -11,7 +11,7 @@ import { harborSea, isSea, nodeNeighbors } from './graph.ts';
 import type { MapData, Resource } from './mapdata.ts';
 import { acceptOffer, cancelOffer, postOffer } from './market.ts';
 import {
-  boardingWait, currentProvince, garrisonKeep, halt, inMelee, isNaval, isRailOnly, mergeArmies, nearestNode, planRoute, pursue, rejoinSplits, replan, retimeMarches, samePlace, startMove, unitCount, unitTypes,
+  boardingWait, currentProvince, garrisonKeep, halt, inMelee, isNaval, isRailOnly, mergeArmies, nearestNode, planRoute, pursue, rejoinSplits, replan, retimeMarches, closeEnoughToMerge, startMove, unitCount, unitTypes,
   assaultLanding,
   type MilitaryContext, type MoveTarget,
 } from './military.ts';
@@ -454,10 +454,10 @@ export function requiredWars(state: GameState, map: MapData, a: Army, target: Mo
   return [...new Set(nodes.map((n) => state.provinces[n].owner))].filter((o) => peaceful.includes(o));
 }
 
-/** Tribut als Text, z. B. „20.000 Geld, 5.000 Kohle“ */
+/** Tribut als Text, z. B. „20.000 £, 5.000 t Kohle“ */
 export function tributeText(t: Partial<Record<Res, number>>): string {
   return (Object.keys(t) as Res[]).filter((r) => (t[r] ?? 0) > 0)
-    .map((r) => `${Math.round(t[r]!).toLocaleString('de-DE')} ${RES_NAMES[r]}`).join(', ');
+    .map((r) => amountText(r, Math.round(t[r]!).toLocaleString('de-DE'))).join(', ');
 }
 
 export function targetOwners(map: MapData, state: GameState, t: MoveTarget): string[] {
@@ -613,7 +613,7 @@ function applyArmyAction(ctx: ActionContext, nation: string, action: ArmyAction)
     case 'merge': {
       const into = state.armies.find((x) => x.id === action.into);
       if (!into || into.owner !== nation || into === a) return { ok: false, error: 'Zielarmee nicht gefunden' };
-      if (a.move || into.move || !samePlace(a, into)) return { ok: false, error: 'Beide Armeen müssen am selben Ort stehen' };
+      if (!closeEnoughToMerge(map, a, into, state.time)) return { ok: false, error: 'Beide Armeen müssen am selben Ort stehen' };
       // Truppen gehen nur auf See an Bord einer Flotte
       if (isNaval(a) !== isNaval(into) && !isSea(map, a.node)) return { ok: false, error: 'Truppen steigen nur auf See zu einer Flotte' };
       mergeArmies(state, into, a);

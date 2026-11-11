@@ -85,7 +85,7 @@ export function ConsumptionControl({ state, rates, act }: { state: GameState; ra
         return (
           <div key={cat} className="consumption-cat">
             <div className="consumption-head">
-              {CATEGORY_NAMES[cat]} <span className="muted small">{fmtNum(rates.upkeep)}/Tag</span>
+              {CATEGORY_NAMES[cat]} <span className="muted small">{fmtNum(rates.upkeep)} t/Tag</span>
               <label className="consumption-focus small" title="Fokus: von diesem Rohstoff bleibt möglichst viel übrig. Die anderen tragen so viel Provinzunterhalt, wie ihr laufender Überschuss hergibt – sie geraten nie ins Minus, der Unterhalt bleibt gedeckt; der Fokus-Rohstoff zahlt nur den Rest. Stündlich neu eingestellt. Ohne Fokus gilt der Regler von Hand.">
                 Fokus{' '}
                 <select value={f ?? ''} onChange={(e) => void act({ type: 'setConsumptionFocus', category: cat, resource: (e.target.value || null) as Resource | null })}>
@@ -104,7 +104,7 @@ export function ConsumptionControl({ state, rates, act }: { state: GameState; ra
                   <input type="range" min={0} max={100} step={STEP} value={v} disabled={!!f || isLocked}
                     onChange={(e) => change(cat, r, Number(e.target.value))} />
                   <span className="consumption-pct">{v} %</span>
-                  <span className="consumption-amount muted small">{fmtNum((rates.upkeep * v) / 100)}</span>
+                  <span className="consumption-amount muted small">{fmtNum((rates.upkeep * v) / 100)} t</span>
                   {three && !f && (
                     <button type="button" className={'btn small consumption-lock' + (isLocked ? ' active' : '')}
                       title={isLocked ? 'Sperre lösen' : 'Sperren: dieser Regler bleibt stehen, die beiden anderen gleichen sich aus'}

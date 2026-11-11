@@ -3,7 +3,7 @@ import type { Action, ActionResult } from '../game/actions.ts';
 import { UNIT_ORDER, UNITS } from '../game/balance.ts';
 import { isSea, nodeName } from '../game/graph.ts';
 import type { MapData } from '../game/mapdata.ts';
-import { armyPower, isNaval, meleePower, rangedPower, samePlace, unitCount } from '../game/military.ts';
+import { armyPower, closeEnoughToMerge, isNaval, meleePower, rangedPower, unitCount } from '../game/military.ts';
 import { armyName } from '../game/names.ts';
 import type { Army, GameState } from '../game/types.ts';
 import { Window } from './common.tsx';
@@ -39,9 +39,12 @@ export function MultiArmyPanel({ map, state, armies, act, onSelectArmy, onClose 
     const rest = own.filter((a) => !a.move);
     while (rest.length) {
       const head = rest.shift()!;
-      const group = [head, ...rest.filter((b) => samePlace(b, head) && isNaval(b) === isNaval(head))];
-      for (const g of group.slice(1)) rest.splice(rest.indexOf(g), 1);
-      const into = group.reduce((x, y) => (armyPower(y) > armyPower(x) ? y : x));
+      const near = (x: Army, y: Army) => closeEnoughToMerge(map, x, y, state.time) && (isNaval(x) === isNaval(y) || isSea(map, x.node));
+      const cand = [head, ...rest.filter((b) => near(b, head))];
+      const into = cand.reduce((x, y) => (armyPower(y) > armyPower(x) ? y : x));
+      // nur, wer auch beim stärksten nahe genug steht; die übrigen bleiben für eigene Gruppen
+      const group = cand.filter((g) => g === into || near(g, into));
+      for (const g of group) if (rest.includes(g)) rest.splice(rest.indexOf(g), 1);
       for (const g of group) if (g !== into) actions.push({ type: 'merge', army: g.id, into: into.id });
     }
     return actions;

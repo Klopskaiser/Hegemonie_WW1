@@ -8,7 +8,7 @@ import { BasicAI } from '../src/game/ai.ts';
 import { checkCapitalMove } from '../src/game/actions.ts';
 import { activeCapital, nationRates, type NationRates } from '../src/game/economy.ts';
 import type { MapData } from '../src/game/mapdata.ts';
-import { combatRound } from '../src/game/military.ts';
+import { combatRound, unitCount } from '../src/game/military.ts';
 import { publishNewspaper } from '../src/game/newspaper.ts';
 import { Simulation } from '../src/game/sim.ts';
 import { createGame } from '../src/game/state.ts';
@@ -37,7 +37,7 @@ describe('Panzerwagen', () => {
 });
 
 describe('Zeitung', () => {
-  it('meldet die Verluste einer Schlacht: je verlorene Einheit 1000 Mann', () => {
+  it('meldet die Verluste je Krieg als laufenden Zähler: je verlorene Einheit 1000 Mann', () => {
     const sim = newSim(8);
     sim.apply('DE', { type: 'declareWar', nation: 'FR' });
     const p = prov('Hamburg');
@@ -51,12 +51,24 @@ describe('Zeitung', () => {
     expect(lostDe + lostFr).toBeGreaterThan(0);
     const paper = publishNewspaper(sim.state, map);
     const battle = paper.items.find((i) => i.kind === 'battle');
-    expect(battle?.text).toContain('Bei Hamburg');
+    expect(battle?.text).not.toContain('Bei Hamburg'); // keine Einzelschlachten
+    expect(battle?.text).toContain('Krieg ');
     const fmt = (n: number) => String(n * 1000).replace(/\B(?=(\d{3})+(?!\d))/g, '.');
-    if (lostDe) expect(battle!.text).toContain(`Deutsches Reich ${fmt(lostDe)} Mann`);
+    if (lostDe) expect(battle!.text).toContain(`Deutsches Reich ${fmt(lostDe)}`);
     if (lostFr) expect(battle!.text).toContain(`${fmt(lostFr)} Mann`);
-    // die Zählung beginnt mit der nächsten Ausgabe von vorn
+    // ohne neue Verluste keine Meldung; weitere Kämpfe zählen weiter (seit Kriegsbeginn)
     expect(publishNewspaper(sim.state, map).items.some((i) => i.kind === 'battle')).toBe(false);
+    for (let k = 0; k < 4 && unitCount(de) && unitCount(fr); k++) combatRound(sim.ctx);
+    const lostDe2 = 32 - (de.units.infantry ?? 0) - (de.units.armoredCar ?? 0);
+    const lostFr2 = 30 - (fr.units.infantry ?? 0);
+    if (lostDe2 + lostFr2 > lostDe + lostFr) {
+      const again = publishNewspaper(sim.state, map).items.find((i) => i.kind === 'battle')!;
+      if (lostDe2) expect(again.text).toContain(`Deutsches Reich ${fmt(lostDe2)}`);
+    }
+    // Frieden setzt den Zähler zurück
+    sim.apply('DE', { type: 'propose', nation: 'FR', kind: 'peace' });
+    sim.apply('FR', { type: 'answer', nation: 'DE', accept: true });
+    expect(sim.state.warLosses?.['DE|FR']).toBeUndefined();
   });
 
   it('öffentlich sind nur Krieg und Frieden, nicht Durchmarschrecht, Bündnis, Embargo oder Herabstufung', () => {

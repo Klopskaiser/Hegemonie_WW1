@@ -8,7 +8,7 @@ import { defectionChance, garrisonStrength } from '../game/military.ts';
 import { armyName } from '../game/names.ts';
 import type { Army, GameState } from '../game/types.ts';
 import { Bar, CostList, Swatch, Window } from './common.tsx';
-import { fmtDuration, fmtNum, fmtPercent } from './format.ts';
+import { fmtDuration, fmtPercent, fmtRes } from './format.ts';
 import { seaPointName } from './harbor.ts';
 import { harborSea } from '../game/graph.ts';
 import { ResIcon } from './icons.tsx';
@@ -118,8 +118,8 @@ export function ProvincePanel({ map, state, id, armies: visibleArmies, act, onSe
 
       <h4>Produktion pro Tag</h4>
       <div className="prod-row">
-        <span title={`vor Korruption: ${fmtNum(out.amount)} ${RES_NAMES[mp.resource]} (${corruptNote})`}><ResIcon res={mp.resource} /> {fmtNum(out.amount * netMul)} {RES_NAMES[mp.resource]}{mp.double ? ' (doppelt)' : ''}</span>
-        <span title={`vor Korruption: ${fmtNum(out.money)} Geld (${corruptNote})`}><ResIcon res="money" /> {fmtNum(out.money * netMul)}</span>
+        <span title={`vor Korruption: ${fmtRes(mp.resource, out.amount)} ${RES_NAMES[mp.resource]} (${corruptNote})`}><ResIcon res={mp.resource} /> {fmtRes(mp.resource, out.amount * netMul)} {RES_NAMES[mp.resource]}{mp.double ? ' (doppelt)' : ''}</span>
+        <span title={`vor Korruption: ${fmtRes('money', out.money)} (${corruptNote})`}><ResIcon res="money" /> {fmtRes('money', out.money * netMul)}</span>
       </div>
       {out.bonus > 0 && <div className="muted small">Gebäudebonus +{Math.round(out.bonus * 100)} %</div>}
       <div className="muted small" title={`Kontrolle = Anteil der Provinzen, die ${ps.owner} hält (wie Rangliste); unter 10 % keine, ab 10 % 1 %, ab 50 % volle 12 %`}>

@@ -26,6 +26,8 @@ export interface Shot {
   count: number;
   /** Einschlagsort (Weltkoordinaten), wenn das Ziel nicht sichtbar ist (z. B. hinter einer Festung): ohne Nadel */
   at?: [number, number];
+  /** Abschussort (Weltkoordinaten), wenn der Schütze nicht sichtbar ist (z. B. Batterie in einer Festung) */
+  from?: [number, number];
 }
 
 /** Flugbild je Waffe: Takt je Einheit, Flugzeit (ms), Bogenhöhe relativ zur Entfernung, Kugelgröße */
@@ -58,7 +60,7 @@ interface Props {
   nation?: string;
   /** Sicht des Spielers: ganz einsehbare Provinzen und Sichtkreise; alles andere liegt im Nebel */
   visible?: Sight | null;
-  /** Provinzzustände für Gebäudesymbole (Schienen, Hafen, Festung); nur in sichtbaren Provinzen gezeichnet */
+  /** Provinzzustände für Gebäudesymbole: Schienen überall (auch im Nebel), Hafen und Festung nur in sichtbaren Provinzen */
   provinces?: readonly ProvinceState[];
   selected?: number | null;
   /** ausgewählte Armeen (auch mehrere, z. B. per Lasso) */
@@ -522,8 +524,10 @@ export function MapCanvas(props: Props) {
         for (let k = 0; k + 1 < pts.length; k++) rails.push([pts[k][0], pts[k][1], pts[k + 1][0], pts[k + 1][1]]);
       };
       map.provinces.forEach((mp, i) => {
-        // beschädigte Eisenbahn (Reparatur nötig) wird nicht gezeichnet – sie ist nicht befahrbar
-        if (!shown(i) || activeLevel(p.provinces![i], 'railroad') <= 0) return;
+        // Schienen sind auch im Nebel des Krieges sichtbar (alle Nationen). In einsehbaren Provinzen fehlt beschädigte
+        // Eisenbahn (Reparatur nötig, nicht befahrbar); im Nebel zählt nur, ob sie gebaut ist
+        const ps = p.provinces![i];
+        if (shown(i) ? activeLevel(ps, 'railroad') <= 0 : ps.buildings.railroad <= 0) return;
         for (const n of mp.links ?? mp.neighbors) {
           const [l1, len] = edgeParts(map, i, n);
           add(edgeSlice(map, i, n, 0, len > 0 ? l1 / len : 0.5));
@@ -845,7 +849,8 @@ export function MapCanvas(props: Props) {
         for (const sh of p.shots) {
           const b = BALLISTICS[sh.kind];
           if (!b) continue;
-          const from = heads.get(sh.shooter), to = tips.get(sh.target) ?? (sh.at ? [X(sh.at[0]), Y(sh.at[1])] as [number, number] : undefined);
+          const from = heads.get(sh.shooter) ?? (sh.from ? [X(sh.from[0]), Y(sh.from[1])] as [number, number] : undefined);
+          const to = tips.get(sh.target) ?? (sh.at ? [X(sh.at[0]), Y(sh.at[1])] as [number, number] : undefined);
           if (!from || !to) continue;
           const [x0, y0] = from, [x1, y1] = to;
           const dist = Math.hypot(x1 - x0, y1 - y0);

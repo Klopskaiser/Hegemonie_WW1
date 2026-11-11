@@ -4,10 +4,11 @@ const svg = (body: string) =>
   `data:image/svg+xml;utf8,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">${body}</svg>`)}`;
 
 export const RES_ICON: Record<Res, string> = {
+  // Pfundmünze mit £-Zeichen (als Pfad, unabhängig von Schriften)
   money: svg(
     '<circle cx="12" cy="12" r="9" fill="#e0b13c" stroke="#6e4c10" stroke-width="1.5"/>' +
-      '<circle cx="12" cy="12" r="5.5" fill="none" stroke="#9a6d18" stroke-width="1.2"/>' +
-      '<path d="M12 8.5v7M10 10.2h3.2a1.4 1.4 0 0 1 0 2.8h-2.4a1.4 1.4 0 0 0 0 2.8H14" fill="none" stroke="#6e4c10" stroke-width="1.1"/>',
+      '<circle cx="12" cy="12" r="7" fill="none" stroke="#9a6d18" stroke-width=".8"/>' +
+      '<path d="M14.6 8.6a2.4 2.4 0 0 0-4.3 1.4c0 1.5.6 2.3.6 3.6 0 1-.5 1.8-1.4 2.5h5.6M8.8 12.3h4.4" fill="none" stroke="#6e4c10" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>',
   ),
   grain: svg(
     '<path d="M12 22V6" stroke="#7a5a1a" stroke-width="1.4"/>' +

@@ -8,7 +8,7 @@ import { RESOURCES, type MapData, type Resource } from '../game/mapdata.ts';
 import { priceBounds, priceOf } from '../game/market.ts';
 import type { GameState, MarketOffer } from '../game/types.ts';
 import { Window } from './common.tsx';
-import { fmtDuration, fmtNum, fmtSigned, fmtGameTime } from './format.ts';
+import { fmtDuration, fmtGameTime, fmtRes, fmtResSigned } from './format.ts';
 import { Flag } from './Flag.tsx';
 import { ResIcon } from './icons.tsx';
 
@@ -51,8 +51,8 @@ export function MarketPanel({ map, state, rates, act, onClose }: {
     return (
       <tr key={o.id} className={ok ? '' : 'blocked'} title={ok ? '' : 'Kein Handel: Krieg oder Embargo'}>
         <td><Flag nation={o.nation} height={11} /> {n?.name ?? o.nation}</td>
-        <td>{fmtNum(o.amount)}</td>
-        <td>{o.price.toFixed(2)}</td>
+        <td>{fmtRes(o.res, o.amount)}</td>
+        <td>{o.price.toFixed(2)} £</td>
         <td className="btn-cell">
           <input type="number" className="num" min={1} max={o.amount} value={value}
             onChange={(e) => setTake({ ...take, [o.id]: Number(e.target.value) })} />
@@ -76,18 +76,18 @@ export function MarketPanel({ map, state, rates, act, onClose }: {
       </div>
       <div className="market-head">
         <b>{RES_NAMES[res]}</b>
-        <span>Kurs <b>{course.toFixed(2)}</b> Geld/Einheit</span>
-        <span className="muted small">Vorrat {fmtNum(stock[res])} · Bilanz {fmtSigned(net)}/Tag · Geld {fmtNum(stock.money)}</span>
+        <span>Kurs <b>{course.toFixed(2)}</b> £/t</span>
+        <span className="muted small">Vorrat {fmtRes(res, stock[res])} · Bilanz {fmtResSigned(res, net)}/Tag · Kasse {fmtRes('money', stock.money)}</span>
       </div>
 
       <h4>Verkaufsangebote</h4>
       {sells.length === 0 ? <div className="muted small">Keine Angebote.</div> : (
-        <table className="table"><thead><tr><th>Anbieter</th><th>Menge</th><th>Preis</th><th></th></tr></thead>
+        <table className="table"><thead><tr><th>Anbieter</th><th>Menge</th><th>Preis je t</th><th></th></tr></thead>
           <tbody>{sells.map(row)}</tbody></table>
       )}
       <h4>Kaufgesuche</h4>
       {buys.length === 0 ? <div className="muted small">Keine Gesuche.</div> : (
-        <table className="table"><thead><tr><th>Käufer</th><th>Menge</th><th>Preis</th><th></th></tr></thead>
+        <table className="table"><thead><tr><th>Käufer</th><th>Menge</th><th>Preis je t</th><th></th></tr></thead>
           <tbody>{buys.map(row)}</tbody></table>
       )}
 
@@ -97,13 +97,13 @@ export function MarketPanel({ map, state, rates, act, onClose }: {
           <option value="sell">Verkaufen</option>
           <option value="buy">Kaufen</option>
         </select>
-        <label>Menge <input type="number" className="num" min={MARKET.minAmount} step={100} value={amount} onChange={(e) => setAmount(Number(e.target.value))} /></label>
-        <label>Preis <input type="number" className="num" min={lo} max={hi} step={0.05} value={ask} onChange={(e) => setPrice(Number(e.target.value))} /></label>
+        <label>Menge <input type="number" className="num" min={MARKET.minAmount} step={100} value={amount} onChange={(e) => setAmount(Number(e.target.value))} /> t</label>
+        <label>Preis <input type="number" className="num" min={lo} max={hi} step={0.05} value={ask} onChange={(e) => setPrice(Number(e.target.value))} /> £/t</label>
         <button className="btn small" onClick={() => run({ type: 'postOffer', side, res, amount, price: ask })}>Einstellen</button>
       </div>
       <div className="muted small">
-        Summe {fmtNum(amount * ask)} Geld. {side === 'sell' ? 'Die Ware' : 'Das Geld'} wird bis zum Handel zurückgelegt.
-        Preis {lo}–{hi}. Angebote gelten, bis sie erfüllt oder zurückgezogen sind.
+        Summe {fmtRes('money', amount * ask)}. {side === 'sell' ? 'Die Ware' : 'Der Betrag'} wird bis zum Handel zurückgelegt.
+        Preis {lo}–{hi} £/t. Angebote gelten, bis sie erfüllt oder zurückgezogen sind.
       </div>
 
       {mine.length > 0 && (
@@ -113,8 +113,8 @@ export function MarketPanel({ map, state, rates, act, onClose }: {
             {mine.map((o) => (
               <tr key={o.id}>
                 <td><ResIcon res={o.res} size={14} /> {o.side === 'sell' ? 'Verkauf' : 'Kauf'}</td>
-                <td>{fmtNum(o.amount)}</td>
-                <td>{o.price.toFixed(2)}</td>
+                <td>{fmtRes(o.res, o.amount)}</td>
+                <td>{o.price.toFixed(2)} £/t</td>
                 <td className="small muted">seit {age(o)}</td>
                 <td><button className="btn small" onClick={() => run({ type: 'cancelOffer', id: o.id })}>Zurückziehen</button></td>
               </tr>
@@ -133,15 +133,15 @@ export function MarketPanel({ map, state, rates, act, onClose }: {
         if (!trades.length) return <div className="muted small">Noch keine Abschlüsse.</div>;
         return (
           <table className="table trade-log">
-            <thead><tr><th>Zeit</th><th>Verkäufer</th><th>Käufer</th><th>Menge</th><th>Preis</th></tr></thead>
+            <thead><tr><th>Zeit</th><th>Verkäufer</th><th>Käufer</th><th>Menge</th><th>Preis je t</th></tr></thead>
             <tbody>
               {trades.map((t, k) => (
                 <tr key={k} className={t.seller === me || t.buyer === me ? 'me' : ''}>
                   <td className="small">{fmtGameTime(t.time)}</td>
                   <td><Flag nation={t.seller} height={11} /> {nation(t.seller)?.name ?? t.seller}</td>
                   <td><Flag nation={t.buyer} height={11} /> {nation(t.buyer)?.name ?? t.buyer}</td>
-                  <td><ResIcon res={t.res} size={13} /> {fmtNum(t.amount)}</td>
-                  <td>{t.price.toFixed(2)}</td>
+                  <td><ResIcon res={t.res} size={13} /> {fmtRes(t.res, t.amount)}</td>
+                  <td>{t.price.toFixed(2)} £/t</td>
                 </tr>
               ))}
             </tbody>

@@ -2,12 +2,12 @@
 
 import { useState } from 'react';
 import { checkBuild, checkProduce, harborCandidates, plannedBuildings, type Action, type ActionResult } from '../game/actions.ts';
-import { BUILDING_ORDER, BUILDINGS, buildingLives, RES_NAMES, UNIT_ORDER, UNITS, type Building, type UnitType, siteAllows } from '../game/balance.ts';
+import { amountText, BUILDING_ORDER, BUILDINGS, buildingLives, RES_NAMES, UNIT_ORDER, UNITS, type Building, type Res, type UnitType, siteAllows } from '../game/balance.ts';
 import { activeCapital, corruptionOf, provinceOutput } from '../game/economy.ts';
 import type { MapData } from '../game/mapdata.ts';
 import type { GameState } from '../game/types.ts';
 import { Bar, Window } from './common.tsx';
-import { fmtDuration, fmtNum, fmtPercent } from './format.ts';
+import { fmtDuration, fmtNum, fmtPercent, fmtRes } from './format.ts';
 import { seaPointName } from './harbor.ts';
 import { harborSea } from '../game/graph.ts';
 import { ResIcon } from './icons.tsx';
@@ -98,7 +98,7 @@ export function ProvinceOverview({ map, state, act, onSelect, onClose }: Props) 
                       {i === capital ? '★ ' : mp.city ? '■ ' : ''}{mp.name}
                     </button>
                   </td>
-                  <td className="small" title={`vor Korruption: ${fmtNum(out.amount)} (${corruptPct})`}><ResIcon res={mp.resource} size={14} /> {fmtNum(out.amount * netMul)}{mp.double ? ' (×2)' : ''}</td>
+                  <td className="small" title={`vor Korruption: ${fmtRes(mp.resource, out.amount)} (${corruptPct})`}><ResIcon res={mp.resource} size={14} /> {fmtRes(mp.resource, out.amount * netMul)}{mp.double ? ' (×2)' : ''}</td>
                   <td className="overview-morale">
                     <Bar value={ps.morale} color={ps.morale < 0.33 ? '#a33' : ps.morale < 0.6 ? '#c9952f' : '#5d8a3a'} />
                     <span className="small">{fmtPercent(ps.morale)}</span>
@@ -176,6 +176,10 @@ export function ProvinceOverview({ map, state, act, onSelect, onClose }: Props) 
                           title={pickU.chk.error ?? `${costText(UNITS[pickU.u].cost)} · ${fmtDuration((pickU.chk.hours * 3600_000) / state.speed)}`}
                           onClick={() => run({ type: 'enqueue', province: i, unit: pickU.u })}>In Auftrag</button>
                         {ps.queue.length > 0 && <span className="small muted"> {ps.queue.length} Auftr.</span>}
+                        <label className="small" title="Fertigungsschleife: fertige Aufträge automatisch wiederholen">
+                          <input type="checkbox" checked={ps.repeat} onChange={(e) => run({ type: 'setRepeat', province: i, repeat: e.target.checked })} />
+                          Schleife
+                        </label>
                       </div>
                     ) : <span className="small muted">keine Fabrik</span>}
                   </td>
@@ -199,7 +203,7 @@ export function ProvinceOverview({ map, state, act, onSelect, onClose }: Props) 
           onClick={() => runAll(barracksOff.map(({ i }) => ({ type: 'switchBuilding', province: i, building: 'barracks', on: false })), 'Kasernen deaktiviert')}>
           Alle Kasernen deaktivieren ({barracksOff.length})
         </button>
-        <span className="small muted">Vorrat: {fmtNum(stock.money)} Geld · {fmtNum(stock.grain)} {RES_NAMES.grain}</span>
+        <span className="small muted">Vorrat: {fmtRes('money', stock.money)} · {fmtRes('grain', stock.grain)} {RES_NAMES.grain}</span>
         {msg && <span className="small overview-msg">{msg}</span>}
       </div>
     </Window>
@@ -208,5 +212,5 @@ export function ProvinceOverview({ map, state, act, onSelect, onClose }: Props) 
 
 function costText(cost: Partial<Record<string, number>>): string {
   return Object.entries(cost).filter(([, v]) => (v ?? 0) > 0)
-    .map(([r, v]) => `${fmtNum(v!)} ${RES_NAMES[r as keyof typeof RES_NAMES] ?? r}`).join(', ');
+    .map(([r, v]) => amountText(r as Res, fmtNum(v!))).join(', ');
 }

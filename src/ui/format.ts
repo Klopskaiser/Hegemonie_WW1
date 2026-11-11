@@ -1,4 +1,4 @@
-import { DAY, HOUR, MINUTE } from '../game/balance.ts';
+import { DAY, HOUR, MINUTE, RES_UNIT, type Res } from '../game/balance.ts';
 
 export function fmtNum(v: number): string {
   const a = Math.abs(v);
@@ -9,6 +9,15 @@ export function fmtNum(v: number): string {
 
 export function fmtSigned(v: number): string {
   return (v >= 0 ? '+' : '−') + fmtNum(Math.abs(v));
+}
+
+/** Menge mit Einheit: Pfund als £, Rohstoffe in t („12 Tsd. t“, „100 Tsd. £“) */
+export function fmtRes(r: Res, v: number): string {
+  return `${fmtNum(v)} ${RES_UNIT[r]}`;
+}
+
+export function fmtResSigned(r: Res, v: number): string {
+  return `${fmtSigned(v)} ${RES_UNIT[r]}`;
 }
 
 export function fmtGameTime(t: number): string {

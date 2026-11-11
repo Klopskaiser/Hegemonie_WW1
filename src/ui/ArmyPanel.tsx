@@ -5,11 +5,11 @@ import { atWar } from '../game/diplomacy.ts';
 import { isSea, nodeName } from '../game/graph.ts';
 import type { MapData } from '../game/mapdata.ts';
 import {
-  armyHp, armyPosition, armySpeed, boardingWait, meleePower, rangedPower, inMeleeRange, infantryStrength, isNaval, maxRange, samePlace, segmentHours, troopMorale, troopTarget, unitCount, unitHp,
+  armyHp, armyPosition, inCombat, segRange, armySpeed, boardingWait, meleePower, rangedPower, inMeleeRange, infantryStrength, isNaval, maxRange, closeEnoughToMerge, segmentHours, troopMorale, troopTarget, unitCount, unitHp,
 } from '../game/military.ts';
 import { armyName } from '../game/names.ts';
 import { Flag } from './Flag.tsx';
-import { Picture, unitImage } from './Picture.tsx';
+import { armyUnitImage, Picture, portraitImage, portraitUnit } from './Picture.tsx';
 import { REBELS, type Army, type GameState } from '../game/types.ts';
 import { Bar, Swatch, Window } from './common.tsx';
 import { fmtDuration } from './format.ts';
@@ -35,8 +35,9 @@ function remainingHours(state: GameState, map: MapData, a: Army): number {
   if (!m) return 0;
   let h = Math.max(0, m.segEnd - state.time) / HOUR;
   for (let k = m.seg + 1; k + 1 < m.path.length; k++) {
-    const share = k === m.path.length - 2 ? m.endFrac ?? 1 : 1;
-    h += segmentHours(state, map, a, m.path[k], m.path[k + 1]) * share;
+    // Teilstücke (Ziel auf einem Weg, Wechsel an einer Gabelung) anteilig
+    const [s, e] = segRange(m, k);
+    h += segmentHours(state, map, a, m.path[k], m.path[k + 1]) * (e - s);
   }
   return h;
 }
@@ -72,7 +73,7 @@ export function ArmyPanel({ map, state, army: a, armies, act, onSelectArmy, onSp
   const atSea = isSea(map, a.node);
   // auf See dürfen Truppen zu einer Flotte steigen, an Land nur gleiche Art
   const mergeable = own && !a.move
-    ? armies.filter((b) => b !== a && b.owner === a.owner && samePlace(a, b) && !b.move && (atSea || isNaval(b) === isNaval(a)))
+    ? armies.filter((b) => b !== a && b.owner === a.owner && closeEnoughToMerge(map, a, b, state.time) && (atSea || isNaval(b) === isNaval(a)))
     : [];
   const ships: Partial<Record<UnitType, number>> = {};
   for (const u of UNIT_ORDER) if (UNITS[u].naval && a.units[u]) ships[u] = a.units[u];
@@ -133,8 +134,11 @@ export function ArmyPanel({ map, state, army: a, armies, act, onSelectArmy, onSp
       )}
       <p className="army-status">{status}</p>
       {(() => {
-        const main = UNIT_ORDER.filter((u) => a.units[u]).sort((x, y) => a.units[y]! - a.units[x]!)[0];
-        return main ? <div className="army-hero"><Picture src={unitImage(main)} label={UNITS[main].name} size={360} /></div> : null;
+        // Maschinen mit der größten Gesamtstärke, Infanterie nur ohne Maschinen; im Kampf und eingeschifft eigene Bilder
+        const main = portraitUnit(a);
+        const img = portraitImage(a, troopMorale(a), { fighting: inCombat(state, map, a), embarked: !isNaval(a) && (atSea || !!bw) });
+        if (!main || !img) return null;
+        return <div className="army-hero"><Picture src={img.src} fallback={img.fallback} label={UNITS[main].name} size={360} /></div>;
       })()}
       <div className="small strength-row" title={'Schaden je Kampfrunde (stündlich), den jede gegnerische Armee im Umkreis von 1 km voll abbekommt – ohne Zufallsstreuung und Festung. '
         + 'Infanterie nach aktueller Moral; im Nahkampf zählen die vordersten 20 Einheiten voll, bis Platz 60 abnehmend; Artillerie und Eisenbahngeschütze kämpfen dort nur halb. '
@@ -224,7 +228,7 @@ export function ArmyPanel({ map, state, army: a, armies, act, onSelectArmy, onSp
             const machine = u !== 'infantry';
             return (
               <tr key={u}>
-                <td><Picture src={unitImage(u)} label={UNITS[u].short} size={28} /></td>
+                <td><Picture {...armyUnitImage(a, u, troopMorale(a))} label={UNITS[u].short} size={28} /></td>
                 <td>{UNITS[u].name}</td>
                 <td>{n}</td>
                 <td>{machine

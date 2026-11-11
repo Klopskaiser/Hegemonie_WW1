@@ -2,16 +2,15 @@ import { useEffect, useMemo, useState } from 'react';
 import { ALL_RES, DAY, HOUR, RES_NAMES, SPEEDS } from '../game/balance.ts';
 import { atWar } from '../game/diplomacy.ts';
 import { nodeName } from '../game/graph.ts';
-import { armyLocation, armyPosition, engagedTarget, planRoute, routePoints, type MoveTarget, inMelee, inMeleeRange, unitRange } from '../game/military.ts';
+import { armyLocation, armyPosition, maxRange, planRoute, rangedVolleys, routePoints, type MoveTarget, inMelee, inMeleeRange } from '../game/military.ts';
 import { requiredWars, type Action } from '../game/actions.ts';
 import { MultiArmyPanel } from './MultiArmyPanel.tsx';
-import type { UnitType } from '../game/balance.ts';
 import type { Army } from '../game/types.ts';
 import { capitalOf } from '../game/economy.ts';
 import { armyVisible, visibleNodes } from '../game/visibility.ts';
 import { ArmyPanel } from './ArmyPanel.tsx';
 import { Bar } from './common.tsx';
-import { fmtDay, fmtDuration, fmtGameTime, fmtNum, fmtSigned, fmtSpeed } from './format.ts';
+import { fmtDay, fmtDuration, fmtGameTime, fmtNum, fmtRes, fmtResSigned, fmtSpeed } from './format.ts';
 import { ResIcon } from './icons.tsx';
 import { MapCanvas, type MapMode, type Shot } from './MapCanvas.tsx';
 import { ProvincePanel } from './ProvincePanel.tsx';
@@ -73,20 +72,26 @@ export function GameView({ start, onExit }: { start: SessionStart; onExit(): voi
     }
     return [...out];
   }, [armies, state, map]);
-  // laufende Fernkampfgefechte (für die Geschossanimation)
+  // laufende Fernkampfgefechte (für die Geschossanimation): jeder Typ nur auf sein Ziel in eigener Reichweite
   const shots = useMemo<Shot[]>(() => {
     if (!state || !map) return [];
     const out: Shot[] = [];
-    for (const a of armies) {
-      const t = engagedTarget(state, map, a);
-      if (!t) continue;
-      // verborgenes Ziel (Festung ab Stufe 2): Einschläge trotzdem zeigen, an seinem Ort, ohne Nadel
-      const at = armies.includes(t) ? undefined : armyPosition(map, t, state.time);
+    const seen = new Set(armies);
+    for (const a of state.armies) {
+      const range = maxRange(a, map);
+      if (range <= 0 || a.target == null) continue;
       // im Nahkampf gebundene Schützen feuern nicht sichtbar
       if (inMelee(state, map, a)) continue;
-      for (const u of Object.keys(a.units) as UnitType[]) {
-        if ((a.units[u] ?? 0) > 0 && unitRange(a, u, map) > 0) {
-          out.push({ key: `${a.id}-${t.id}-${u}`, kind: u, shooter: a.id, target: t.id, count: a.units[u]!, ...(at ? { at } : {}) });
+      for (const v of rangedVolleys(state, map, a)) {
+        const t = v.target;
+        // weder Schütze noch Ziel sichtbar: nichts zu zeigen
+        if (!seen.has(a) && !seen.has(t)) continue;
+        // verborgenes Ziel (Festung ab Stufe 2): Einschläge trotzdem zeigen, an seinem Ort, ohne Nadel
+        const at = seen.has(t) ? undefined : armyPosition(map, t, state.time);
+        // verborgener Schütze (z. B. Batterie in einer Festung): Geschosse kommen von seinem Standort, ohne Nadel
+        const from = seen.has(a) ? undefined : armyPosition(map, a, state.time);
+        for (const u of v.units) {
+          out.push({ key: `${a.id}-${t.id}-${u}`, kind: u, shooter: a.id, target: t.id, count: a.units[u]!, ...(at ? { at } : {}), ...(from ? { from } : {}) });
         }
       }
     }
@@ -109,7 +114,7 @@ export function GameView({ start, onExit }: { start: SessionStart; onExit(): voi
       const r = planRoute(state, map, neutral.length ? { ...a, warOn: neutral } : a, state.time, hoverTarget);
       if (!r) return { pts: [] as [number, number][], label: '' };
       longest = Math.max(longest, r.hours);
-      const pts = routePoints(map, r.path, r.startFrac ?? 0, r.endFrac ?? 1);
+      const pts = routePoints(map, r.path, r.startFrac ?? 0, r.endFrac ?? 1, r.cut);
       if (r.then) pts.push(...routePoints(map, r.then).slice(1));
       return { pts, label: '', landing: !!r.then };
     });
@@ -260,11 +265,11 @@ export function GameView({ start, onExit }: { start: SessionStart; onExit(): voi
           {ALL_RES.map((r) => {
             const net = netPerDay(rates, r);
             return (
-              <div key={r} className="tb-res-item" title={`${RES_NAMES[r]}: ${fmtNum(stock[r])}\nBilanz ${fmtSigned(net)} pro Tag`}>
+              <div key={r} className="tb-res-item" title={`${RES_NAMES[r]}: ${fmtRes(r, stock[r])}\nBilanz ${fmtResSigned(r, net)} pro Tag`}>
                 <ResIcon res={r} size={20} />
                 <div>
-                  <div className="tb-res-val">{fmtNum(stock[r])}</div>
-                  <div className={'tb-res-net ' + (net < 0 ? 'neg' : 'pos')}>{fmtSigned(net)}</div>
+                  <div className="tb-res-val">{fmtRes(r, stock[r])}</div>
+                  <div className={'tb-res-net ' + (net < 0 ? 'neg' : 'pos')}>{fmtResSigned(r, net)}</div>
                 </div>
               </div>
             );

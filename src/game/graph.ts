@@ -338,3 +338,131 @@ export function harborSea(map: MapData, province: number): number | null {
   }
   return P + best;
 }
+
+// ---------------------------------------------------------------- Gabelungen
+
+/**
+ * Gabelung: die Landwege b–a und b–c fallen ab der Stadt b ein Stück weit zusammen (zusammengelegte Wegkorridore)
+ * und trennen sich am Gabelpunkt. `fa` / `fc` = Anteil des Gabelpunkts auf dem Weg b→a bzw. b→c (von b aus).
+ * Über den Gabelpunkt lässt sich von a nach c (und umgekehrt) wechseln, ohne die Stadt b zu betreten.
+ */
+export interface Fork { b: number; a: number; c: number; fa: number; fc: number }
+
+/** Teilstück eines Weges: auf dem Weg u→v vom Anteil f0 bis f1 (f0 < f1, Anteile von u aus) */
+export interface Piece { u: number; v: number; f0: number; f1: number }
+
+/** Mindestlänge des gemeinsamen Abschnitts (km), ab der eine Gabelung zählt */
+const FORK_MIN_KM = 1;
+/** Abstand (km), bis zu dem zwei Wege als zusammenfallend gelten (wie roadVariants) */
+const FORK_EPS = 0.06;
+
+const forkCache = new WeakMap<MapData, Fork[]>();
+
+/** Alle Gabelungen der Karte (nur Landwege ohne Abkürzung über ein drittes Gebiet), je Karte einmal bestimmt */
+export function forks(map: MapData): Fork[] {
+  let list = forkCache.get(map);
+  if (list) return list;
+  list = [];
+  const P = map.provinces.length;
+  for (let b = 0; b < P; b++) {
+    const land = nodeNeighbors(map, b).filter((n) => n < P && !edgeThrough(map, b, n));
+    for (let i = 0; i < land.length; i++) {
+      for (let j = i + 1; j < land.length; j++) {
+        const a = land[i], c = land[j];
+        const [, la] = edgeParts(map, b, a);
+        const [, lc] = edgeParts(map, b, c);
+        if (la <= 0 || lc <= 0) continue;
+        // gemeinsamer Abschnitt ab b: grob abtasten, dann das Ende eingrenzen
+        const on = (km: number) => {
+          const [x, y] = edgePoint(map, b, a, km / la);
+          return closestOnEdge(map, b, c, x, y).d <= FORK_EPS;
+        };
+        const step = 0.25;
+        let ok = 0;
+        for (let km = step; km < Math.min(la, lc) - step && on(km); km += step) ok = km;
+        if (ok < FORK_MIN_KM - step) continue;
+        let lo = ok, hi = Math.min(ok + step, la);
+        for (let k = 0; k < 12; k++) {
+          const mid = (lo + hi) / 2;
+          if (on(mid)) lo = mid; else hi = mid;
+        }
+        if (lo < FORK_MIN_KM) continue;
+        const [x, y] = edgePoint(map, b, a, lo / la);
+        list.push({ b, a, c, fa: lo / la, fc: closestOnEdge(map, b, c, x, y).f });
+      }
+    }
+  }
+  forkCache.set(map, list);
+  return list;
+}
+
+/** Kante im erweiterten Netz: Ziel (Knoten oder Gabelpunkt) und das befahrene Teilstück */
+export interface ForkEdge { to: number; piece: Piece }
+
+export interface ForkGraph {
+  /** Knoten 0..N-1 wie im Bewegungsnetz, N.. die Gabelpunkte (nur für die Wegsuche, nie als Standort) */
+  n: number;
+  base: number;
+  adj: ForkEdge[][];
+  /** Gabelpunkte je Weg (Schlüssel min * N + max), Anteile vom kleineren Knoten aus, aufsteigend */
+  chain: Map<number, { f: number; node: number }[]>;
+}
+
+const forkGraphCache = new WeakMap<MapData, ForkGraph>();
+
+/**
+ * Erweitertes Bewegungsnetz für die Wegsuche: jeder Weg mit Gabelpunkten ist an ihnen unterteilt
+ * (u – g1 – g2 – … – v); an einem Gabelpunkt kann man auf den anderen Weg wechseln.
+ */
+export function forkGraph(map: MapData): ForkGraph {
+  let g = forkGraphCache.get(map);
+  if (g) return g;
+  const N = nodeCount(map);
+  const fs = forks(map);
+  const chain = new Map<number, { f: number; node: number }[]>();
+  const key = (u: number, v: number) => Math.min(u, v) * N + Math.max(u, v);
+  const put = (b: number, x: number, f: number, node: number) => {
+    const k = key(b, x);
+    const lo = Math.min(b, x);
+    (chain.get(k) ?? chain.set(k, []).get(k)!).push({ f: b === lo ? f : 1 - f, node });
+  };
+  fs.forEach((fk, i) => {
+    put(fk.b, fk.a, fk.fa, N + i);
+    put(fk.b, fk.c, fk.fc, N + i);
+  });
+  for (const list of chain.values()) list.sort((p, q) => p.f - q.f);
+  const adj: ForkEdge[][] = Array.from({ length: N + fs.length }, () => []);
+  // Teilstück zwischen zwei Punkten des Weges lo–hi (Anteile vom kleineren Knoten aus), in Fahrtrichtung
+  const piece = (lo: number, hi: number, fFrom: number, fTo: number): Piece =>
+    fTo >= fFrom ? { u: lo, v: hi, f0: fFrom, f1: fTo } : { u: hi, v: lo, f0: 1 - fFrom, f1: 1 - fTo };
+  for (let u = 0; u < N; u++) {
+    for (const v of nodeNeighbors(map, u)) {
+      if (v <= u) continue;
+      const pts = chain.get(key(u, v));
+      if (!pts?.length) {
+        adj[u].push({ to: v, piece: { u, v, f0: 0, f1: 1 } });
+        adj[v].push({ to: u, piece: { u: v, v: u, f0: 0, f1: 1 } });
+        continue;
+      }
+      // Kette u – g1 – … – gk – v (u ist der kleinere Knoten)
+      const seq = [{ f: 0, node: u }, ...pts, { f: 1, node: v }];
+      for (let k = 0; k + 1 < seq.length; k++) {
+        const p = seq[k], q = seq[k + 1];
+        if (p.node === q.node) continue;
+        adj[p.node].push({ to: q.node, piece: piece(u, v, p.f, q.f) });
+        adj[q.node].push({ to: p.node, piece: piece(u, v, q.f, p.f) });
+      }
+    }
+  }
+  g = { n: N + fs.length, base: N, adj, chain };
+  forkGraphCache.set(map, g);
+  return g;
+}
+
+/** Gabelpunkte auf dem Weg u–v mit ihrem Anteil von u aus (aufsteigend) */
+export function forksOnEdge(map: MapData, u: number, v: number): { f: number; node: number }[] {
+  const g = forkGraph(map);
+  const N = g.base;
+  const list = g.chain.get(Math.min(u, v) * N + Math.max(u, v)) ?? [];
+  return u < v ? list : list.map((p) => ({ f: 1 - p.f, node: p.node })).reverse();
+}

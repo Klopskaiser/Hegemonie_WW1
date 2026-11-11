@@ -13,9 +13,22 @@ export const ALL_RES: Res[] = ['money', 'grain', 'fish', 'iron', 'lumber', 'coal
 export type Cost = Partial<Record<Res, number>>;
 
 export const RES_NAMES: Record<Res, string> = {
-  money: 'Geld', grain: 'Getreide', fish: 'Fisch', iron: 'Eisen', lumber: 'Holz',
+  money: 'Pfund', grain: 'Getreide', fish: 'Fisch', iron: 'Eisen', lumber: 'Holz',
   coal: 'Kohle', oil: 'Öl', gas: 'Gas',
 };
+
+/** Einheit (Kurzform): Pfund als £, alle Rohstoffe in Tonnen (t) */
+export const RES_UNIT: Record<Res, string> = {
+  money: '£', grain: 't', fish: 't', iron: 't', lumber: 't', coal: 't', oil: 't', gas: 't',
+};
+
+/**
+ * Menge mit Einheit in Kurzform: „1.000 £“ bzw. „1.000 t Kohle“ (ohne Namen „1.000 t“).
+ * `n` ist die schon formatierte Zahl.
+ */
+export function amountText(r: Res, n: string, name = true): string {
+  return r === 'money' ? `${n} £` : `${n} t${name ? ` ${RES_NAMES[r]}` : ''}`;
+}
 
 export type Category = 'food' | 'materials' | 'energy';
 export const CATEGORY_OF: Record<Resource, Category> = {
@@ -105,7 +118,7 @@ export const BUILDINGS: Record<Building, BuildingDef> = {
     switchable: true,
     fromDay: 3,
     lives: 3,
-    points: () => ['Rohstoffproduktion +33 %', 'Moral +7 %', 'Truppen auf eigenen Schienen ×2,5 schneller', 'Unterhalt: 500 Kohle je Tag'],
+    points: () => ['Rohstoffproduktion +33 %', 'Moral +7 %', 'Truppen auf eigenen Schienen ×2,5 schneller', 'Unterhalt: 500 t Kohle je Tag'],
   },
   harbor: {
     name: 'Hafen', maxLevel: 1, coastal: true, fromDay: 3, lives: 3,
@@ -123,7 +136,7 @@ export const BUILDINGS: Record<Building, BuildingDef> = {
     moneyBonus: (l) => (l >= 1 ? 0.08 : 0),
     morale: (l) => (l >= 1 ? 0.02 : 0),
     upkeep: { fish: 20 },
-    points: () => ['Rohstoffproduktion +8 %', 'Geldproduktion +8 %', 'Moral +2 %', 'Nur in Provinzen ohne Küste', 'Unterhalt: 20 Fisch je Tag'],
+    points: () => ['Rohstoffproduktion +8 %', 'Einnahmen in Pfund +8 %', 'Moral +2 %', 'Nur in Provinzen ohne Küste', 'Unterhalt: 20 t Fisch je Tag'],
   },
   workshop: {
     name: 'Werkstatt', maxLevel: 2, lives: 1,
@@ -165,7 +178,7 @@ export const BUILDINGS: Record<Building, BuildingDef> = {
     requires: { recruitment: 1 },
     upkeep: { grain: 1000, money: 1000 },
     switchable: true,
-    points: (l) => [`Stellt Infanterie auf: bei 100 % Moral alle ${RECRUIT_HOURS[l]} h`, 'Voraussetzung: Wehramt', 'Doppelprovinz doppelt so schnell', 'Unterhalt: 1000 Getreide und 1000 Geld je Stufe und Tag'],
+    points: (l) => [`Stellt Infanterie auf: bei 100 % Moral alle ${RECRUIT_HOURS[l]} h`, 'Voraussetzung: Wehramt', 'Doppelprovinz doppelt so schnell', 'Unterhalt: 1000 t Getreide und 1000 £ je Stufe und Tag'],
   },
   recruitment: {
     name: 'Wehramt', maxLevel: 1, switchable: true, lives: 1,
@@ -174,7 +187,7 @@ export const BUILDINGS: Record<Building, BuildingDef> = {
     prodBonus: () => 0,
     morale: () => 0,
     upkeep: { money: 500 },
-    points: () => ['Infanterierekrutierung', 'Benötigt für Kaserne', 'Unterhalt: 500 Geld je Tag'],
+    points: () => ['Infanterierekrutierung', 'Benötigt für Kaserne', 'Unterhalt: 500 £ je Tag'],
   },
   office: {
     name: 'Bauamt', maxLevel: 1, switchable: true, lives: 1,
@@ -183,7 +196,7 @@ export const BUILDINGS: Record<Building, BuildingDef> = {
     prodBonus: () => 0,
     morale: (l) => (l >= 1 ? 0.02 : 0),
     upkeep: { money: 2000 },
-    points: () => [`Bauzeiten von Gebäuden in dieser Provinz −${Math.round(OFFICE_SPEEDUP * 100)} %`, 'Moral +2 %', 'Unterhalt: 2000 Geld je Tag'],
+    points: () => [`Bauzeiten von Gebäuden in dieser Provinz −${Math.round(OFFICE_SPEEDUP * 100)} %`, 'Moral +2 %', 'Unterhalt: 2000 £ je Tag'],
   },
   fortress: {
     name: 'Festung', maxLevel: 5, lives: 1,

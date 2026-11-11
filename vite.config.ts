@@ -70,5 +70,5 @@ export default defineConfig({
   plugins: [react(), mapEditor(), mapDrafts(import.meta.dirname)],
   worker: { format: 'es' },
   // Simulationstests rechnen mehrere Spieltage; 5 s Standardlimit reicht unter Last nicht immer
-  test: { include: ['tests/**/*.test.ts'], testTimeout: 20000 },
+  test: { include: ['tests/**/*.test.ts'], testTimeout: 30000 },
 });

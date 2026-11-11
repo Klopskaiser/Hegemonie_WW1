@@ -3,8 +3,8 @@
 import { DEFAULT_COMBAT_MORALE, SUPERIORITY, COMBAT_MORALE_V2, BUILDING_DAMAGE_CHANCE, BUILDINGS, buildingLives, DAY, DEFECTION, FORTRESS_REDUCTION, HOUR, MILITARY, MINUTE, MORALE, TROOP_MORALE, UNITS, WORKSHOP_REPAIR,
   type Building, type UnitType,
 } from './balance.ts';
-import { atWar, hasRightOfWay, setRelation, noteWarDeclaration } from './diplomacy.ts';
-import { edgeParts, edgePoint, edgePoints, edgeSlice, edgeThrough, isSea, nodeCount, nodeName, nodeNeighbors, nodePos, roadVariants } from './graph.ts';
+import { atWar, hasRightOfWay, setRelation, noteWarDeclaration, warKey } from './diplomacy.ts';
+import { closestOnEdge, edgeParts, edgePoint, edgePoints, edgeSlice, edgeThrough, forkGraph, forksOnEdge, isSea, nodeCount, nodeName, nodeNeighbors, nodePos, roadVariants, type Piece } from './graph.ts';
 import { inPolys } from './mapedits.ts';
 import type { MapData } from './mapdata.ts';
 import { activeCapital, activeLevel } from './economy.ts';
@@ -349,8 +349,7 @@ export function boardingWait(map: MapData, a: Army, time: number): { landing: bo
   const pr = m.prof, i = pauseIndex(pr);
   if (i < 0) return null;
   const p = Math.max(0, Math.min(1, (time - m.segStart) / Math.max(1, m.segEnd - m.segStart)));
-  const s = m.seg === 0 ? m.startFrac ?? 0 : 0;
-  const e = m.seg === m.path.length - 2 ? m.endFrac ?? 1 : 1;
+  const [s, e] = segRange(m, m.seg);
   const hs = profileHours(pr, s), he = profileHours(pr, e);
   const h = hs + (he - hs) * p;
   if (h < pr[i + 1] - 1e-9 || h >= pr[i + 3]) return null;
@@ -382,16 +381,52 @@ function profileFrac(p: number[], h: number): number {
 export interface PathTree {
   hours: Float64Array;
   prev: Int32Array;
+  /** Teilstück, über das ein Knoten erreicht wurde (mit Gabelungen; sonst ganze Wege) */
+  via?: (Piece | null)[];
+  /** Anzahl der echten Knoten im Bewegungsnetz; höhere Nummern sind Gabelpunkte (nur in der Wegsuche) */
+  base: number;
 }
 
-/** Reisezeiten von `from` zu allen erreichbaren Knoten (Dijkstra). */
-/** Kürzeste Wege ab `from` (Dijkstra). Mit `maxHours` endet die Suche dort: weiter entfernte Knoten bleiben unvollständig (Stunden > maxHours). */
-export function pathsFrom(state: GameState, map: MapData, a: Army, from: number, stopAt?: number, maxHours = Infinity): PathTree {
-  const n = nodeCount(map);
+/**
+ * Darf die Armee das Teilstück fahren? Ganze Wege wie canTraverse. Ein Teilstück, das in die Stadt (bzw. den
+ * Seepunkt) am Ende führt, verlangt deren Betreten; eines, das unterwegs endet (Gabelung, Wegziel), ist frei – Wege
+ * sind auch im Friedensgebiet offen, nur die fremde Stadt verlangt Krieg. Schiffe bleiben auf dem Wasser,
+ * Eisenbahngeschütze brauchen in jedem durchfahrenen Gebiet intakte, befahrbare Schienen.
+ */
+export function legOk(state: GameState, map: MapData, a: Army, p: Piece): boolean {
+  if (p.f0 <= 1e-9 && p.f1 >= 1 - 1e-9) return canTraverse(state, map, a, p.u, p.v);
+  if (p.f1 >= 1 - 1e-9 && !canEnter(state, map, a, p.v)) return false;
+  if (isNaval(a) && p.f1 < 1 - 1e-9 && !(isSea(map, p.u) && isSea(map, p.v))) return false;
+  if (!isRailOnly(a)) return true;
+  const [l1, len] = edgeParts(map, p.u, p.v);
+  const border = len > 0 ? l1 / len : 0.5;
+  const ok = (n: number) => isSea(map, n) || canEnter(state, map, a, n);
+  return (p.f0 >= border - 1e-9 || ok(p.u)) && (p.f1 <= border + 1e-9 || ok(p.v));
+}
+
+/**
+ * Kürzeste Wege ab `from` (Dijkstra). Mit `maxHours` endet die Suche dort: weiter entfernte Knoten bleiben
+ * unvollständig (Stunden > maxHours). Mit `forks` (Standard) über das erweiterte Netz: an Gabelungen lässt sich
+ * zwischen zusammengelegten Wegen wechseln, ohne die Stadt dahinter zu betreten. `from` darf dann auch ein
+ * Gabelpunkt sein (Nummer ≥ base).
+ */
+export function pathsFrom(state: GameState, map: MapData, a: Army, from: number, stopAt?: number, maxHours = Infinity, forks = true): PathTree {
+  const N = nodeCount(map);
+  const fg = forks ? forkGraph(map) : null;
+  const n = fg ? fg.n : N;
   const hours = new Float64Array(n).fill(Infinity);
   const prev = new Int32Array(n).fill(-1);
+  const via: (Piece | null)[] | undefined = fg ? new Array(n).fill(null) : undefined;
   const done = new Uint8Array(n);
   hours[from] = 0;
+  // Tempoverläufe je Weg (für Teilstücke)
+  const profs = new Map<number, number[]>();
+  const pieceHours = (p: Piece) => {
+    const k = p.u * N + p.v;
+    let pr = profs.get(k);
+    if (!pr) profs.set(k, (pr = segmentProfile(state, map, a, p.u, p.v)));
+    return profileHours(pr, p.f1) - profileHours(pr, p.f0);
+  };
   // binärer Heap aus [Stunden, Knoten]
   const heap: [number, number][] = [[0, from]];
   const push = (e: [number, number]) => {
@@ -428,27 +463,116 @@ export function pathsFrom(state: GameState, map: MapData, a: Army, from: number,
     if (best > maxHours) break;
     done[u] = 1;
     if (u === stopAt) break;
-    for (const v of nodeNeighbors(map, u)) {
-      if (done[v] || !canTraverse(state, map, a, u, v)) continue;
-      const c = best + segmentHours(state, map, a, u, v);
-      if (c < hours[v]) { hours[v] = c; prev[v] = u; push([c, v]); }
+    if (fg) {
+      for (const e of fg.adj[u]) {
+        const v = e.to;
+        if (done[v] || !legOk(state, map, a, e.piece)) continue;
+        const c = best + pieceHours(e.piece);
+        if (c < hours[v]) { hours[v] = c; prev[v] = u; via![v] = e.piece; push([c, v]); }
+      }
+    } else {
+      for (const v of nodeNeighbors(map, u)) {
+        if (done[v] || !canTraverse(state, map, a, u, v)) continue;
+        const c = best + segmentHours(state, map, a, u, v);
+        if (c < hours[v]) { hours[v] = c; prev[v] = u; push([c, v]); }
+      }
     }
   }
-  return { hours, prev };
+  return { hours, prev, via, base: N };
 }
 
+/** Knotenfolge zum Ziel (nur echte Knoten – Gabelpunkte werden ausgelassen) */
 export function pathTo(tree: PathTree, to: number): number[] | null {
   if (!isFinite(tree.hours[to])) return null;
   const path: number[] = [];
-  for (let v = to; v !== -1; v = tree.prev[v]) path.unshift(v);
+  for (let v = to; v !== -1; v = tree.prev[v]) if (v < tree.base) path.unshift(v);
   return path;
+}
+
+/** Befahrene Teilstücke zum Ziel (Gabelungen eingeschlossen) */
+function pathPieces(tree: PathTree, to: number): Piece[] {
+  const out: Piece[] = [];
+  for (let v = to; tree.prev[v] !== -1; v = tree.prev[v]) {
+    const u = tree.prev[v];
+    out.unshift(tree.via?.[v] ?? { u, v, f0: 0, f1: 1 });
+  }
+  return out;
+}
+
+/**
+ * Teilstücke in einen Marsch über das Bewegungsnetz umsetzen. Aufeinanderfolgende Stücke desselben Weges werden
+ * zusammengefasst (auch hin und zurück); an einer Gabelung wird ein Stück auf dem gemeinsamen Abschnitt auf den
+ * Weg des Nachbarstücks umgelegt, sodass jeder Wechsel von einem Zweig auf den anderen führt (a→b bis zur Gabel,
+ * dann b→c ab der Gabel – b wird nie betreten). null, wenn sich die Stücke nicht lückenlos verbinden lassen.
+ */
+function piecesToPlan(map: MapData, raw: Piece[], hours: number): MovePlan | null {
+  const E = 1e-6;
+  const same = (p: Piece, q: Piece) => (p.u === q.u && p.v === q.v) || (p.u === q.v && p.v === q.u);
+  const make = (u: number, v: number, x: number, y: number): Piece | null =>
+    Math.abs(y - x) < E ? null : y > x ? { u, v, f0: x, f1: y } : { u: v, v: u, f0: 1 - x, f1: 1 - y };
+  const at = (p: Piece, f: number) => edgePoint(map, p.u, p.v, f);
+  // liegt das Stück p ganz auf dem Weg von q (zusammengelegter Abschnitt)?
+  const onEdgeOf = (p: Piece, q: Piece) => [p.f0, (p.f0 + p.f1) / 2, p.f1].every((f) => {
+    const [x, y] = at(p, f);
+    return closestOnEdge(map, q.u, q.v, x, y).d <= 0.08;
+  });
+  // p auf den Weg von q umlegen (gleicher Verlauf, gleiche Fahrtrichtung)
+  const moveTo = (p: Piece, q: Piece): Piece | null => {
+    const [x0, y0] = at(p, p.f0), [x1, y1] = at(p, p.f1);
+    return make(q.u, q.v, closestOnEdge(map, q.u, q.v, x0, y0).f, closestOnEdge(map, q.u, q.v, x1, y1).f);
+  };
+  let ps = raw.filter((p) => p.f1 - p.f0 > E);
+  for (let changed = true; changed;) {
+    changed = false;
+    for (let i = 0; i + 1 < ps.length; i++) {
+      let p = ps[i], q = ps[i + 1];
+      if (!same(p, q)) {
+        // Wechsel in einer Stadt: nichts zu tun; an einer Gabelung ein Stück auf dem gemeinsamen Abschnitt umlegen
+        if (p.f1 >= 1 - E && q.f0 <= E) continue;
+        if (onEdgeOf(p, q)) {
+          const m = moveTo(p, q);
+          if (!m) { ps.splice(i, 1); changed = true; break; }
+          p = m;
+        } else if (onEdgeOf(q, p)) {
+          const m = moveTo(q, p);
+          if (!m) { ps.splice(i + 1, 1); changed = true; break; }
+          q = m;
+        } else continue;
+        if (!same(p, q)) continue;
+      }
+      // gleicher Weg: zu einem Stück zusammenfassen (Fahrt von p.f0 bis zum Ende von q, in der Ausrichtung von p)
+      const qEnd = q.u === p.u ? q.f1 : 1 - q.f1;
+      const merged = make(p.u, p.v, p.f0, qEnd);
+      ps.splice(i, 2, ...(merged ? [merged] : []));
+      changed = true;
+      break;
+    }
+  }
+  if (!ps.length) return null;
+  for (let i = 0; i + 1 < ps.length; i++) {
+    const p = ps[i], q = ps[i + 1];
+    if (p.v !== q.u) return null;
+    const [x0, y0] = at(p, p.f1), [x1, y1] = at(q, q.f0);
+    if (Math.hypot(x0 - x1, y0 - y1) > 0.2) return null;
+  }
+  const plan: MovePlan = { path: [ps[0].u, ...ps.map((p) => p.v)], hours };
+  const cut: Record<number, [number, number]> = {};
+  const last = ps.length - 1;
+  ps.forEach((p, k) => {
+    const s = p.f0 > E ? p.f0 : 0, e = p.f1 < 1 - E ? p.f1 : 1;
+    if (k === 0 && s > 0) plan.startFrac = s;
+    if (k === last && e < 1) plan.endFrac = e;
+    if ((k > 0 && s > 0) || (k < last && e < 1)) cut[k] = [s, e];
+  });
+  if (Object.keys(cut).length) plan.cut = cut;
+  return plan;
 }
 
 /** Schnellster Weg (nach Reisezeit). */
 export function findPath(state: GameState, map: MapData, a: Army, from: number, to: number): { path: number[]; hours: number } | null {
   if (from === to) return { path: [from], hours: 0 };
   if (!canEnter(state, map, a, to)) return null;
-  const tree = pathsFrom(state, map, a, from, to);
+  const tree = pathsFrom(state, map, a, from, to, Infinity, false);
   const path = pathTo(tree, to);
   return path ? { path, hours: tree.hours[to] } : null;
 }
@@ -472,6 +596,15 @@ export interface MovePlan {
   /** Start bzw. Ziel auf einem Weg (Anteil des ersten bzw. letzten Abschnitts) */
   startFrac?: number;
   endFrac?: number;
+  /** Teilstücke an Gabelungen (siehe Movement.cut) */
+  cut?: Record<number, [number, number]>;
+}
+
+/** Befahrener Bereich [von, bis] des Abschnitts k (Anteile von path[k] aus): Teilstück, Start- bzw. Zielanteil */
+export function segRange(m: { path: number[]; startFrac?: number; endFrac?: number; cut?: Record<number, [number, number]> }, k: number): [number, number] {
+  const c = m.cut?.[k];
+  if (c) return c;
+  return [k === 0 ? m.startFrac ?? 0 : 0, k === m.path.length - 2 ? m.endFrac ?? 1 : 1];
 }
 
 /** Ziel eines Marsches: Knoten oder Punkt auf einem Weg */
@@ -481,8 +614,7 @@ export type MoveTarget = { node: number } | { road: RoadPos };
 function moveFrac(a: Army, time: number): number {
   const m = a.move!;
   const p = Math.max(0, Math.min(1, (time - m.segStart) / Math.max(1, m.segEnd - m.segStart)));
-  const s = m.seg === 0 ? m.startFrac ?? 0 : 0;
-  const e = m.seg === m.path.length - 2 ? m.endFrac ?? 1 : 1;
+  const [s, e] = segRange(m, m.seg);
   if (!m.prof) return s + (e - s) * p;
   // gleichmäßig in der Zeit, aber jeder Teil des Weges in seinem eigenen Tempo
   const hs = profileHours(m.prof, s), he = profileHours(m.prof, e);
@@ -512,7 +644,6 @@ export function normalizeTarget(t: MoveTarget): MoveTarget {
   return t;
 }
 
-interface Leg { node: number; path: number[]; frac: number; hours: number }
 
 /**
  * Marschplan vom aktuellen Standort (Knoten oder Weg) zu einem Knoten oder Wegpunkt.
@@ -577,54 +708,97 @@ export function planRoute(state: GameState, map: MapData, a: Army, time: number,
     }
     if (direct) return direct;
   }
-  const starts: Leg[] = 'node' in from
-    ? [{ node: from.node, path: [from.node], frac: 0, hours: 0 }]
-    : [
-      { node: from.road.b, path: [from.road.a, from.road.b], frac: from.road.f, hours: seg(from.road.a, from.road.b) * (1 - from.road.f) },
-      { node: from.road.a, path: [from.road.b, from.road.a], frac: 1 - from.road.f, hours: seg(from.road.b, from.road.a) * from.road.f },
-    ].filter((l) => canEnter(state, map, a, l.node));
-  const ends: Leg[] = 'node' in to
-    ? [{ node: to.node, path: [to.node], frac: 1, hours: 0 }]
-    : roadT!.flatMap((t) => [
-      { node: t.a, path: [t.a, t.b], frac: t.f, hours: seg(t.a, t.b) * t.f },
-      { node: t.b, path: [t.b, t.a], frac: 1 - t.f, hours: seg(t.b, t.a) * (1 - t.f) },
-    ]);
-  let best: MovePlan | null = null;
-  for (const s of starts) {
-    const tree = pathsFrom(state, map, a, s.node);
-    for (const e of ends) {
-      if (!canEnter(state, map, a, e.node) && e.node !== s.node) continue;
-      const mid = pathTo(tree, e.node);
-      if (!mid) continue;
-      let hours = s.hours + tree.hours[e.node] + e.hours;
-      let path = [...s.path.slice(0, -1), ...mid];
-      if (e.path.length > 1) path = [...path, e.path[1]];
-      // Hin und gleich wieder zurück auf demselben Weg vermeiden
-      if (path.length < 2) continue;
-      let endFrac = e.path.length > 1 ? e.frac : undefined;
-      if (endFrac !== undefined) {
-        // Wegziel jenseits einer Grenze, die nicht überschritten werden darf: bis knapp davor
-        const u = path[path.length - 2], v = path[path.length - 1];
-        const lim = roadLimit(state, map, a, u, v);
-        if (endFrac > lim) {
-          hours -= seg(u, v) * (endFrac - lim);
-          endFrac = lim;
-          if (lim < ROAD_EPS) {
-            path = path.slice(0, -1);
-            endFrac = undefined;
-            if (path.length < 2) continue;
-          }
-        }
+  // Wegsuche im erweiterten Netz (Knoten und Gabelpunkte). Start und Ziel auf einem Weg schließen an die nächsten
+  // Punkte der Kette dieses Weges an (Endpunkte oder Gabelpunkte) – in allen geometrisch gleichen Auslegungen, damit
+  // eine Armee auf einem zusammengelegten Abschnitt jeden der Wege nehmen kann.
+  type End = { node: number; pieces: Piece[]; hours: number };
+  const N = nodeCount(map);
+  const pieceHours = (p: Piece) => {
+    const pr = segmentProfile(state, map, a, p.u, p.v);
+    return profileHours(pr, p.f1) - profileHours(pr, p.f0);
+  };
+  // nächste Punkte der Kette des Weges x–y vom Anteil f aus: Richtung y (größere Anteile) und Richtung x
+  const around = (x: number, y: number, f: number) => {
+    const pts = [{ f: 0, node: x }, ...forksOnEdge(map, x, y), { f: 1, node: y }];
+    let up = pts[pts.length - 1], down = pts[0];
+    for (const p of pts) {
+      if (p.f > f + 1e-9 && p.f < up.f) up = p;
+      if (p.f < f - 1e-9 && p.f > down.f) down = p;
+    }
+    return { up, down };
+  };
+  const starts: End[] = [];
+  if ('node' in from) starts.push({ node: from.node, pieces: [], hours: 0 });
+  else {
+    for (const r of roadVariants(map, from.road.a, from.road.b, from.road.f)) {
+      const { up, down } = around(r.a, r.b, r.f);
+      const legs: [number, Piece][] = [
+        [up.node, { u: r.a, v: r.b, f0: r.f, f1: up.f }],
+        [down.node, { u: r.b, v: r.a, f0: 1 - r.f, f1: 1 - down.f }],
+      ];
+      for (const [node, piece] of legs) {
+        if (piece.f1 - piece.f0 <= 1e-9 || !legOk(state, map, a, piece)) continue;
+        starts.push({ node, pieces: [piece], hours: pieceHours(piece) });
       }
-      if (best && hours >= best.hours) continue;
-      best = {
-        path, hours,
-        ...(s.path.length > 1 ? { startFrac: s.frac } : {}),
-        ...(endFrac !== undefined ? { endFrac } : {}),
-      };
     }
   }
-  return best;
+  const ends: End[] = [];
+  if ('node' in to) ends.push({ node: to.node, pieces: [], hours: 0 });
+  else {
+    for (const t of roadT!) {
+      const { up, down } = around(t.a, t.b, t.f);
+      const legs: [number, Piece][] = [
+        [down.node, { u: t.a, v: t.b, f0: down.f, f1: t.f }],
+        [up.node, { u: t.b, v: t.a, f0: 1 - up.f, f1: 1 - t.f }],
+      ];
+      for (const [node, piece] of legs) {
+        if (piece.f1 - piece.f0 <= 1e-9) continue;
+        ends.push({ node, pieces: [piece], hours: pieceHours(piece) });
+      }
+    }
+  }
+  const trees = new Map<number, PathTree>();
+  const cands: { pieces: Piece[]; hours: number }[] = [];
+  for (const s of starts) {
+    let tree = trees.get(s.node);
+    if (!tree) trees.set(s.node, (tree = pathsFrom(state, map, a, s.node)));
+    for (const e of ends) {
+      if (e.node < N && e.node !== s.node && !canEnter(state, map, a, e.node)) continue;
+      if (!isFinite(tree.hours[e.node])) continue;
+      cands.push({ pieces: [...s.pieces, ...pathPieces(tree, e.node), ...e.pieces], hours: s.hours + tree.hours[e.node] + e.hours });
+    }
+  }
+  cands.sort((x, y) => x.hours - y.hours);
+  for (const c of cands) {
+    const plan = piecesToPlan(map, c.pieces, c.hours);
+    if (!plan || plan.path.length < 2) continue;
+    if ('road' in to) {
+      // Wegziel jenseits einer Grenze, die nicht überschritten werden darf: bis knapp davor (Eisenbahngeschütze)
+      const k = plan.path.length - 2;
+      const u = plan.path[k], v = plan.path[k + 1];
+      const [s0, e0] = segRange(plan, k);
+      const lim = roadLimit(state, map, a, u, v);
+      if (e0 > lim) {
+        plan.hours -= seg(u, v) * (e0 - lim);
+        if (lim < Math.max(ROAD_EPS, s0 + ROAD_EPS)) {
+          // bis zur Stadt davor (nur wenn der letzte Abschnitt dort beginnt)
+          if (s0 > 1e-9) continue;
+          plan.path = plan.path.slice(0, -1);
+          delete plan.endFrac;
+          if (plan.cut) delete plan.cut[k];
+          if (plan.path.length < 2) continue;
+          const [, pe] = segRange(plan, plan.path.length - 2);
+          if (pe < 1) plan.endFrac = pe;
+        } else if (plan.cut?.[k]) {
+          plan.cut[k] = [s0, lim];
+          plan.endFrac = lim;
+        } else plan.endFrac = lim;
+      }
+    }
+    if (plan.cut && !Object.keys(plan.cut).length) delete plan.cut;
+    return plan;
+  }
+  return null;
 }
 
 /**
@@ -651,7 +825,7 @@ export function planMove(state: GameState, map: MapData, a: Army, from: number, 
   return r ? { path: r.path, hours: r.hours } : null;
 }
 
-export function startMove(ctx: MilitaryContext, a: Army, path: number[], then?: number[], frac?: { startFrac?: number; endFrac?: number; wait?: number }): void {
+export function startMove(ctx: MilitaryContext, a: Army, path: number[], then?: number[], frac?: { startFrac?: number; endFrac?: number; wait?: number; cut?: Record<number, [number, number]> }): void {
   if (path.length < 2) {
     a.move = null;
     if (then) disembark(ctx, a, then);
@@ -667,14 +841,14 @@ export function startMove(ctx: MilitaryContext, a: Army, path: number[], then?: 
   if (frac?.startFrac !== undefined) a.move.startFrac = frac.startFrac;
   if (frac?.endFrac !== undefined) a.move.endFrac = frac.endFrac;
   if (frac?.wait !== undefined) a.move.wait = frac.wait;
+  if (frac?.cut && Object.keys(frac.cut).length) a.move.cut = frac.cut;
   a.move.segEnd = t + segmentDuration(ctx.state, ctx.map, a, 0);
 }
 
 /** Dauer eines Abschnitts in ms, gekürzt um Start- bzw. Zielanteil; merkt sich den Tempoverlauf */
 function segmentDuration(state: GameState, map: MapData, a: Army, k: number): number {
   const m = a.move!;
-  const s = k === 0 ? m.startFrac ?? 0 : 0;
-  const e = k === m.path.length - 2 ? m.endFrac ?? 1 : 1;
+  const [s, e] = segRange(m, k);
   m.prof = segmentProfile(state, map, a, m.path[k], m.path[k + 1]);
   if (k === 0 && m.wait !== undefined) m.prof = withPause(m.prof, m.wait);
   return minuteRound(Math.max(0, profileHours(m.prof, e) - profileHours(m.prof, s)) * HOUR);
@@ -693,8 +867,7 @@ export function retimeMarches(ctx: MilitaryContext, province: number): void {
     if (!m || !m.prof || pauseIndex(m.prof) >= 0) continue;
     const u = m.path[m.seg], v = m.path[m.seg + 1];
     if (u !== province && v !== province && edgeThrough(map, u, v)?.via !== province) continue;
-    const s = m.seg === 0 ? m.startFrac ?? 0 : 0;
-    const e = m.seg === m.path.length - 2 ? m.endFrac ?? 1 : 1;
+    const [s, e] = segRange(m, m.seg);
     const f = moveFrac(a, t);
     const prof = segmentProfile(state, map, a, u, v);
     const hs = profileHours(prof, s), he = profileHours(prof, e), hNow = profileHours(prof, f);
@@ -743,11 +916,10 @@ export function armyPosition(map: MapData, a: Army, time: number): [number, numb
 }
 
 /** Punktfolge eines Weges über mehrere Abschnitte, mit Start-/Zielanteil */
-export function routePoints(map: MapData, path: number[], startFrac = 0, endFrac = 1): [number, number][] {
+export function routePoints(map: MapData, path: number[], startFrac = 0, endFrac = 1, cut?: Record<number, [number, number]>): [number, number][] {
   const pts: [number, number][] = [];
   for (let k = 0; k + 1 < path.length; k++) {
-    const s = k === 0 ? startFrac : 0;
-    const e = k === path.length - 2 ? endFrac : 1;
+    const [s, e] = segRange({ path, startFrac, endFrac, cut }, k);
     const part = edgeSlice(map, path[k], path[k + 1], s, e);
     pts.push(...(pts.length ? part.slice(1) : part));
   }
@@ -758,7 +930,12 @@ export function routePoints(map: MapData, path: number[], startFrac = 0, endFrac
 export function remainingRoute(map: MapData, a: Army, time: number): [number, number][] {
   const m = a.move;
   if (!m) return [armyPosition(map, a, time)];
-  const rest = routePoints(map, m.path.slice(m.seg), moveFrac(a, time), m.endFrac ?? 1);
+  const rest: [number, number][] = [];
+  for (let k = m.seg; k + 1 < m.path.length; k++) {
+    const [s, e] = segRange(m, k);
+    const part = edgeSlice(map, m.path[k], m.path[k + 1], k === m.seg ? moveFrac(a, time) : s, e);
+    rest.push(...(rest.length ? part.slice(1) : part));
+  }
   if (m.then) rest.push(...routePoints(map, m.then).slice(1));
   return rest;
 }
@@ -775,6 +952,18 @@ export function samePlace(a: Army, b: Army): boolean {
   const p = a.pos, q = b.pos;
   if (!p || !q) return !p && !q;
   return (p.a === q.a && p.b === q.b && Math.abs(p.f - q.f) < 1e-6) || (p.a === q.b && p.b === q.a && Math.abs(p.f + q.f - 1) < 1e-6);
+}
+
+/**
+ * Darf `b` von Hand mit `a` zusammengelegt werden? Beide stehen und sind am selben Ort oder höchstens
+ * MILITARY.meleeKm voneinander entfernt (Schiffe, die zum Feuern „genau dort“ angehalten haben, stehen selten
+ * auf exakt demselben Wegpunkt).
+ */
+export function closeEnoughToMerge(map: MapData, a: Army, b: Army, time: number): boolean {
+  if (a.move || b.move) return false;
+  if (samePlace(a, b)) return true;
+  const p = armyPosition(map, a, time), q = armyPosition(map, b, time);
+  return Math.hypot(p[0] - q[0], p[1] - q[1]) <= MILITARY.meleeKm + 1e-6;
 }
 
 /** Stehende Feinde in Nahkampfreichweite von `a` (bzw. vom Punkt `at`, etwa beim Eintreffen an einem Knoten) */
@@ -899,12 +1088,13 @@ export function processArrivals(ctx: MilitaryContext): void {
     if (gone(state, a)) continue;
     while (a.move && a.move.segEnd <= state.time) {
       const m = a.move;
+      const [, segE] = segRange(m, m.seg);
       // Ziel auf einem Weg erreicht: dort stehen bleiben (keine Eroberung, die Stadt ist nicht erreicht)
-      if (m.seg === m.path.length - 2 && m.endFrac !== undefined && m.endFrac < 1) {
+      if (m.seg === m.path.length - 2 && segE < 1) {
         const u = m.path[m.seg], v = m.path[m.seg + 1];
         a.move = null;
-        a.pos = { a: u, b: v, f: m.endFrac };
-        a.node = roadAnchor(map, u, v, m.endFrac);
+        a.pos = { a: u, b: v, f: segE };
+        a.node = roadAnchor(map, u, v, segE);
         declareOnArrival(ctx, a);
         catchWaiting(map, state, a);
         const hostile = hostileNear(state, map, a);
@@ -917,6 +1107,21 @@ export function processArrivals(ctx: MilitaryContext): void {
           for (const n of [u, v]) if (!isSea(map, n)) cleanup(ctx, n);
         }
         break;
+      }
+      // Wechsel an einer Gabelung: der Abschnitt endet am Gabelpunkt, die Stadt path[seg + 1] wird nicht betreten
+      if (segE < 1 - 1e-9) {
+        m.seg++;
+        const u = m.path[m.seg], v = m.path[m.seg + 1];
+        const [s2, e2] = segRange(m, m.seg);
+        a.node = roadAnchor(map, u, v, s2);
+        if (!legOk(state, map, a, { u, v, f0: s2, f1: e2 })) {
+          a.move = null;
+          a.pos = { a: u, b: v, f: s2 };
+          break;
+        }
+        m.segStart = m.segEnd;
+        m.segEnd = m.segStart + segmentDuration(state, map, a, m.seg);
+        continue;
       }
       const node = m.path[m.seg + 1];
       a.node = node;
@@ -952,9 +1157,13 @@ export function processArrivals(ctx: MilitaryContext): void {
         break;
       }
       const next = m.path[m.seg + 1];
-      // letztes Teilstück zu einem Wegpunkt: nur bis dorthin (darf vor einer Grenze enden)
-      const partial = m.seg + 1 === m.path.length - 1 && m.endFrac !== undefined && m.endFrac < 1;
-      if (partial ? m.endFrac! > roadLimit(state, map, a, node, next) + 1e-9 : !canTraverse(state, map, a, node, next)) {
+      const [, nextE] = segRange(m, m.seg);
+      // letztes Teilstück zu einem Wegpunkt: nur bis dorthin (darf vor einer Grenze enden); Teilstück bis zu einer
+      // Gabelung: die Stadt dahinter wird nicht betreten
+      const partial = m.seg + 1 === m.path.length - 1 && nextE < 1;
+      const toFork = !partial && nextE < 1 - 1e-9;
+      if (partial ? nextE > roadLimit(state, map, a, node, next) + 1e-9
+        : toFork ? !legOk(state, map, a, { u: node, v: next, f0: 0, f1: nextE }) : !canTraverse(state, map, a, node, next)) {
         a.move = null;
         break;
       }
@@ -1036,9 +1245,13 @@ function ownWithin(state: GameState, map: MapData, a: Army, p: [number, number],
   return false;
 }
 
-/** Darf automatisch in einen Verband aufgenommen werden (nicht vom Spieler abgeteilt, ohne Angriffsziel) */
+/**
+ * Darf automatisch in einen Verband aufgenommen werden (nicht vom Spieler abgeteilt, ohne ausdrückliches
+ * Angriffsziel). Ein selbständig erfasstes Fernkampfziel hindert nicht – sonst blieben Schlachtschiffe und
+ * Artillerie, die fast immer etwas im Visier haben, ewig getrennt.
+ */
 function mergeable(a: Army): boolean {
-  return !a.keepApart && attackTarget(a) == null && a.target == null && unitCount(a) > 0;
+  return !a.keepApart && attackTarget(a) == null && (a.target == null || !!a.autoTarget) && unitCount(a) > 0;
 }
 
 /** Wer im Verband vorne steht (und am Ort bleibt): ohne eigenen Marschbefehl zuerst, dann die größte */
@@ -1123,8 +1336,7 @@ export function pausedAt(a: Army, time: number): boolean {
 function moveHours(a: Army, time: number): number {
   const m = a.move!;
   const p = Math.max(0, Math.min(1, (time - m.segStart) / Math.max(1, m.segEnd - m.segStart)));
-  const s = m.seg === 0 ? m.startFrac ?? 0 : 0;
-  const e = m.seg === m.path.length - 2 ? m.endFrac ?? 1 : 1;
+  const [s, e] = segRange(m, m.seg);
   const hs = profileHours(m.prof!, s), he = profileHours(m.prof!, e);
   return hs + (he - hs) * p;
 }
@@ -1160,8 +1372,7 @@ export function pauseEnds(ctx: MilitaryContext): boolean {
     const pe = m.prof[i + 3];
     if (!(moveHours(a, Math.max(m.segStart, t - MINUTE)) < pe && moveHours(a, t) >= pe)) continue;
     // Zeitpunkt des Pausenendes (dort anhalten, nicht ein Stück weiter)
-    const s = m.seg === 0 ? m.startFrac ?? 0 : 0;
-    const e = m.seg === m.path.length - 2 ? m.endFrac ?? 1 : 1;
+    const [s, e] = segRange(m, m.seg);
     const hs = profileHours(m.prof, s), he = profileHours(m.prof, e);
     const tEnd = Math.round(m.segStart + ((pe - hs) / Math.max(1e-9, he - hs)) * (m.segEnd - m.segStart));
     const at = armyPosition(map, a, tEnd);
@@ -1194,8 +1405,15 @@ function standingPosition(map: MapData, a: Army): [number, number] {
 
 /**
  * Annäherung auf Nahkampfreichweite: eine marschierende Armee, die gerade in den Umkreis einer Armee im
- * Krieg kommt (vor einer Minute noch außerhalb), bleibt stehen – ebenso die andere, falls sie marschiert.
- * Wer schon im Umkreis losmarschiert, wird nicht aufgehalten. Gesucht wird über ein Raster (Zellen = Umkreis).
+ * Krieg kommt (vor einer Minute noch nicht in Kontakt), bleibt stehen – ebenso die andere, falls sie marschiert.
+ * Geprüft wird die ganze Bahn der letzten Minute, nicht nur ihr Endpunkt: schnelle Truppen (Bahn, Panzerwagen,
+ * Gewaltmarsch) legen mehr als einen Umkreis je Minute zurück und zögen sonst an Gegnern vorbei.
+ * Landungstruppen auf dem Wasser (vor dem Ende der Ausschiffpause) gelten nicht als in Kontakt – kommen sie an
+ * Land in den Umkreis eines Gegners, werden sie gestellt, auch wenn sie ihm auf dem Wasser schon nahe waren.
+ * Wer schon in Kontakt losmarschiert, wird nicht aufgehalten. Gesucht wird über ein Raster (Zellen = Umkreis).
+ * Im Frieden gilt an Land dasselbe für Truppen ohne Wegrecht (Durchmarschrecht, Bündnis): begegnen sie sich, beginnt
+ * der Krieg – das ist der einzige Kriegsgrund unterwegs. Wege durch fremdes Gebiet (auch über Gabelungen an fremden
+ * Städten vorbei) sind frei, solange keine Truppen im Weg stehen.
  */
 function approach(ctx: MilitaryContext): boolean {
   const { state, map } = ctx;
@@ -1204,59 +1422,148 @@ function approach(ctx: MilitaryContext): boolean {
   const rebels = state.armies.some((b) => b.owner === REBELS);
   const warring = new Map<string, boolean>();
   const inWar = (o: string) => warring.get(o) ?? warring.set(o, rebels || o === REBELS || Object.values(state.relations[o] ?? {}).includes('war')).get(o)!;
-  const moving = state.armies.filter((a) => a.move && inWar(a.owner) && unitCount(a) > 0);
+  // im Krieg alle, sonst Landtruppen (Begegnung ohne Wegrecht beginnt einen Krieg)
+  const moving = state.armies.filter((a) => a.move && unitCount(a) > 0 && (inWar(a.owner) || !isNaval(a)));
   if (!moving.length) return false;
   const cells = standingCells(state, map);
+  const t0 = state.time - MINUTE;
   const now = new Map<Army, [number, number]>();
+  // Bahn der letzten Minute als Polylinie (Wege knicken in Städten und an Grenzen)
+  const SUB = 4;
+  const trail = new Map<Army, [number, number][]>();
   const grid = new Map<number, Army[]>();
-  for (const a of moving) {
-    const p = armyPosition(map, a, state.time);
-    now.set(a, p);
-    const k = cellOf(p[0]) * 100000 + cellOf(p[1]);
-    (grid.get(k) ?? grid.set(k, []).get(k)!).push(a);
-  }
-  const pos = (a: Army) => now.get(a) ?? standingPosition(map, a);
-  const before = new Map<Army, [number, number]>();
-  const prev = (a: Army): [number, number] => {
-    if (!a.move) return pos(a);
-    let p = before.get(a);
-    if (!p) before.set(a, (p = armyPosition(map, a, Math.max(a.move.segStart, state.time - MINUTE))));
-    return p;
+  let vmax = 0;
+  // Ort zur Zeit t innerhalb der letzten Minute – auch vor Beginn des laufenden Abschnitts (gerade einen Knoten
+  // passiert: dann auf dem vorigen Abschnitt, linear genähert), sonst sähen zwei Armeen, die zugleich durch eine
+  // Stadt ziehen, einander „schon vorher in Kontakt“
+  const posAt = (x: Army, t: number): [number, number] => {
+    const m = x.move;
+    if (!m) return standingPosition(map, x);
+    if (t >= m.segStart || m.seg === 0) return armyPosition(map, x, Math.max(m.segStart, t));
+    const u = m.path[m.seg - 1], v = m.path[m.seg];
+    const [ps, pe] = segRange(m, m.seg - 1);
+    const dur = segmentHours(state, map, x, u, v) * HOUR;
+    const f = dur > 0 ? Math.max(ps, pe - (m.segStart - t) / dur) : pe;
+    return edgePoint(map, u, v, f);
   };
   const d = (p: [number, number], q: [number, number]) => Math.hypot(p[0] - q[0], p[1] - q[1]);
-  // Gegner im Krieg, der gerade erst in den Umkreis gekommen ist (vor einer Minute noch draußen)
-  const fresh = (a: Army, b: Army) => b !== a && b.owner !== a.owner && unitCount(b) > 0 && atWar(state, a.owner, b.owner)
-    && d(prev(a), prev(b)) > R;
+  // grob: Anfang, Ende und ein in der Minute passierter Knoten; die Polylinie erst, wenn ein Gegner in der Nähe ist
+  const coarse = new Map<Army, { pts: [number, number][]; len: number }>();
+  for (const a of moving) {
+    const m = a.move!;
+    const p0 = posAt(a, t0), p1 = armyPosition(map, a, state.time);
+    const pts: [number, number][] = [p0, p1];
+    let len = d(p0, p1);
+    if (m.segStart > t0 && m.seg > 0) {
+      const c = nodePos(map, m.path[m.seg]);
+      pts.push(c);
+      len = d(p0, c) + d(c, p1);
+    }
+    coarse.set(a, { pts, len });
+    now.set(a, p1);
+    vmax = Math.max(vmax, len);
+  }
+  // Marschierende in einem gröberen Raster (Zelle ≥ Umkreis plus doppelte Minutenstrecke): wenige Zellen je Suche,
+  // auch wenn einzelne Armeen (Bahn, Schiffe) schnell sind
+  const S = Math.max(4 * R, R + 2 * vmax);
+  const coarseCell = (v: number) => Math.floor(v / S) + 50000;
+  for (const a of moving) {
+    const p1 = now.get(a)!;
+    const k = coarseCell(p1[0]) * 100000 + coarseCell(p1[1]);
+    (grid.get(k) ?? grid.set(k, []).get(k)!).push(a);
+  }
+  const trailOf = (x: Army): [number, number][] => {
+    let t = trail.get(x);
+    if (!t) {
+      t = x.move ? Array.from({ length: SUB + 1 }, (_, k) => posAt(x, t0 + (MINUTE * k) / SUB)) : Array(SUB + 1).fill(standingPosition(map, x));
+      trail.set(x, t);
+    }
+    return t;
+  };
+  // Abstand des Ursprungs zur Strecke w0–w1 (relative Bewegung zweier Armeen, linear genähert)
+  const segDist = (w0: [number, number], w1: [number, number]) => {
+    const dx = w1[0] - w0[0], dy = w1[1] - w0[1];
+    const l2 = dx * dx + dy * dy;
+    const s = l2 > 0 ? Math.max(0, Math.min(1, -(w0[0] * dx + w0[1] * dy) / l2)) : 0;
+    return Math.hypot(w0[0] + dx * s, w0[1] + dy * s);
+  };
+  // in Kontakt: im Umkreis und keiner der beiden schwimmt noch als Landung auf dem Wasser
+  const contact = (a: Army, b: Army, t: number) => d(posAt(a, t), posAt(b, t)) <= R
+    && !(a.move && landingAfloat(map, a, t)) && !(b.move && landingAfloat(map, b, t));
+  // Gegner: im Krieg – oder im Frieden ohne Wegrecht, beide an Land (Zusammenstoß, dann Krieg)
+  const onLand = (x: Army) => !isNaval(x) && currentProvince(map, x, state.time) >= 0;
+  const foe = (a: Army, b: Army) => b !== a && b.owner !== a.owner && unitCount(b) > 0 && (atWar(state, a.owner, b.owner)
+    || (a.owner !== REBELS && b.owner !== REBELS && !hasRightOfWay(state, a.owner, b.owner) && onLand(a) && onLand(b)));
   let met = false;
   for (const a of moving) {
     if (!a.move) continue;
-    const pa = now.get(a)!;
-    let hit: Army | null = standingNear(state, map, pa, cells).find((b) => fresh(a, b)) ?? null;
-    if (!hit) {
-      const cx = cellOf(pa[0]), cy = cellOf(pa[1]);
-      for (let dx = -1; dx <= 1 && !hit; dx++) {
-        for (let dy = -1; dy <= 1 && !hit; dy++) {
-          for (const b of grid.get((cx + dx) * 100000 + cy + dy) ?? []) {
-            if (b.move && now.has(b) && d(pa, now.get(b)!) <= R && fresh(a, b)) { hit = b; break; }
-          }
+    // Kandidaten: alle Zellen entlang der Bahn (stehende) bzw. zusätzlich um die Strecke anderer Marschierer erweitert;
+    // Spielraum für Knicke des Weges innerhalb der Minute
+    const cand: Army[] = [];
+    const co = coarse.get(a)!;
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (const p of co.pts) {
+      if (p[0] < minX) minX = p[0];
+      if (p[0] > maxX) maxX = p[0];
+      if (p[1] < minY) minY = p[1];
+      if (p[1] > maxY) maxY = p[1];
+    }
+    const bend = co.len / 2 + 0.1;
+    const scan = (grow: number, src: Map<number, Army[]>, cell: (v: number) => number) => {
+      const x0 = cell(minX - grow), x1 = cell(maxX + grow), y0 = cell(minY - grow), y1 = cell(maxY + grow);
+      for (let cx = x0; cx <= x1; cx++) {
+        for (let cy = y0; cy <= y1; cy++) {
+          const list = src.get(cx * 100000 + cy);
+          if (!list) continue;
+          for (const b of list) if (b.owner !== a.owner && !cand.includes(b) && foe(a, b)) cand.push(b);
         }
       }
+    };
+    scan(R + bend, cells, cellOf);
+    scan(R + bend + vmax, grid, coarseCell);
+    let hit: Army | null = null, when = Infinity;
+    for (const b of cand) {
+      const ta = trailOf(a), tb = trailOf(b);
+      // Vorfilter: relative Bewegung je Teilstück linear genähert; Spielraum für Knicke innerhalb eines Teilstücks
+      let near = false, len = 0;
+      for (let k = 0; k < SUB; k++) {
+        const w0: [number, number] = [ta[k][0] - tb[k][0], ta[k][1] - tb[k][1]];
+        const w1: [number, number] = [ta[k + 1][0] - tb[k + 1][0], ta[k + 1][1] - tb[k + 1][1]];
+        const step = d(ta[k], ta[k + 1]) + d(tb[k], tb[k + 1]);
+        len += step;
+        if (segDist(w0, w1) <= R + step / 2 + 0.05) near = true;
+      }
+      if (!near) continue;
+      if (contact(a, b, t0)) continue; // schon vorher in Kontakt
+      // erster Kontakt innerhalb der Minute: grob abtasten, dann eingrenzen
+      const steps = Math.max(8, Math.min(48, Math.ceil(len / (R / 4))));
+      let lo = t0, hi = -1;
+      for (let k = 1; k <= steps; k++) {
+        const t = t0 + (MINUTE * k) / steps;
+        if (contact(a, b, t)) { hi = t; break; }
+        lo = t;
+      }
+      if (hi < 0) continue;
+      for (let k = 0; k < 12; k++) {
+        const mid = (lo + hi) / 2;
+        if (contact(a, b, mid)) hi = mid;
+        else lo = mid;
+      }
+      if (hi < when) { when = hi; hit = b; }
     }
     if (!hit) continue;
-    // Zeitpunkt innerhalb der letzten Minute, an dem der Umkreis erreicht wurde (dort anhalten, nicht mittendrin)
-    const posAt = (x: Army, t: number) => (x.move ? armyPosition(map, x, t) : pos(x));
-    let lo = Math.max(a.move.segStart, hit.move?.segStart ?? 0, state.time - MINUTE), hi = state.time;
-    for (let k = 0; k < 12; k++) {
-      const mid = (lo + hi) / 2;
-      if (d(posAt(a, mid), posAt(hit, mid)) <= R) hi = mid;
-      else lo = mid;
-    }
     for (const x of [a, hit]) {
       if (!x.move || landingAfloat(map, x, state.time)) continue;
-      halt(map, x, Math.round(hi), true, true);
+      halt(map, x, Math.round(when), true, true);
       now.delete(x);
     }
     const at = a.node, province = isSea(map, at) ? undefined : at;
+    if (!atWar(state, a.owner, hit.owner)) {
+      // Begegnung ohne Wegrecht: Krieg (wie beim Zusammenstoß auf demselben Weg)
+      const name = (id: string) => map.nations.find((n) => n.id === id)?.name ?? id;
+      setRelation(state, a.owner, hit.owner, 'war');
+      ctx.log(`Zusammenstoß bei ${nodeName(map, at)}: ${name(a.owner)} und ${name(hit.owner)} sind im Krieg!`);
+    }
     for (const x of [a, hit]) {
       if (x.owner !== REBELS) ctx.log(`Kampf bei ${nodeName(map, at)}.`, x.owner, province);
       joinBattle(ctx, x);
@@ -1299,8 +1606,8 @@ function meet(ctx: MilitaryContext, x: Army, y: Army, u: number, v: number, f: n
 /** Nach Ankunft: mit einer stehenden eigenen Armee gleicher Art am Ort zusammenlegen. */
 function mergeInto(ctx: MilitaryContext, a: Army): void {
   const other = ctx.state.armies.find((b) => b !== a && b.owner === a.owner && samePlace(a, b) && !b.move
-    && isNaval(b) === isNaval(a) && !b.target && unitCount(b) > 0);
-  if (!other || a.target) return;
+    && isNaval(b) === isNaval(a) && (!b.target || b.autoTarget) && unitCount(b) > 0);
+  if (!other || (a.target && !a.autoTarget)) return;
   mergeArmies(ctx.state, other, a);
 }
 
@@ -1405,21 +1712,27 @@ function spread(ctx: MilitaryContext): number {
  * Schaden zufällig auf die Einheiten einer Armee verteilen: jeder Treffer gilt einer ausgewürfelten
  * Einheit (jede Einheit gleich wahrscheinlich, viele Infanteristen schützen also teure Technik) und trifft
  * sie, bis sie fällt oder der Schaden aufgebraucht ist. Angeschlagene Einheiten behalten ihre Wunden.
+ * Liefert den nicht verbrauchten Rest (Armee vernichtet oder ihre letzten `keep` Einheiten geschützt).
  */
-export function applyDamage(a: Army, dmg: number, random: () => number, keep = 0, map?: MapData): void {
+export function applyDamage(a: Army, dmg: number, random: () => number, keep = 0, map?: MapData): number {
   let rest = dmg;
   while (rest > 1e-9) {
     const types = unitTypes(a);
     const total = types.reduce((s, u) => s + a.units[u]!, 0);
-    if (total <= 0) return;
-    let r = random() * total, u = types[types.length - 1];
-    for (const t of types) if ((r -= a.units[t]!) < 0) { u = t; break; }
+    if (total <= 0) return rest;
+    // geschützte Besatzung (keep): Bewacher ist die Infanterie – ist nur noch ihr geschützter Rest übrig,
+    // trifft der Schaden die Maschinen daneben (sie dürfen fallen)
+    const inf = a.units.infantry ?? 0;
+    const pool = keep > 0 && inf > 0 && inf <= keep && types.length > 1 ? types.filter((t) => t !== 'infantry') : types;
+    const poolTotal = pool.reduce((s, t) => s + a.units[t]!, 0);
+    let r = random() * poolTotal, u = pool[pool.length - 1];
+    for (const t of pool) if ((r -= a.units[t]!) < 0) { u = t; break; }
     const hp = unitHp(a, u, map);
     const w = a.wounds?.[u] ?? 0;
     // ist die Moral gefallen, kann die Wunde schon über den Lebenspunkten liegen: dann fällt die Einheit
     const hit = Math.max(0, Math.min(rest, hp - w));
     // die letzten `keep` Einheiten fallen nicht (Beschuss allein räumt keine Stadt)
-    if (total <= keep && w + hit >= hp - 1e-9) return;
+    if (pool === types && total <= keep && w + hit >= hp - 1e-9) return rest;
     rest -= hit;
     if (w + hit >= hp - 1e-9) {
       a.units[u] = a.units[u]! - 1;
@@ -1430,6 +1743,7 @@ export function applyDamage(a: Army, dmg: number, random: () => number, keep = 0
       }
     } else (a.wounds ??= {})[u] = w + hit;
   }
+  return Math.max(0, rest);
 }
 
 /**
@@ -1603,8 +1917,30 @@ function splashTargets(state: GameState, map: MapData, owner: string, pos: [numb
  * die Stadt sonst leer zurück).
  */
 function lastInCity(state: GameState, map: MapData, b: Army): boolean {
-  if (b.move || b.pos || isSea(map, b.node) || atWar(state, b.owner, state.provinces[b.node].owner)) return false;
-  return !state.armies.some((x) => x !== b && !x.move && x.node === b.node && !x.pos && unitCount(x) > 0 && !atWar(state, b.owner, x.owner));
+  const city = garrisonCity(state, map, b);
+  if (city === null) return false;
+  const c = nodePos(map, city);
+  return !state.armies.some((x) => {
+    if (x === b || x.move || unitCount(x) === 0 || isNaval(x) || atWar(state, b.owner, x.owner)) return false;
+    const q = armyPosition(map, x, state.time);
+    return Math.hypot(q[0] - c[0], q[1] - c[1]) <= MILITARY.meleeKm;
+  });
+}
+
+/**
+ * Stadt, deren Besatzung die stehende Landarmee bildet: eine Stadt ihrer Seite (eigene oder nicht verfeindete)
+ * in Nahkampfreichweite – am Knoten oder dicht davor auf dem Weg (etwa nach dem Teilen oder einer Eroberung aus
+ * 1 km Entfernung). Sonst null.
+ */
+function garrisonCity(state: GameState, map: MapData, b: Army): number | null {
+  if (b.move || isNaval(b)) return null;
+  const at = armyPosition(map, b, state.time);
+  for (const n of b.pos ? [b.pos.a, b.pos.b] : [b.node]) {
+    if (isSea(map, n) || atWar(state, b.owner, state.provinces[n].owner)) continue;
+    const c = nodePos(map, n);
+    if (Math.hypot(at[0] - c[0], at[1] - c[1]) <= MILITARY.meleeKm) return n;
+  }
+  return null;
 }
 
 /** Vernichtete Armeen an allen getroffenen Orten entfernen (Meldung, Eroberung) */
@@ -1649,7 +1985,14 @@ export function combatRound(ctx: MilitaryContext, tally?: CombatTally): void {
     const before = new Map([...damage.keys()].map((b) => [b, unitCount(b)]));
     const names = new Map([...dealt.keys(), ...damage.keys()].map((x) => [x, armyName(x)]));
     for (const [b, dmg] of damage) applyDamage(b, dmg * fortressShield(state, map, b), ctx.random, 0, map);
-    for (const [b, n] of before) noteLosses(state, map, b, n - unitCount(b));
+    for (const [b, n] of before) {
+      const by = new Map<string, number>();
+      for (const [a, mine] of dealt) {
+        const d = mine.get(b);
+        if (d) by.set(a.owner, (by.get(a.owner) ?? 0) + d);
+      }
+      noteLosses(state, b, n - unitCount(b), by);
+    }
     // vernichtete Gegner stärken die Moral (angewendet mit dem Fernkampf derselben Stunde)
     for (const [a, mine] of dealt) {
       let kills = 0;
@@ -1678,6 +2021,13 @@ function distance(map: MapData, a: Army, b: Army, time: number): number {
   return Math.hypot(p[0] - q[0], p[1] - q[1]);
 }
 
+/** Im Gefecht: im Nahkampf gebunden, feuernd oder unter Beschuss (für die Anzeige) */
+export function inCombat(state: GameState, map: MapData, a: Army): boolean {
+  if (unitCount(a) === 0) return false;
+  if (inMelee(state, map, a) || engagedTarget(state, map, a)) return true;
+  return state.armies.some((b) => b.target === a.id && engagedTarget(state, map, b) === a);
+}
+
 /** Gültiges Fernkampfziel in Reichweite (für Anzeige und Kampf) */
 export function engagedTarget(state: GameState, map: MapData, a: Army): Army | null {
   if (a.target == null) return null;
@@ -1701,8 +2051,73 @@ export function halt(map: MapData, a: Army, time: number, keepOrder = false, exa
 }
 
 /**
+ * Fernkampfziel ohne Wirkung: ein einzelner Bewacher in einer Stadt seiner Seite – Beschuss lässt die letzte
+ * Einheit stehen (lastInCity), es bliebe nur ein wenig Moralverlust. Solche Ziele kommen zuletzt dran.
+ */
+function uselessTarget(state: GameState, map: MapData, b: Army): boolean {
+  return unitCount(b) <= 1 && lastInCity(state, map, b);
+}
+
+/**
+ * Bestes selbständiges Fernkampfziel für eine Armee am Punkt `pos` mit Reichweite `range`: Ziele, die Schaden
+ * nehmen können, vor einzelnen geschützten Stadtbewachern; sonst das nächste. `skip`: schon getroffen (Restschaden).
+ * Mit `useful` nur Ziele, die Schaden nehmen können.
+ */
+function pickTarget(state: GameState, map: MapData, owner: string, pos: [number, number], range: number, skip?: Set<Army>, useful = false): Army | null {
+  let best: Army | null = null, bScore = Infinity;
+  for (const b of state.armies) {
+    if (skip?.has(b) || unitCount(b) === 0 || !atWar(state, owner, b.owner)) continue;
+    const q = armyPosition(map, b, state.time);
+    const d = Math.hypot(q[0] - pos[0], q[1] - pos[1]);
+    if (d > range) continue;
+    const bad = uselessTarget(state, map, b);
+    if (bad && useful) continue;
+    const score = (bad ? 1e6 : 0) + d;
+    if (score < bScore) { bScore = score; best = b; }
+  }
+  return best;
+}
+
+/** Fernkampftypen einer Armee mit ihrer Reichweite, größte zuerst (auf See nur Schiffe) */
+function rangedGroups(a: Army, map: MapData): { range: number; units: UnitType[] }[] {
+  const by = new Map<number, UnitType[]>();
+  for (const u of unitTypes(a)) {
+    const r = unitRange(a, u, map);
+    if (r > 0) (by.get(r) ?? by.set(r, []).get(r)!).push(u);
+  }
+  return [...by.entries()].sort((x, y) => y[0] - x[0]).map(([range, units]) => ({ range, units }));
+}
+
+/**
+ * Salven einer Armee in dieser Stunde: jeder Fernkampftyp feuert nur auf Ziele in seiner eigenen Reichweite.
+ * Wer das Hauptziel (a.target) erreicht, schießt darauf; kürzere Rohre (z. B. Artillerie neben Eisenbahngeschützen)
+ * suchen sich ein eigenes Ziel in ihrer Reichweite oder schweigen. Für Kampf und Geschossanzeige.
+ */
+export function rangedVolleys(state: GameState, map: MapData, a: Army): { target: Army; units: UnitType[] }[] {
+  const main = engagedTarget(state, map, a);
+  if (!main) return [];
+  const pos = armyPosition(map, a, state.time);
+  const q = armyPosition(map, main, state.time);
+  const dMain = Math.hypot(q[0] - pos[0], q[1] - pos[1]);
+  const out: { target: Army; units: UnitType[] }[] = [];
+  for (const g of rangedGroups(a, map)) {
+    let t: Army | null = g.range >= dMain - 1e-9 ? main : null;
+    // ein geschütztes Einzelziel lohnt nur, wenn es nichts Besseres gibt (ausdrückliche Ziele bleiben)
+    if (t && a.autoTarget && uselessTarget(state, map, t)) t = pickTarget(state, map, a.owner, pos, g.range) ?? t;
+    if (!t) t = pickTarget(state, map, a.owner, pos, g.range);
+    if (!t) continue;
+    const same = out.find((v) => v.target === t);
+    if (same) same.units.push(...g.units);
+    else out.push({ target: t, units: [...g.units] });
+  }
+  return out;
+}
+
+/**
  * Fernkampf erfassen (alle 10 Spielminuten): Einheiten mit Reichweite nehmen Feinde in Reichweite
  * sofort ins Visier und bleiben dafür stehen. Gemischte Armeen auf dem Marsch ziehen weiter.
+ * Selbständig erfasste Ziele wechseln, sobald das alte keinen Schaden mehr nehmen kann (einzelner Stadtbewacher)
+ * und ein lohnenderes in Reichweite steht.
  */
 export function engageRanged(ctx: MilitaryContext): void {
   const { state, map } = ctx;
@@ -1715,6 +2130,10 @@ export function engageRanged(ctx: MilitaryContext): void {
         a.target = null;
         a.autoTarget = false;
       } else if (distance(map, a, t, state.time) <= range) {
+        if (a.autoTarget && uselessTarget(state, map, t)) {
+          const better = pickTarget(state, map, a.owner, armyPosition(map, a, state.time), range, undefined, true);
+          if (better) a.target = better.id;
+        }
         // ausdrückliches Ziel: die Verfolgung endet hier; selbständig erfasst: danach weiter zum Marschziel
         halt(map, a, state.time, !!a.autoTarget, true);
         continue;
@@ -1725,12 +2144,7 @@ export function engageRanged(ctx: MilitaryContext): void {
     }
     // im Marsch nur im Angriffsmarsch selbständig anhalten; im Stand immer
     if (a.move && !a.aggressive) continue;
-    let best: Army | undefined, bd = Infinity;
-    for (const b of state.armies) {
-      if (!atWar(state, a.owner, b.owner) || unitCount(b) === 0) continue;
-      const d = distance(map, a, b, state.time);
-      if (d <= range && d < bd) { bd = d; best = b; }
-    }
+    const best = pickTarget(state, map, a.owner, armyPosition(map, a, state.time), range);
     if (!best) continue;
     a.target = best.id;
     a.autoTarget = true;
@@ -1738,9 +2152,15 @@ export function engageRanged(ctx: MilitaryContext): void {
   }
 }
 
+/** höchstens so viele Folgeziele nimmt der Restschaden einer Salve */
+const OVERFLOW_TARGETS = 4;
+
 /**
- * Fernkampf: Artillerie, Eisenbahngeschütze und Schlachtschiffe beschießen ihr Ziel in Reichweite (stündlich).
- * Jeder Treffer gilt voll für alle gegnerischen Armeen im Umkreis des Ziels (Flächenschaden).
+ * Fernkampf: Artillerie, Eisenbahngeschütze und Schlachtschiffe beschießen ihr Ziel in Reichweite (stündlich),
+ * jeder Typ nur in seiner eigenen Reichweite (rangedVolleys). Jeder Treffer gilt voll für alle gegnerischen
+ * Armeen im Umkreis des Ziels (Flächenschaden). Wird das Ziel vernichtet (oder bleibt nur sein geschützter
+ * letzter Bewacher), trifft der übrige Schaden sofort das nächste lohnende Ziel in Reichweite – kleine
+ * Trupps, die aus der Festung huschen, schlucken keine ganze Salve.
  */
 export function rangedRound(ctx: MilitaryContext, tally?: CombatTally): void {
   const { state, map } = ctx;
@@ -1749,16 +2169,12 @@ export function rangedRound(ctx: MilitaryContext, tally?: CombatTally): void {
     const range = maxRange(a, map);
     if (range <= 0 || gone(state, a)) continue;
     const pos = armyPosition(map, a, state.time);
-    const inRange = (b: Army) => {
-      const p = armyPosition(map, b, state.time);
-      return Math.hypot(p[0] - pos[0], p[1] - pos[1]) <= range;
-    };
     let target = a.target != null ? state.armies.find((b) => b.id === a.target) : undefined;
     if (target && (!atWar(state, a.owner, target.owner) || unitCount(target) === 0)) {
       a.target = null;
       target = undefined;
     }
-    if (target && !inRange(target)) {
+    if (target && distance(map, a, target, state.time) > range) {
       // ausdrückliches Ziel außer Reichweite: wird verfolgt (pursue), selbständig erfasstes aufgegeben
       if (a.autoTarget) {
         a.target = null;
@@ -1768,24 +2184,37 @@ export function rangedRound(ctx: MilitaryContext, tally?: CombatTally): void {
     }
     if (!target) continue;
     if (a.move) halt(map, a, state.time, true); // in Reichweite: stehen bleiben und feuern, danach weiter
-    // auf See schießen nur Schiffe (Landeinheiten haben dort keine Reichweite)
-    let out = 0;
-    for (const u of unitTypes(a)) {
-      if (unitRange(a, u, map) > 0) out += a.units[u]! * UNITS[u].attack;
+    const before = new Map<Army, number>();
+    const names = new Map<Army, string>();
+    for (const v of rangedVolleys(state, map, a)) {
+      const hitSet = new Set<Army>(); // je Salve: der Restschaden trifft niemanden doppelt
+      const reach = Math.max(...v.units.map((u) => unitRange(a, u, map)));
+      let out = 0;
+      for (const u of v.units) out += a.units[u]! * UNITS[u].attack;
+      let left = out * spread(ctx);
+      let aim: Army | null = v.target;
+      for (let k = 0; aim && left > 1e-6 && k <= OVERFLOW_TARGETS; k++) {
+        const victims = splashTargets(state, map, a.owner, armyPosition(map, aim, state.time)).filter((b) => !hitSet.has(b) || b === aim);
+        if (!victims.includes(aim)) victims.push(aim);
+        let rest = 0;
+        for (const b of victims) {
+          if (!before.has(b)) { before.set(b, unitCount(b)); names.set(b, armyName(b)); }
+          hitSet.add(b);
+          const shield = fortressShield(state, map, b);
+          const unused = applyDamage(b, left * shield, ctx.random, lastInCity(state, map, b) ? 1 : 0, map);
+          if (b === aim) rest = shield > 0 ? unused / shield : 0;
+          // beschossen werden zehrt an der Moral (einmal je Stunde, egal wie viele Schützen)
+          tallyOf(t, b).shelled = true;
+          const prov = b.pos ? roadProvince(map, b.pos) : isSea(map, b.node) ? -1 : b.node;
+          if (prov >= 0) markFight(state, prov);
+        }
+        left = rest;
+        // Restschaden: sofort auf das nächste lohnende Ziel in Reichweite dieser Rohre
+        aim = left > 1e-6 ? pickTarget(state, map, a.owner, pos, reach, hitSet, true) : null;
+      }
     }
-    const victims = splashTargets(state, map, a.owner, armyPosition(map, target, state.time));
-    if (!victims.includes(target)) victims.push(target);
-    const before = new Map(victims.map((b) => [b, unitCount(b)]));
-    const names = new Map(victims.map((b) => [b, armyName(b)]));
-    const hit = out * spread(ctx);
-    for (const b of victims) {
-      applyDamage(b, hit * fortressShield(state, map, b), ctx.random, lastInCity(state, map, b) ? 1 : 0, map);
-      // beschossen werden zehrt an der Moral (einmal je Stunde, egal wie viele Schützen)
-      tallyOf(t, b).shelled = true;
-      const prov = b.pos ? roadProvince(map, b.pos) : isSea(map, b.node) ? -1 : b.node;
-      if (prov >= 0) markFight(state, prov);
-    }
-    for (const b of victims) noteLosses(state, map, b, before.get(b)! - unitCount(b));
+    const victims = [...before.keys()];
+    for (const b of victims) noteLosses(state, b, before.get(b)! - unitCount(b), new Map([[a.owner, 1]]));
     const kills = victims.reduce((k, b) => k + before.get(b)! - unitCount(b), 0);
     if (kills > 0) a.kills = (a.kills ?? 0) + kills;
     tallyOf(t, a).kills += kills;
@@ -1846,15 +2275,22 @@ export function currentProvince(map: MapData, a: Army, time: number): number {
 }
 
 /**
- * Verluste für die Zeitung vermerken: verlorene Einheiten je Schlachtort (Provinz bzw. Seegebiet, in dem die
- * getroffene Armee steht) und Nation, bis zur nächsten Ausgabe.
+ * Verluste für die Zeitung vermerken: laufender Zähler je Krieg (state.warLosses), `by` = Verursacher mit Gewicht
+ * (zugefügter Schaden). Kämpfe gegen Aufständische zählen nicht.
  */
-function noteLosses(state: GameState, map: MapData, b: Army, lost: number): void {
-  if (lost <= 0) return;
-  const prov = b.pos ? roadProvince(map, b.pos) : b.node;
-  const place = prov >= 0 ? nodeName(map, prov) : nodeName(map, b.node);
-  const at = ((state.battleLosses ??= {})[place] ??= {});
-  at[b.owner] = (at[b.owner] ?? 0) + lost;
+function noteLosses(state: GameState, b: Army, lost: number, by: Map<string, number>): void {
+  if (lost <= 0 || b.owner === REBELS) return;
+  // Verluste anteilig (nach zugefügtem Schaden) auf die Kriege mit den Verursachern verteilen
+  let sum = 0;
+  for (const [o, w] of by) if (o !== REBELS && o !== b.owner) sum += w;
+  if (sum <= 0) return;
+  for (const [o, w] of by) {
+    if (o === REBELS || o === b.owner || w <= 0) continue;
+    const war = ((state.warLosses ??= {})[warKey(o, b.owner)] ??= { losses: {}, at: state.time });
+    war.losses[b.owner] = (war.losses[b.owner] ?? 0) + (lost * w) / sum;
+    war.losses[o] ??= 0;
+    war.at = state.time;
+  }
 }
 
 /** Provinz, in deren Gebiet ein Wegpunkt liegt (vor oder hinter der Grenze); -1 auf dem Wasser */
@@ -1933,7 +2369,7 @@ export function conquer(ctx: MilitaryContext, node: number, by: string): void {
       if (amount > 0) {
         loss.money -= amount;
         loot.money += amount;
-        ctx.log(`${byName} plündert ${amount.toLocaleString('de-DE')} Geld aus der Hauptstadt ${mp.name}.`, undefined, node);
+        ctx.log(`${byName} plündert ${amount.toLocaleString('de-DE')} Pfund aus der Hauptstadt ${mp.name}.`, undefined, node);
       }
     }
   }
@@ -1945,12 +2381,19 @@ export function conquer(ctx: MilitaryContext, node: number, by: string): void {
   // die Eroberer im Umkreis (stehende Landtruppen) rücken in die Stadt ein; weitere Marschbefehle danach
   // gehen nach der Besatzungsregel (eine Einheit bleibt, eine einzelne letzte bleibt ganz)
   const city = nodePos(map, node);
+  let entered = false, infantry = false;
   for (const a of state.armies) {
     if (a.owner !== by || a.move || isNaval(a) || unitCount(a) === 0) continue;
     const p = armyPosition(map, a, state.time);
     if (Math.hypot(p[0] - city[0], p[1] - city[1]) > MILITARY.meleeKm) continue;
     a.node = node;
     a.pos = null;
+    entered = true;
+    if ((a.units.infantry ?? 0) > 0) infantry = true;
+  }
+  // nur Maschinen haben die Stadt genommen: Bewacher ist immer Infanterie – ein Infanterist des Besatzers zieht ein
+  if (entered && !infantry && by !== REBELS) {
+    state.armies.push({ id: ctx.newArmyId(), owner: by, node, units: { infantry: 1 }, morale: TROOP_MORALE.start });
   }
   ctx.invalidate();
 }
@@ -2351,13 +2794,12 @@ export function garrisonKeep(state: GameState, map: MapData, a: Army): { unit: U
   if (city === undefined) return null;
   const others = state.armies.filter((b) => b !== a && b.owner === a.owner && !b.move && !isNaval(b) && unitCount(b) > 0
     && near(armyPosition(map, b, state.time), city));
+  // Bewacher ist immer Infanterie: Maschinen ziehen jederzeit ganz ab
+  if (!(a.units.infantry ?? 0)) return null;
   if (others.some((b) => (b.units.infantry ?? 0) > 0)) return null;
-  // andere bleiben, aber ohne Infanterie: nur die Infanterie dieser Armee muss einen Mann dalassen
-  if (others.length && !(a.units.infantry ?? 0)) return null;
-  // eine einzelne Einheit bleibt stehen; nur auf dem Durchmarsch darf sie weiter
+  // ein einzelner Infanterist bleibt stehen; nur auf dem Durchmarsch darf er weiter
   if (unitCount(a) <= 1) return a.move ? null : 'last';
-  if ((a.units.infantry ?? 0) > 0) return { unit: 'infantry', node: city };
-  return { unit: unitTypes(a).sort((x, y) => armyPower({ ...a, units: { [x]: 1 } }) - armyPower({ ...a, units: { [y]: 1 } }))[0], node: city };
+  return { unit: 'infantry', node: city };
 }
 
 /**

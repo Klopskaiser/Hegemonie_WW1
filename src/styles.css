@@ -471,7 +471,6 @@ input.num { width: 76px; padding: 2px 4px; }
 .np-map { margin: 8px 0 4px; }
 .np-map .map-wrap { position: relative; inset: auto; width: 100%; aspect-ratio: 4840 / 4700; filter: sepia(0.6) contrast(1.05); border: 1px solid #3b3021; }
 .np-map figcaption { font-size: 11px; text-align: center; font-style: italic; }
-.np-ranking { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 12px; border-top: 1px solid #3b3021; padding-top: 4px; }
 .np-nav { display: flex; justify-content: space-between; align-items: center; margin-top: 8px; }
 
 .gameover-backdrop { position: absolute; inset: 0; background: rgba(20, 12, 6, 0.55); display: grid; place-items: center; z-index: 10; padding: 16px; }
